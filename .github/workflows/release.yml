@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  release-win:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,3 +54,52 @@ jobs:
             dist/v${{ steps.version.outputs.version }}/app.asar.unpacked.zip
             dist/v${{ steps.version.outputs.version }}/manifest.json
             dist/Scalpel-Setup.exe
+
+  release-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Linux native build deps
+        # uiohook-napi and electron-overlay-window's X11 backends link against
+        # the X11/xcb dev headers. libfuse2 is the AppImage Type 2 runtime
+        # dependency used by electron-builder's appimagetool. Building on
+        # 22.04 (glibc 2.35) is intentional: the resulting AppImage runs on
+        # most distros from 2022+; building on 24.04 (glibc 2.39) would
+        # restrict to 2024+ hosts.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libxcb1-dev libxtst-dev libxss-dev libxkbfile-dev \
+            libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxkbcommon-dev libfuse2
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Build AppImage
+        run: npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: Extract version
+        id: version
+        run: echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
+
+      - name: Append AppImage to GitHub Release
+        # The Windows job creates the release with notes; this appends the
+        # AppImage artifact. softprops/action-gh-release upserts on tag.
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          files: |
+            dist/Scalpel-${{ steps.version.outputs.version }}.AppImage
