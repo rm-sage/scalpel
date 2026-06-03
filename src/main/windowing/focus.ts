@@ -1,6 +1,26 @@
 import { BrowserWindow, screen } from 'electron'
+import { OverlayController } from 'electron-overlay-window'
+import { logForegroundAfterRestore } from '../focus-diag'
 import { getSnapCanvasWindow, setSnapGhost } from './snap-canvas'
 import { firePoeLeaveHooks, getAuxiliaryScalpelWindows, getMainOverlay, overlays } from './state'
+
+/** Hand OS foreground focus back to the attached PoE window after the user
+ *  dismisses a secondary overlay. Without this, the dismissed Scalpel window's
+ *  foreground status lingers and tools that key off the foreground window
+ *  (iCUE per-game profiles, etc.) never switch back to PoE, breaking the user's
+ *  custom binds until the tool is closed. focusTarget() is a no-op when PoE
+ *  isn't attached, so it is only wired into genuine user-dismiss paths (never
+ *  the PoE-exit / alt-tab-out paths, where the OS has already moved focus away
+ *  deliberately). Pulls OverlayController straight from the external library,
+ *  the same way sibling windowing modules do, so it adds no import cycle.
+ *  Wrapped so a native throw never breaks the hide path. */
+function restoreFocusToGame(): void {
+  try {
+    OverlayController.focusTarget()
+  } catch {
+    /* best-effort */
+  }
+}
 
 /** True if `win` is a registered secondary-overlay window. */
 export function isSecondaryOverlayWindow(win: BrowserWindow): boolean {
@@ -140,12 +160,16 @@ export function hideFocusedOrAnyVisibleSecondaryOverlay(): boolean {
   for (const state of overlays.values()) {
     if (state.win && state.win === focused && state.win.isVisible()) {
       hideOverlayState(state)
+      restoreFocusToGame()
+      logForegroundAfterRestore('esc-focused') // TEMP focus-diag — remove with focus-diag.ts
       return true
     }
   }
   for (const state of overlays.values()) {
     if (state.win && !state.win.isDestroyed() && state.win.isVisible()) {
       hideOverlayState(state)
+      restoreFocusToGame()
+      logForegroundAfterRestore('esc-visible') // TEMP focus-diag — remove with focus-diag.ts
       return true
     }
   }

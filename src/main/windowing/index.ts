@@ -2,6 +2,7 @@ import { app, type BrowserWindow, screen } from 'electron'
 import { OverlayController } from 'electron-overlay-window'
 import { uIOhook } from 'uiohook-napi'
 import { guardNativeListener } from '../diagnostics'
+import { logForegroundAfterRestore } from '../focus-diag'
 import { hideAllOnPoeBlur, isAnyScalpelWindowFocused } from './focus'
 import { prewarmSnapCanvas, type Rect, setSnapGhost } from './snap-canvas'
 import { fireOnLeaveScalpel, type OverlayState, overlays } from './state'
@@ -340,6 +341,24 @@ function hideState(state: OverlayState): void {
   // refocusing doesn't bring it back. Only PoE alt-tab cycles restore.
   state.wasVisibleBeforeFocusLoss = false
   state.win.hide()
+  // Hand OS foreground focus back to PoE so foreground-watching tools (iCUE's
+  // per-game profile switching, etc.) re-detect the game and keep the user's
+  // custom binds working. This is the chokepoint for every SecondaryOverlay
+  // .hide()/.toggle() dismissal (cheat sheets, whiteboard, regex pad, plugin
+  // overlays, pinned zone). Skipped during shutdown — Electron is tearing the
+  // windows down and there's no game to return to. No-op when PoE isn't attached.
+  // Must run synchronously here (not deferred): it has to land before the
+  // secondary overlay's setImmediate-deferred 'blur' handler below evaluates, so
+  // that handler sees PoE as foreground (targetHasFocus) and bails instead of
+  // re-running the hide/leave path.
+  if (!appQuitting) {
+    try {
+      OverlayController.focusTarget()
+    } catch {
+      /* best-effort */
+    }
+    logForegroundAfterRestore('hideState') // TEMP focus-diag — remove with focus-diag.ts
+  }
 }
 
 // Secondary overlays hide-instead-of-close so their hotkey can re-show them.
@@ -359,6 +378,16 @@ function wireWindowEvents(state: OverlayState, win: BrowserWindow): void {
     e.preventDefault()
     win.hide()
     state.wasVisibleBeforeFocusLoss = false
+    // Closing via the window-manager/OS close button is a deliberate dismissal,
+    // same as hideState — return foreground to PoE. This handler calls
+    // win.hide() directly (bypassing hideState), so it needs its own restore.
+    // appQuitting already short-circuited above, so no extra guard is needed.
+    try {
+      OverlayController.focusTarget()
+    } catch {
+      /* best-effort */
+    }
+    logForegroundAfterRestore('close-event') // TEMP focus-diag — remove with focus-diag.ts
   })
   win.on('move', () => {
     if (state.inProgrammaticMove) return
