@@ -1,6 +1,5 @@
 import { BrowserWindow, screen } from 'electron'
 import { OverlayController } from 'electron-overlay-window'
-import { logForegroundAfterRestore } from '../focus-diag'
 import { getSnapCanvasWindow, setSnapGhost } from './snap-canvas'
 import { firePoeLeaveHooks, getAuxiliaryScalpelWindows, getMainOverlay, overlays } from './state'
 
@@ -161,7 +160,6 @@ export function hideFocusedOrAnyVisibleSecondaryOverlay(): boolean {
     if (state.win && state.win === focused && state.win.isVisible()) {
       hideOverlayState(state)
       restoreFocusToGame()
-      logForegroundAfterRestore('esc-focused') // TEMP focus-diag — remove with focus-diag.ts
       return true
     }
   }
@@ -169,7 +167,6 @@ export function hideFocusedOrAnyVisibleSecondaryOverlay(): boolean {
     if (state.win && !state.win.isDestroyed() && state.win.isVisible()) {
       hideOverlayState(state)
       restoreFocusToGame()
-      logForegroundAfterRestore('esc-visible') // TEMP focus-diag — remove with focus-diag.ts
       return true
     }
   }

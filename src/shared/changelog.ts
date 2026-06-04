@@ -1,5 +1,12 @@
 export const CHANGELOG: { version: string; notes: string[] }[] = [
   {
+    version: '0.9.12-rmsage.1',
+    notes: [
+      'Added an Open Craft of Exile hotkey that opens the hovered item in the Craft of Exile crafting simulator.',
+      'Fixed iCUE losing the Path of Exile foreground (and your custom binds) when dismissing a Scalpel secondary overlay.',
+    ],
+  },
+  {
     version: '0.9.12-rc3',
     notes: [
       'Added draggable tier chips that scrub price-check affix minimums across their roll range.',

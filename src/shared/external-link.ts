@@ -52,6 +52,20 @@ export function externalLinkUrl(
   return `https://${cfg.hostByVersion[poeVersion]}${cfg.path}${cfg.slug(externalLookupName(item))}`
 }
 
+// ─── Craft of Exile item import ──────────────────────────────────────────────
+//
+// Craft of Exile imports a full item from the `eimport` query param -- the raw
+// advanced-mode clipboard text (Ctrl+Alt+C off the hovered item), URL-encoded --
+// and selects the game with `game=poe1|poe2`. The advanced copy is required: per
+// CoE's own FAQ the importer rejects a plain Ctrl+C item, so callers must capture
+// via the Ctrl+Alt+C path. Mirrors Exiled Exchange 2 / Awakened PoE Trade's "Open
+// Craft of Exile" action (openCoE in their hotkeyable-actions), which opens the
+// hovered item pre-imported into the crafting simulator. We pass the live game
+// version so PoE2 items land on the PoE2 calculator; APT hardcodes poe1.
+export function craftOfExileUrl(rawItemText: string, poeVersion: 1 | 2): string {
+  return `https://www.craftofexile.com/?game=poe${poeVersion}&eimport=${encodeURIComponent(rawItemText)}`
+}
+
 // ─── poe.ninja deep-linking ──────────────────────────────────────────────────
 //
 // poe.ninja URLs look like https://poe.ninja/poe1/economy/<league>/<category>/<slug>.

@@ -1,6 +1,6 @@
 {
   "name": "scalpel",
-  "version": "0.9.12-rc3",
+  "version": "0.9.12-rmsage.1",
   "description": "Path of Exile's First Fourth-Party Tool",
   "author": "Scalpel",
   "license": "AGPL-3.0-only",
@@ -60,7 +60,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.27",
     "cheerio": "^1.2.0",
-    "electron": "^32.3.3",
+    "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
     "electron-rebuild": "^3.2.9",
     "electron-vite": "^2.3.0",

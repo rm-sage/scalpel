@@ -289,6 +289,29 @@ export function createOverlayWindow(version: 1 | 2 = 1): BrowserWindow {
     overlayWindow = null
   })
 
+  // iCUE-wedge fix: the confirmed trigger is a Scalpel window taking OS focus
+  // (the user clicking into the overlay) while it is always-on-top over a
+  // borderless-fullscreen game; that combination wedges iCUE's game detection
+  // until Scalpel exits. When the overlay window gains focus, drop its
+  // always-on-top so it is a normal focused window rather than a
+  // topmost-over-fullscreen one; electron-overlay-window re-applies
+  // 'screen-saver' topmost on the next PoE focus event, restoring
+  // click-through-over-game once the user returns to PoE.
+  overlayWindow.on('focus', () => {
+    try {
+      overlayWindow?.setAlwaysOnTop(false)
+    } catch {
+      /* best-effort */
+    }
+  })
+  overlayWindow.on('blur', () => {
+    try {
+      overlayWindow?.setAlwaysOnTop(true, 'screen-saver')
+    } catch {
+      /* best-effort */
+    }
+  })
+
   // Prevent Windows show/hide animation by using opacity instead of hide/show.
   // electron-overlay-window calls hide()/showInactive() on focus changes, which
   // triggers the OS zoom animation. We intercept to use opacity instead.

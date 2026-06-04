@@ -2,7 +2,6 @@ import { app, type BrowserWindow, screen } from 'electron'
 import { OverlayController } from 'electron-overlay-window'
 import { uIOhook } from 'uiohook-napi'
 import { guardNativeListener } from '../diagnostics'
-import { logForegroundAfterRestore } from '../focus-diag'
 import { hideAllOnPoeBlur, isAnyScalpelWindowFocused } from './focus'
 import { prewarmSnapCanvas, type Rect, setSnapGhost } from './snap-canvas'
 import { fireOnLeaveScalpel, type OverlayState, overlays } from './state'
@@ -357,7 +356,6 @@ function hideState(state: OverlayState): void {
     } catch {
       /* best-effort */
     }
-    logForegroundAfterRestore('hideState') // TEMP focus-diag — remove with focus-diag.ts
   }
 }
 
@@ -387,7 +385,23 @@ function wireWindowEvents(state: OverlayState, win: BrowserWindow): void {
     } catch {
       /* best-effort */
     }
-    logForegroundAfterRestore('close-event') // TEMP focus-diag — remove with focus-diag.ts
+  })
+  // iCUE-wedge fix: same as the main overlay — drop always-on-top while this
+  // secondary overlay is focused so it isn't a topmost-over-fullscreen window at
+  // the moment it holds OS focus; restore on blur.
+  win.on('focus', () => {
+    try {
+      win.setAlwaysOnTop(false)
+    } catch {
+      /* best-effort */
+    }
+  })
+  win.on('blur', () => {
+    try {
+      win.setAlwaysOnTop(true, 'screen-saver')
+    } catch {
+      /* best-effort */
+    }
   })
   win.on('move', () => {
     if (state.inProgrammaticMove) return
