@@ -1,0 +1,190 @@
+name: Upstream sync
+
+# Keeps this fork current with scalpelpoe/scalpel automatically.
+#
+# Once a day (or on manual dispatch) this merges upstream/main into the fork's
+# main, re-derives the fork version, verifies with the SAME gate as CI plus the
+# fork-invariant test, and -- only if everything is green -- pushes a release tag
+# so the app auto-updates. If the merge conflicts, or verification fails, it opens
+# an issue and ships nothing. The fork-invariant test (src/shared/fork-invariants
+# .test.ts) is what guarantees a merge can never silently revert the update-feed
+# repoint or drop the macro and still publish: that would turn the suite red and
+# block the tag push.
+#
+# One-time setup (see FORK-SETUP.md):
+#   - Enable Actions on the fork (GitHub disables them on forks by default).
+#   - Add a repo secret RELEASE_PAT: a fine-grained PAT with contents:write on
+#     this repo. Tags pushed with the default GITHUB_TOKEN do NOT trigger
+#     release.yml, so the publish step uses the PAT instead.
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # daily, 06:00 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # PAT so the tag push at the end triggers release.yml. A push made with
+          # the default GITHUB_TOKEN does not start further workflow runs.
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Python setuptools (needed by node-gyp)
+        run: pip install setuptools
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          git config user.name "scalpel-fork-bot"
+          git config user.email "rmsage95@gmail.com"
+
+      - name: Fetch upstream
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/scalpelpoe/scalpel.git 2>/dev/null || true
+          git fetch upstream main --tags
+
+      - name: Check for new upstream work
+        id: check
+        shell: bash
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already current with upstream/main; nothing to sync."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream
+        if: steps.check.outputs.skip == 'false'
+        id: merge
+        shell: bash
+        run: |
+          UPSTREAM_VER="$(git show upstream/main:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          echo "upstream_ver=$UPSTREAM_VER" >> "$GITHUB_OUTPUT"
+          echo "Merging upstream/main ($UPSTREAM_VER) into main..."
+
+          set +e
+          git merge --no-ff --no-commit upstream/main
+          MERGE_RC=$?
+          set -e
+
+          if [ $MERGE_RC -ne 0 ]; then
+            CONFLICTS="$(git diff --name-only --diff-filter=U)"
+            # A version-line clash on package.json/package-lock.json is expected on
+            # every upstream version bump and is resolved deterministically below
+            # (the version is re-derived, never merged). Any OTHER conflicted file
+            # is a real merge that needs a human.
+            OTHER="$(printf '%s\n' "$CONFLICTS" | grep -vE '^(package\.json|package-lock\.json)$' || true)"
+            if [ -n "$OTHER" ]; then
+              git merge --abort
+              echo "conflict=true" >> "$GITHUB_OUTPUT"
+              {
+                echo "conflicts<<EOF"
+                printf '%s\n' "$CONFLICTS"
+                echo "EOF"
+              } >> "$GITHUB_OUTPUT"
+              echo "Real conflicts outside the version files; opening an issue instead of shipping."
+              exit 0
+            fi
+            # Version-only conflict: drop both sides of the version line; the next
+            # step rewrites package.json's version from the upstream baseline.
+            git checkout --theirs -- package.json package-lock.json 2>/dev/null || true
+            git add package.json package-lock.json
+          fi
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
+
+      - name: Apply fork version and commit
+        if: steps.check.outputs.skip == 'false' && steps.merge.outputs.conflict == 'false'
+        id: version
+        shell: bash
+        run: |
+          FORK_VER="$(node scripts/set-fork-version.js "${{ steps.merge.outputs.upstream_ver }}")"
+          echo "Fork version: $FORK_VER"
+          git add -A
+          git commit -m "chore(fork): sync upstream ${{ steps.merge.outputs.upstream_ver }} -> $FORK_VER"
+          echo "fork_ver=$FORK_VER" >> "$GITHUB_OUTPUT"
+
+      - name: Verify (same gate as CI + fork invariants)
+        if: steps.check.outputs.skip == 'false' && steps.merge.outputs.conflict == 'false'
+        shell: bash
+        run: |
+          npm ci
+          npm run build:i18n --if-present
+          npm run typecheck
+          npm run lint
+          npm run format:check
+          npm run test
+          npm run build
+
+      - name: Publish (push main + release tag)
+        if: steps.check.outputs.skip == 'false' && steps.merge.outputs.conflict == 'false'
+        shell: bash
+        run: |
+          git push origin main
+          git tag "v${{ steps.version.outputs.fork_ver }}"
+          git push origin "v${{ steps.version.outputs.fork_ver }}"
+          echo "Pushed v${{ steps.version.outputs.fork_ver }} -> release.yml will build and publish."
+
+      - name: Open issue on merge conflict
+        if: steps.merge.outputs.conflict == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(cat <<EOF
+          The scheduled upstream sync hit a real merge conflict against upstream/main (\`${{ steps.merge.outputs.upstream_ver }}\`) and shipped nothing.
+
+          Conflicting files:
+          \`\`\`
+          ${{ steps.merge.outputs.conflicts }}
+          \`\`\`
+
+          Resolve locally on Node 22:
+          \`\`\`
+          git fetch upstream
+          git checkout main && git merge upstream/main   # resolve conflicts
+          node scripts/set-fork-version.js \$(git show upstream/main:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          npm ci && npm test
+          git commit && git push origin main
+          git tag vX.Y.Z-rmsage.N && git push origin vX.Y.Z-rmsage.N
+          \`\`\`
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          gh issue create --title "Upstream sync needs a manual merge (${{ steps.merge.outputs.upstream_ver }})" --body "$BODY"
+
+      - name: Open issue on verification failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(cat <<EOF
+          The scheduled upstream sync merged upstream cleanly but FAILED verification (typecheck / lint / test / build), so nothing was published. origin/main is untouched.
+
+          This usually means upstream changed something the fork patch set (macro, repoint) or the fork-invariant test depends on. Check the failing step, fix it on a branch, and re-run the workflow.
+
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          gh issue create --title "Upstream sync failed verification" --body "$BODY"

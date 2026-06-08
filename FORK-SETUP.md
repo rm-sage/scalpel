@@ -1,47 +1,96 @@
 # rm-sage/scalpel — personal fork
 
-This is a personal fork of [scalpelpoe/scalpel](https://github.com/scalpelpoe/scalpel)
-carrying one change: **secondary overlays hand OS foreground focus back to Path of
-Exile when dismissed**, so foreground-watching tools (notably Corsair **iCUE**'s
-per-game profile switching) keep detecting PoE and the user's custom binds keep
-working after using a Scalpel overlay.
+A personal fork of [scalpelpoe/scalpel](https://github.com/scalpelpoe/scalpel) that
+tracks upstream automatically and carries **one** real feature on top:
+
+- **Open Craft of Exile** — a bindable hotkey that copies the hovered item (advanced
+  `Ctrl+Alt+C` format) and opens it pre-imported in the [Craft of Exile](https://www.craftofexile.com)
+  crafting simulator, mirroring Exiled Exchange 2 / Awakened PoE Trade's action.
+
+> An earlier iCUE focus-restore change was dropped (superseded by an external
+> workaround). Keeping the fork's divergence minimal is what makes the automatic
+> upstream sync below reliable.
 
 ## What differs from upstream
 
+The fork is intentionally a *thin* layer — `git diff upstream/main...main` should stay
+small. Three things diverge:
+
 | Area | Change |
 |------|--------|
-| `src/main/windowing/index.ts`, `src/main/windowing/focus.ts` | On every user-driven secondary-overlay dismiss (`hideState`, the OS close button, and the Esc dispatcher), call `OverlayController.focusTarget()` (Win32 `SetForegroundWindow` on the PoE window). PoE-exit / alt-tab-out / content-driven hides are intentionally left alone. |
-| `src/shared/endpoints.ts` | **Only** the auto-update feed (`GITHUB_RELEASES_API`) and its manual-download fallback (`GITHUB_RELEASES_PAGE`) point at this fork. All game-data, issue, and support endpoints stay on upstream. |
+| **The macro** | `src/shared/external-link.ts` (`craftOfExileUrl`), `src/main/evaluation.ts` (`createOpenCraftOfExileHandler`), `src/main/index.ts` (wiring + the `openCraftOfExile` action), `src/renderer/src/components/settings/utils.ts` (the macro list entry), plus tests. |
+| **Update feed** | `src/shared/endpoints.ts`: **only** the auto-update feed (`GITHUB_RELEASES_API`) and its manual-download fallback (`GITHUB_RELEASES_PAGE`) point at this fork. All game-data, issue, and support endpoints stay on upstream. |
+| **Version** | `package.json` carries a `-rmsage.N` suffix (see below). |
 
 Everything else — trade data, leagues, tier data, cheat-sheet prefabs, the plugin
 registry — is fetched from upstream unchanged.
 
-## How updates work
+The fork's two non-version changes are protected by `src/shared/fork-invariants.test.ts`,
+which fails the test suite if a merge ever reverts the repoint or drops the macro. Since
+the sync only ships on a green suite, a bad merge can't auto-publish.
 
-Scalpel's updater is a custom ASAR hot-swap: it polls `GITHUB_RELEASES_API` (now this
-fork), downloads `app.asar` + `manifest.json` from the latest release, verifies the
-SHA-512, and swaps `app.asar` in place. So this fork self-updates from **its own**
-GitHub releases.
+## How updates reach you
+
+Scalpel's updater is a custom ASAR hot-swap: it polls `GITHUB_RELEASES_API` (this fork),
+downloads `app.asar` + `manifest.json` from the latest release, verifies the SHA-512, and
+swaps `app.asar` in place. So the fork self-updates from **its own** GitHub releases.
 
 - Install the fork's `Scalpel-Setup.exe` once (from this repo's Releases).
 - After that it auto-updates from this fork.
 
-`package.json` version stays semver-clean and identical to the upstream base (e.g.
-`0.9.12-rc3`); the fork identity lives in the **git tag** with a `-focusfix` suffix
-(e.g. `v0.9.12-rc3-focusfix`). A `+metadata` suffix is deliberately avoided —
-Electron's `app.getVersion()` strips it, which would break the updater's
-string-equality version check, and `+` breaks the `dist/v${version}/` path glob.
+### Version scheme
 
-## Staying current with upstream
+Fork version = **`<full upstream version>-rmsage.<N>`**, e.g. upstream `0.9.13-rc5`
+becomes `0.9.13-rc5-rmsage.1`. The script `scripts/set-fork-version.js` derives it.
 
-A scheduled GitHub Action (`.github/workflows/auto-rebase.yml`, added after the fix is
-verified) polls upstream for new release tags, cherry-picks this fork's patch commits
-onto each, re-tags `<version>-focusfix`, and pushes — which triggers `release.yml` to
-build and publish, so the app auto-updates to the patched build. On a cherry-pick
-conflict it opens an issue instead of shipping a broken build.
+- The upstream version is kept **verbatim, including any `-rcN`/`-beta`**. This is
+  deliberate: `release.yml` flags a release as a GitHub *prerelease* when the tag
+  contains `rc`/`beta`, and the updater's stable channel only sees non-prereleases.
+  Keeping the suffix makes the fork's stable/beta channels mirror upstream's — an
+  upstream RC ships as a fork prerelease (beta channel), an upstream stable ships as a
+  fork release (stable channel).
+- `N` increments per fork build of the **same** upstream baseline and resets to `1`
+  when the baseline changes; it's derived from existing `v<base>-rmsage.*` tags.
+- No `+build` metadata: `app.getVersion()` strips it (breaking the updater's
+  string-equality check) and `+` breaks the `dist/v${version}/` path glob.
 
-> One-time setup for the auto-build: GitHub disables a fork's Actions until the owner
-> enables them (Actions tab → "I understand my workflows, go ahead and enable them",
-> or via the API). The tag-triggered release build also needs a PAT secret
-> (`RELEASE_PAT`) when tags are pushed by automation, because pushes made with the
-> default `GITHUB_TOKEN` do not trigger further workflows.
+## Staying current with upstream (automatic)
+
+`.github/workflows/auto-sync.yml` runs daily (and on manual dispatch). Each run:
+
+1. Skips if `upstream/main` is already merged (nothing new).
+2. Merges `upstream/main` into `main`. A version-line clash on `package.json` is
+   resolved deterministically (the version is re-derived, never merged); any **other**
+   conflict aborts the merge and opens an issue.
+3. Re-derives the fork version via `set-fork-version.js`.
+4. Verifies with the **same gate as CI** — `typecheck`, `lint`, `format:check`, `test`
+   (incl. the fork invariants), `build`.
+5. **Only if green**, pushes `main` and a `v<version>` tag, which triggers `release.yml`
+   to build and publish — so the app auto-updates.
+
+If the merge conflicts or verification fails, it opens an issue and ships nothing.
+
+### Doing a sync manually
+
+The first big jump after a long gap (or any sync the bot punted to an issue) is just a
+normal merge on **Node 22** (Node 26 breaks `npm install` here):
+
+```bash
+git fetch upstream
+git checkout main && git merge upstream/main      # resolve any conflicts
+node scripts/set-fork-version.js "$(git show upstream/main:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+npm ci && npm test                                # confirm the invariant test is green
+git add -A && git commit
+git push origin main
+git tag vX.Y.Z-rmsage.N && git push origin vX.Y.Z-rmsage.N   # triggers release.yml
+```
+
+## One-time setup for the automation
+
+- **Enable Actions on the fork.** GitHub disables a fork's workflows by default
+  (Actions tab → "I understand my workflows, go ahead and enable them"). Scheduled
+  workflows also auto-disable after 60 days of repo inactivity — a manual dispatch or
+  any push re-arms them.
+- **Add a `RELEASE_PAT` secret.** A fine-grained PAT with `contents: write` on this
+  repo. The sync pushes the release tag with it because a tag pushed by the default
+  `GITHUB_TOKEN` does **not** trigger `release.yml`.
