@@ -1,6 +1,7 @@
-import { clipboard, screen } from 'electron'
+import { clipboard, screen, shell } from 'electron'
 import { OverlayController } from 'electron-overlay-window'
 import type Store from 'electron-store'
+import { craftOfExileUrl } from '../shared/external-link'
 import { isTownOrHideout } from '../shared/is-town-or-hideout'
 import type {
   AppSettings,
@@ -335,7 +336,16 @@ let consecutiveClipboardFailures = 0
  * so price-checking an item doesn't stomp whatever they had copied. Explicit
  * "Copy to clipboard" actions (trade whispers, regex copy buttons) bypass this.
  */
-async function captureItemFromClipboard(isElevated: () => boolean): Promise<PoeItem | null> {
+/** A successful clipboard capture: the parsed item plus the verbatim clipboard
+ *  text it was parsed from. The raw text is retained for callers that forward the
+ *  exact game item elsewhere (e.g. Craft of Exile's ?eimport=), which a
+ *  re-serialization of the parsed PoeItem couldn't reproduce. */
+interface CapturedItem {
+  item: PoeItem
+  rawText: string
+}
+
+async function captureItemFromClipboard(isElevated: () => boolean): Promise<CapturedItem | null> {
   const restoreClip = snapshotClipboard()
 
   clipboard.clear()
@@ -362,6 +372,10 @@ async function captureItemFromClipboard(isElevated: () => boolean): Promise<PoeI
     }
   }
 
+  // Snapshot the raw item text while it's still on the clipboard, before the
+  // user's prior contents are restored below.
+  const rawText = item ? clipboard.readText() : ''
+
   restoreClip()
 
   if (!item) {
@@ -375,7 +389,7 @@ async function captureItemFromClipboard(isElevated: () => boolean): Promise<PoeI
   }
 
   consecutiveClipboardFailures = 0
-  return item
+  return { item, rawText }
 }
 
 /** Before the hotkey handler does any work, confirm the overlay is attached to the
@@ -418,8 +432,9 @@ export async function runMainHotkeyFlow(store: Store<AppSettings>, isElevated: (
     return null
   }
 
-  const item = await captureItemFromClipboard(isElevated)
-  if (!item) return null
+  const captured = await captureItemFromClipboard(isElevated)
+  if (!captured) return null
+  const { item } = captured
 
   evaluateAndSend(item)
   preloadPriceCheck(item, store)
@@ -467,12 +482,45 @@ export function createPriceCheckHandler(store: Store<AppSettings>, isElevated: (
       if (!(await ensureCorrectGameForHotkey(store))) return
       lastCursorX = screen.getCursorScreenPoint().x
 
-      const item = await captureItemFromClipboard(isElevated)
-      if (!item) return
+      const captured = await captureItemFromClipboard(isElevated)
+      if (!captured) return
 
-      await runPriceCheck(item, store)
+      await runPriceCheck(captured.item, store)
     } catch (err) {
       console.error('[hotkey] Error during price check processing:', err)
+    } finally {
+      hotkeyProcessing = false
+    }
+  }
+}
+
+/** Open the hovered item in Craft of Exile. Copies the item the same way a
+ *  price-check does -- via Ctrl+Alt+C, so rawText is PoE's advanced-mod format,
+ *  which is exactly what CoE's importer requires (it rejects a plain Ctrl+C copy)
+ *  -- then opens craftofexile.com with that text pre-imported (?eimport=) and the
+ *  calculator's game set from the active PoE version. Mirrors Exiled Exchange 2 /
+ *  Awakened PoE Trade's "Open Craft of Exile" action. When nothing is hovered,
+ *  captureItemFromClipboard surfaces the standard no-item hint and we open nothing. */
+export function createOpenCraftOfExileHandler(
+  store: Store<AppSettings>,
+  isElevated: () => boolean,
+): () => Promise<void> {
+  return async function onOpenCraftOfExile(): Promise<void> {
+    if (hotkeyProcessing) return
+    hotkeyProcessing = true
+
+    try {
+      if (!(await ensureCorrectGameForHotkey(store))) return
+      lastCursorX = screen.getCursorScreenPoint().x
+
+      const captured = await captureItemFromClipboard(isElevated)
+      if (!captured) return
+
+      // Awaited so a browser-launch rejection is logged by the catch below rather
+      // than escaping as an unhandled promise rejection.
+      await shell.openExternal(craftOfExileUrl(captured.rawText, getPoeVersion()))
+    } catch (err) {
+      console.error('[hotkey] Error opening Craft of Exile:', err)
     } finally {
       hotkeyProcessing = false
     }

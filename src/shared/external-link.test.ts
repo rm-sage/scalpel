@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { externalLinkUrl, ninjaLinkUrl, ninjaLeagueSegment } from './external-link'
+import { craftOfExileUrl, externalLinkUrl, ninjaLinkUrl, ninjaLeagueSegment } from './external-link'
 
 describe('externalLinkUrl', () => {
   it('uses baseType for Rare items (random name has no wiki page)', () => {
@@ -41,6 +41,24 @@ describe('externalLinkUrl', () => {
   it('strips apostrophes for poedb slugs', () => {
     const url = externalLinkUrl('poedb', { name: "Jeweller's Orb", baseType: "Jeweller's Orb", rarity: 'Currency' }, 1)
     expect(url).toBe('https://poedb.tw/us/Jewellers_Orb')
+  })
+})
+
+describe('craftOfExileUrl', () => {
+  it('imports the verbatim item text into the PoE1 calculator', () => {
+    const item = 'Item Class: Belts\nRarity: Unique\nHeadhunter\nLeather Belt'
+    expect(craftOfExileUrl(item, 1)).toBe(`https://www.craftofexile.com/?game=poe1&eimport=${encodeURIComponent(item)}`)
+  })
+
+  it('selects the poe2 game for poeVersion 2', () => {
+    expect(craftOfExileUrl('x', 2)).toBe('https://www.craftofexile.com/?game=poe2&eimport=x')
+  })
+
+  it('URL-encodes newlines, spaces and reserved characters so the item survives the query string', () => {
+    const url = craftOfExileUrl('A B\n+25% Quality', 1)
+    expect(url).toBe('https://www.craftofexile.com/?game=poe1&eimport=A%20B%0A%2B25%25%20Quality')
+    expect(url).not.toContain('\n')
+    expect(url).not.toContain(' ')
   })
 })
 

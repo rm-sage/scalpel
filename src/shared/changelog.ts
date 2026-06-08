@@ -1,5 +1,11 @@
 export const CHANGELOG: { version: string; notes: string[] }[] = [
   {
+    version: '0.9.12-rc3-rmsage.1',
+    notes: [
+      'Added an Open Craft of Exile hotkey: bind it in Settings → Macros to open the hovered item, pre-imported, in the Craft of Exile crafting simulator.',
+    ],
+  },
+  {
     version: '0.9.12-rc3',
     notes: [
       'Added draggable tier chips that scrub price-check affix minimums across their roll range.',

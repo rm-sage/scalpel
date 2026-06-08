@@ -52,18 +52,31 @@ export const POE_NINJA_POE2_EXCHANGE = 'https://poe.ninja/poe2/api/economy/excha
  *  best-effort path with the direct-ninja path retained as fallback. */
 export const POE2_NINJA_PROXY = 'https://api.exiledexchange2.dev/proxy'
 
-/** Scalpel's GitHub repo home. Base for the release/issue URLs below and the
- *  Support Development link in Settings. */
+/** Scalpel's GitHub repo home. Base for the issue URL and the Support
+ *  Development link in Settings. Kept on UPSTREAM so bug reports and the
+ *  support link land on the original project, not this personal fork. */
 export const GITHUB_REPO_URL = 'https://github.com/scalpelpoe/scalpel'
 
-/** GitHub releases page (user-facing, for manual download links in banners) */
-export const GITHUB_RELEASES_PAGE = `${GITHUB_REPO_URL}/releases/latest`
+// --- Fork update feed -------------------------------------------------------
+// This is a personal fork (rm-sage/scalpel) carrying an iCUE focus-restore fix.
+// It self-updates from its OWN GitHub releases, so ONLY the auto-update feed and
+// its manual-download fallback are repointed to the fork. Every other endpoint —
+// the issue/support links above and all live game-data/CDN URLs below — stays on
+// upstream so the fork keeps consuming upstream data unchanged.
 
-/** GitHub new-issue page, opened (with a prefilled body) by the bug reporter */
+/** GitHub repo (owner/name) that hosts this fork's release builds. */
+export const FORK_RELEASES_REPO = 'rm-sage/scalpel'
+
+/** GitHub releases page (user-facing, for manual download links in banners).
+ *  Repointed to the fork so the manual-download fallback also carries the fix. */
+export const GITHUB_RELEASES_PAGE = `https://github.com/${FORK_RELEASES_REPO}/releases/latest`
+
+/** GitHub new-issue page, opened (with a prefilled body) by the bug reporter.
+ *  Intentionally left on UPSTREAM. */
 export const GITHUB_NEW_ISSUE_URL = `${GITHUB_REPO_URL}/issues/new`
 
-/** GitHub API for update checks */
-export const GITHUB_RELEASES_API = 'https://api.github.com/repos/scalpelpoe/scalpel/releases/latest'
+/** GitHub API for update checks — THE auto-update feed, repointed to the fork. */
+export const GITHUB_RELEASES_API = `https://api.github.com/repos/${FORK_RELEASES_REPO}/releases/latest`
 
 /** GitHub for Electron binary downloads (only during full version upgrades) */
 export const ELECTRON_RELEASES = 'https://github.com/electron/electron/releases/download'

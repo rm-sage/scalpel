@@ -49,6 +49,7 @@ describe('appMacroScope', () => {
       'openRegex',
       'openWiki',
       'openPoeDb',
+      'openCraftOfExile',
       'pasteRegex',
       'useSavedRegex',
       'closeOverlay',

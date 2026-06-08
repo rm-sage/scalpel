@@ -79,6 +79,7 @@ import { applyPendingUpdate } from './update/update-swap'
 import { getCurrentFilter, loadFilter, onFilterLoaded } from './filter-state'
 import {
   createHotkeyHandler,
+  createOpenCraftOfExileHandler,
   createPriceCheckHandler,
   reEvaluateLastItem,
   setOpenSide,
@@ -531,6 +532,7 @@ app.whenReady().then(() => {
   // Start low-level keyboard hook
   const onHotkeyFired = createHotkeyHandler(store, isElevated)
   const onPriceCheckFired = createPriceCheckHandler(store, isElevated)
+  const onOpenCraftOfExile = createOpenCraftOfExileHandler(store, isElevated)
   const hotkey = store.get('hotkey')
   if (!IS_E2E) {
     startHotkeyListener(onHotkeyFired)
@@ -656,6 +658,12 @@ app.whenReady().then(() => {
           regexRemoteFlushLeft(getOverlayAnchor('regex-remote')),
         )
       })
+      return
+    }
+    if (action === 'openCraftOfExile') {
+      // Browser-only (no Scalpel view to show), so handle it before the overlay-window
+      // guard below: copies the hovered item and opens it in Craft of Exile.
+      void onOpenCraftOfExile()
       return
     }
     if (action.startsWith('plugin-overlay:')) {

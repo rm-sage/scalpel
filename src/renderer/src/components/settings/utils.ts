@@ -44,6 +44,7 @@ export const APP_MACRO_DEFS = [
   { id: 'openRegex', label: 'Open Regex Tool' },
   { id: 'openWiki', label: 'Open Wiki' },
   { id: 'openPoeDb', label: 'Open PoEDB' },
+  { id: 'openCraftOfExile', label: 'Open Craft of Exile' },
   { id: 'pasteRegex', label: 'Paste Current Regex' },
   { id: 'useSavedRegex', label: 'Use Saved Regex' },
   { id: 'closeOverlay', label: 'Close Overlay' },
