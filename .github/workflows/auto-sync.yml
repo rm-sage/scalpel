@@ -39,9 +39,12 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          # PAT so the tag push at the end triggers release.yml. A push made with
-          # the default GITHUB_TOKEN does not start further workflow runs.
-          token: ${{ secrets.RELEASE_PAT }}
+          # PAT so the tag push at the end triggers release.yml (a push made with
+          # the default GITHUB_TOKEN does not start further workflow runs). Falls
+          # back to GITHUB_TOKEN when RELEASE_PAT isn't set yet, so a scheduled run
+          # before the one-time setup no-ops cleanly instead of failing at checkout
+          # (it'll still merge/verify; only the auto-ship tag-trigger needs the PAT).
+          token: ${{ secrets.RELEASE_PAT || github.token }}
 
       - uses: actions/setup-node@v4
         with:
