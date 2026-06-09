@@ -35,25 +35,33 @@ export function matchModToStat(
   preferLocal = false,
   modType: 'explicit' | 'crafted' | 'implicit' | 'enchant' | 'imbued' | 'sanctum' = 'explicit',
   preferIndexableSupport = false,
-  preferJewel = false,
+  preferQualifier: string | null = null,
 ): { statId: string; value: number | null; option?: number; aggregated?: boolean } | null {
   // Check direct mappings first (for mods with completely different trade API wording)
   const directKey = modText.toLowerCase().trim()
   if (DIRECT_MOD_MAPPINGS[directKey]) return DIRECT_MOD_MAPPINGS[directKey]
 
-  const result = _matchModToStat(modText, preferLocal, modType, preferIndexableSupport, preferJewel)
+  const result = _matchModToStat(modText, preferLocal, modType, preferIndexableSupport, preferQualifier)
   if (result && STAT_ID_REMAPS[result.statId]) {
     result.statId = STAT_ID_REMAPS[result.statId]
   }
   return result
 }
 
+/** Trailing category qualifier on a stat text, e.g. "(Charm)" / "(Flask)" /
+ *  "(Jewel)". The trade API appends these to disambiguate identical display text
+ *  across item categories ("#% increased Duration (Charm)" vs "(Flask)"); the
+ *  item clipboard carries only the bare text, so the matcher strips the qualifier
+ *  and prefers the entry whose qualifier matches the item's class. `(Local)` is
+ *  handled separately because it also gates local-vs-global affix logic. */
+const TRAILING_QUALIFIER_RE = /\s*\(([^)]+)\)\s*$/
+
 function _matchModToStat(
   modText: string,
   preferLocal = false,
   modType: 'explicit' | 'crafted' | 'implicit' | 'enchant' | 'imbued' | 'sanctum' = 'explicit',
   preferIndexableSupport = false,
-  preferJewel = false,
+  preferQualifier: string | null = null,
 ): { statId: string; value: number | null; option?: number; aggregated?: boolean } | null {
   const statEntries: StatEntry[] = getStatEntries()
   const typePrefix = `${modType}.`
@@ -83,7 +91,7 @@ function _matchModToStat(
       aggregated?: boolean
       _textLen: number
     } | null = null
-    let jewelMatch: {
+    let qualifiedMatch: {
       statId: string
       value: number | null
       option?: number
@@ -96,10 +104,13 @@ function _matchModToStat(
       if (BLOCKED_STAT_IDS.has(entry.id)) continue
       if (preferIndexableSupport ? !INDEXABLE_SUPPORT_RE.test(entry.id) : INDEXABLE_SUPPORT_RE.test(entry.id)) continue
       const isLocal = entry.text.includes('(Local)')
-      const isJewel = entry.text.includes('(Jewel)')
+      // A non-Local trailing category qualifier like "(Charm)"/"(Flask)"/"(Jewel)".
+      // The clipboard never carries it, so strip it for pattern matching and bucket
+      // the entry by qualifier -- it only counts when the item asked for that category.
+      const qualifier = isLocal ? null : (TRAILING_QUALIFIER_RE.exec(entry.text)?.[1] ?? null)
       let textForPattern = entry.text
       if (isLocal) textForPattern = textForPattern.replace(/\s*\(Local\)/, '')
-      else if (isJewel) textForPattern = textForPattern.replace(/\s*\(Jewel\)/, '')
+      else if (qualifier) textForPattern = textForPattern.replace(TRAILING_QUALIFIER_RE, '')
       const pattern = statTextToPattern(textForPattern)
       const match = normalizedVariant.match(pattern)
       if (match) {
@@ -138,8 +149,12 @@ function _matchModToStat(
         }
         if (isLocal) {
           if (!localMatch || entry.text.length > localMatch._textLen) localMatch = result
-        } else if (isJewel) {
-          if (!jewelMatch || entry.text.length > jewelMatch._textLen) jewelMatch = result
+        } else if (qualifier) {
+          // Only the requested category's qualified entry is a candidate; entries
+          // for other categories (e.g. "(Flask)" when matching a charm) are ignored
+          // so they can't pollute the plain bucket once their qualifier is stripped.
+          if (qualifier === preferQualifier && (!qualifiedMatch || entry.text.length > qualifiedMatch._textLen))
+            qualifiedMatch = result
         } else {
           if (!nonLocalMatch || entry.text.length > nonLocalMatch._textLen) nonLocalMatch = result
         }
@@ -148,7 +163,7 @@ function _matchModToStat(
 
     let result = nonLocalMatch
     if (preferLocal && localMatch) result = localMatch
-    else if (preferJewel && jewelMatch) result = jewelMatch
+    else if (qualifiedMatch) result = qualifiedMatch
     if (result) return result
   }
 
@@ -196,7 +211,16 @@ function _matchModToStat(
       const statPlain = entry.text.replace(/#/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
       const variantPlain = variant.replace(/\d+/g, '').replace(/\s+/g, ' ').trim().toLowerCase()
       if (variantPlain.length <= 10) continue
-      if (statPlain.startsWith(variantPlain) || statPlain.endsWith(variantPlain)) {
+      // The chunk this fallback lets the clipboard hide is always an unscalable
+      // roll/chance fragment (e.g. "#% chance to ", "by #% of their value"), which
+      // leaves a "%" behind once "#" is stripped. If the dropped end is descriptive
+      // text instead (e.g. "Allies in your Presence have"), this is a different stat,
+      // not a hidden-prefix variant -- reject it so a plain "increased Attack Speed"
+      // doesn't grab "Allies in your Presence have #% increased Attack Speed" (#399).
+      let dropped: string | null = null
+      if (statPlain.endsWith(variantPlain)) dropped = statPlain.slice(0, statPlain.length - variantPlain.length)
+      else if (statPlain.startsWith(variantPlain)) dropped = statPlain.slice(variantPlain.length)
+      if (dropped !== null && dropped.includes('%')) {
         if (!bestMatch || entry.text.length > bestMatch._textLen) {
           bestMatch = { statId: entry.id, value: null, _textLen: entry.text.length }
         }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { PriceInfo } from '../../shared/types'
-import { applyResponse } from './prices.poe2'
+import type { PriceEntry, PriceInfo } from '../../shared/types'
+import { applyProxyResponse, applyResponse, fetchPoe2PricesFromProxy } from './prices.poe2'
 
 // Helper: minimal valid Poe2ExchangeResponse shape for the parts applyResponse
 // reads. The real ninja payload has more fields but they're ignored.
@@ -250,4 +250,53 @@ describe('applyResponse (PoE2 exchange math)', () => {
     )
     expect(map.get('divine orb')?.ninjaCategory).toBe('currency')
   })
+})
+
+describe('PoE2 price entries', () => {
+  it('applyResponse collects entries with display names and category', () => {
+    const resp = {
+      core: {
+        primary: 'divine',
+        secondary: 'exalted',
+        rates: { exalted: 50 },
+        items: [
+          { id: 'divine', name: 'Divine Orb' },
+          { id: 'exalted', name: 'Exalted Orb' },
+        ],
+      },
+      lines: [{ id: 'chaos', primaryValue: 0.01, sparkline: { data: [1, 2] } }],
+      items: [{ id: 'chaos', name: 'Chaos Orb' }],
+    }
+    const priceMap = new Map()
+    const entries: PriceEntry[] = []
+    applyResponse(resp as never, priceMap, 'currency', entries)
+
+    expect(entries.find((e) => e.name === 'Divine Orb')).toMatchObject({ category: 'currency', divineValue: 1 })
+    const chaos = entries.find((e) => e.name === 'Chaos Orb')
+    expect(chaos).toMatchObject({ category: 'currency', divineValue: 0.01 })
+    expect(chaos?.graph).toEqual([1, 2])
+  })
+
+  it('applyProxyResponse kebab-cases an unmapped overview type for the entry category', () => {
+    const resp = {
+      core: { primary: 'divine', rates: { exalted: 40 } },
+      itemOverviews: [{ type: 'UniqueWeapons', lines: [{ name: 'Some Unique', primaryValue: 5 }] }],
+    }
+    const priceMap = new Map()
+    const entries: import('../../shared/types').PriceEntry[] = []
+    applyProxyResponse(resp as never, priceMap, {}, undefined, entries)
+    expect(entries.find((e) => e.name === 'Some Unique')?.category).toBe('unique-weapons')
+  })
+})
+
+it('fetchPoe2PricesFromProxy returns entries', async () => {
+  const resp = {
+    core: { primary: 'divine', rates: { exalted: 40 } },
+    itemOverviews: [{ type: 'Currency', lines: [{ name: 'Alchemy Orb', primaryValue: 0.1 }] }],
+  }
+  const fetchJson = async () => resp
+  const categoryByType = { Currency: 'currency' }
+  const result = await fetchPoe2PricesFromProxy('Standard', fetchJson as never, categoryByType, {})
+  expect(result.entries.find((e) => e.name === 'Alchemy Orb')).toMatchObject({ category: 'currency' })
+  expect(result.entries.find((e) => e.name === 'Divine Orb')).toMatchObject({ category: 'currency' })
 })

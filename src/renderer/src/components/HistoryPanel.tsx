@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { FilterVersion, HistoryEntry, PoeItem } from '../../../shared/types'
+import type { FilterChange, FilterVersion, HistoryEntry, PoeItem } from '../../../shared/types'
 import { Save, Pin } from '@icon-park/react'
+import { CollapsibleSection } from '../shared/CollapsibleSection'
 import { IP, iconMap } from '../shared/constants'
 
 interface Props {
@@ -23,10 +24,18 @@ export function HistoryPanel({ item }: Props): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [checkpointLabel, setCheckpointLabel] = useState('')
   const [showCheckpointInput, setShowCheckpointInput] = useState(false)
+  const [canReset, setCanReset] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [changes, setChanges] = useState<FilterChange[]>([])
 
   const refresh = (): void => {
     window.api.getHistory().then(setEntries)
     window.api.listVersions().then(setVersions)
+    window.api.getFilterResetAvailability().then((r) => {
+      if (!r.canReset) setConfirmReset(false)
+      setCanReset(r.canReset)
+    })
+    window.api.getFilterChanges().then(setChanges)
   }
 
   useEffect(() => {
@@ -42,6 +51,17 @@ export function HistoryPanel({ item }: Props): JSX.Element {
       refresh()
     } else {
       setError(result.error ?? 'Failed to undo')
+    }
+  }
+
+  const handleReset = async (): Promise<void> => {
+    setError(null)
+    const result = await window.api.resetFilterToOnline()
+    if (result.ok) {
+      setConfirmReset(false)
+      refresh()
+    } else {
+      setError(result.error ?? 'Failed to reset filter')
     }
   }
 
@@ -172,38 +192,63 @@ export function HistoryPanel({ item }: Props): JSX.Element {
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="settings-section-title">Filter Versions</div>
-          {showCheckpointInput ? (
-            <div className="flex gap-1 items-center">
-              <input
-                type="text"
-                placeholder="Label (optional)"
-                value={checkpointLabel}
-                onChange={(e) => setCheckpointLabel(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleCreateCheckpoint()
-                  if (e.key === 'Escape') setShowCheckpointInput(false)
-                }}
-                autoFocus
-                className="w-[120px] px-1.5 py-[3px] text-[10px] bg-black/30"
-              />
+          <div className="flex gap-1.5 items-center">
+            {canReset &&
+              !showCheckpointInput &&
+              (confirmReset ? (
+                <div className="flex gap-1 items-center">
+                  <button
+                    onClick={handleReset}
+                    className="text-[10px] font-semibold text-white px-2 py-[3px] bg-danger"
+                  >
+                    You sure?
+                  </button>
+                  <button onClick={() => setConfirmReset(false)} className="px-1.5 py-[3px] text-[10px]">
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmReset(true)}
+                  title="Discard local edits and restore the online filter"
+                  className="text-[10px] text-text-dim px-2 py-[3px]"
+                >
+                  Reset Filter
+                </button>
+              ))}
+            {showCheckpointInput ? (
+              <div className="flex gap-1 items-center">
+                <input
+                  type="text"
+                  placeholder="Label (optional)"
+                  value={checkpointLabel}
+                  onChange={(e) => setCheckpointLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateCheckpoint()
+                    if (e.key === 'Escape') setShowCheckpointInput(false)
+                  }}
+                  autoFocus
+                  className="w-[120px] px-1.5 py-[3px] text-[10px] bg-black/30"
+                />
+                <button
+                  onClick={handleCreateCheckpoint}
+                  className="text-[10px] font-semibold px-2 py-[3px] text-[#171821] bg-accent"
+                >
+                  Save
+                </button>
+                <button onClick={() => setShowCheckpointInput(false)} className="px-1.5 py-[3px] text-[10px]">
+                  ✕
+                </button>
+              </div>
+            ) : (
               <button
-                onClick={handleCreateCheckpoint}
-                className="text-[10px] font-semibold px-2 py-[3px] text-[#171821] bg-accent"
+                onClick={() => setShowCheckpointInput(true)}
+                className="text-[10px] font-semibold px-[10px] py-[3px] text-[#171821] bg-accent"
               >
-                Save
+                Create Checkpoint
               </button>
-              <button onClick={() => setShowCheckpointInput(false)} className="px-1.5 py-[3px] text-[10px]">
-                ✕
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowCheckpointInput(true)}
-              className="text-[10px] font-semibold px-[10px] py-[3px] text-[#171821] bg-accent"
-            >
-              Create Checkpoint
-            </button>
-          )}
+            )}
+          </div>
         </div>
 
         {versions.length === 0 ? (
@@ -287,6 +332,41 @@ export function HistoryPanel({ item }: Props): JSX.Element {
           </div>
         )}
       </div>
+
+      <CollapsibleSection title={<span className="text-xs text-text-dim">Filter Changes ({changes.length})</span>}>
+        {changes.length === 0 ? (
+          <div className="mt-2 p-4 text-center text-text-dim text-xs">No changes recorded.</div>
+        ) : (
+          <div className="mt-2 flex flex-col gap-0.5 max-h-[360px] overflow-y-auto">
+            {changes.map((change) => {
+              const itemIconUrl = change.itemName ? iconMap[change.itemName] : undefined
+              return (
+                <div key={change.id} className="flex items-center gap-2 rounded" style={{ padding: '7px 8px' }}>
+                  <div className="w-[22px] h-[22px] shrink-0 flex items-center justify-center">
+                    {itemIconUrl ? (
+                      <img
+                        src={itemIconUrl}
+                        alt=""
+                        className="w-[22px] h-[22px] object-contain"
+                        style={{ imageRendering: 'auto' }}
+                      />
+                    ) : (
+                      <span className="text-sm leading-[22px]">✎</span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] leading-4 overflow-hidden text-ellipsis whitespace-nowrap text-text-dim">
+                      {change.itemName && <span className="font-bold">{change.itemName}: </span>}
+                      {change.description}
+                    </div>
+                    <div className="text-[9px] text-text-dim mt-px">{formatTime(change.timestamp)}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CollapsibleSection>
     </div>
   )
 }

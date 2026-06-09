@@ -1,3 +1,5 @@
+import { m } from '../../../shared/paraglide/messages.js'
+
 export function StepHeader({
   title,
   subtitle,
@@ -13,7 +15,7 @@ export function StepHeader({
     <div className="mb-7">
       {stepNum != null && totalSteps != null && (
         <div className="text-[10px] text-text-dim mb-2 tracking-[1px]">
-          STEP {stepNum} OF {totalSteps}
+          {m.onb_step_of({ num: stepNum, total: totalSteps })}
         </div>
       )}
       <h1 className="text-[22px] font-bold text-text mb-2">{title}</h1>

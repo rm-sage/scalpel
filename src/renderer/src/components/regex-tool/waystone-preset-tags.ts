@@ -70,13 +70,28 @@ interface PresetTagState {
   avoid: Set<number>
   tier: { min: number; max: number }
   rarity: { corrupted: boolean; uncorrupted: boolean }
-  dropOverEnabled: boolean
-  dropOverValue: number
   delirious: boolean
   anyPack: boolean
+  /** "Quantity & yield" thresholds (0/null = unset). */
+  quantities: {
+    packSize: number | null
+    monsterEffectiveness: number | null
+    monsterRarity: number | null
+    itemRarity: number | null
+    dropChance: number | null
+  }
   wantValues: Record<number, number>
   avoidValues: Record<number, number>
 }
+
+/** Short chip label per quantity field. */
+const QUANTITY_TAG_LABELS: Array<[keyof PresetTagState['quantities'], string]> = [
+  ['packSize', 'pack'],
+  ['monsterEffectiveness', 'effect'],
+  ['monsterRarity', 'mon-rar'],
+  ['itemRarity', 'iir'],
+  ['dropChance', 'drop'],
+]
 
 /** Generate the auto-tag list for a waystone preset, mirroring the maps generator's
  *  pattern: one tag per selected mod plus per-qualifier tags. Tags carry a `source`
@@ -102,13 +117,16 @@ export function generateWaystonePresetTags(state: PresetTagState): RegexPresetTa
     tags.push({ text: '!corr', color: TAB_COLORS.qualifiers, source: 'qualifier', sourceId: 'uncorrupted' })
   }
 
-  if (state.dropOverEnabled) {
-    tags.push({
-      text: `drop>${state.dropOverValue}`,
-      color: TAB_COLORS.qualifiers,
-      source: 'qualifier',
-      sourceId: 'dropOver',
-    })
+  for (const [key, label] of QUANTITY_TAG_LABELS) {
+    const value = state.quantities[key]
+    if (value && value > 0) {
+      tags.push({
+        text: `${label}>=${value}`,
+        color: TAB_COLORS.qualifiers,
+        source: 'qualifier',
+        sourceId: key,
+      })
+    }
   }
   if (state.delirious) {
     tags.push({ text: 'delir', color: TAB_COLORS.qualifiers, source: 'qualifier', sourceId: 'delirious' })

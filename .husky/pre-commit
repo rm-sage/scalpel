@@ -1,3 +1,8 @@
+# Regenerate the gitignored Paraglide i18n runtime so the tsc + vitest steps
+# below import message bindings that match the current messages/*.json. postinstall
+# only runs on `npm install`, so without this an edited message catalog would be
+# typechecked against a stale runtime and the commit would fail spuriously.
+npm run build:i18n
 npx lint-staged
 npx tsc --noEmit
 npm run test

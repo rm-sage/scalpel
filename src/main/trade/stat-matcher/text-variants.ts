@@ -44,6 +44,17 @@ function generateTextVariants(text: string): string[] {
     variants.push(text.replace(/\ban additional [A-Za-z]+\b/i, `1 additional ${noun}s`))
   }
 
+  // PoE2 trade folds an always-100% "chance to <effect>" mod into a valueless binary
+  // stat ("Blind Chilled enemies on Hit"), but the clipboard still prints the chance
+  // ("100% chance to Blind Chilled enemies on Hit", or higher when corruption over-rolls
+  // it). Strip the leading "#% chance to " so the binary stat is reachable. Only used as
+  // a fallback: a real "#% chance to ..." stat matches the unstripped text (variant 0)
+  // first, so this never shadows a genuine rollable chance stat. (The Pandemonius)
+  const chanceToMatch = text.match(/^\d+(?:\.\d+)?% chance to (.+)$/i)
+  if (chanceToMatch) {
+    variants.push(chanceToMatch[1])
+  }
+
   // Oxford comma: the PoE2 clipboard writes three-item lists as "A, B, and C"
   // (e.g. "Global Armour, Evasion, and Energy Shield") but the trade API stat
   // text drops the comma before "and" ("A, B and C"). Strip it so they match.

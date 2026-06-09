@@ -77,6 +77,19 @@ describe('uninstallPlugin', () => {
     expect(r.ok).toBe(false)
   })
 
+  it('removes id from unpacked.json when uninstalling a side-loaded plugin', async () => {
+    mockFs.files.set(join(TEST_USER_DATA, 'plugins', 'installed.json'), JSON.stringify(['hello-world']))
+    mockFs.files.set(join(TEST_USER_DATA, 'plugins', 'unpacked.json'), JSON.stringify(['hello-world']))
+    mockFs.files.set(join(TEST_USER_DATA, 'plugins', 'hello-world', 'plugin.js'), 'X')
+
+    const { uninstallPlugin } = await import('./uninstall')
+    uninstallPlugin('hello-world')
+
+    const raw = mockFs.files.get(join(TEST_USER_DATA, 'plugins', 'unpacked.json'))
+    const unpacked = raw != null ? JSON.parse(raw) : []
+    expect(unpacked).toEqual([])
+  })
+
   it('evicts the storage cache so a reinstall does not flush stale data', async () => {
     const storageFile = join(TEST_USER_DATA, 'plugins', 'hello-world', 'storage.json')
     mockFs.files.set(join(TEST_USER_DATA, 'plugins', 'installed.json'), JSON.stringify(['hello-world']))

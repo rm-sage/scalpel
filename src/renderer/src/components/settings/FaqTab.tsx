@@ -1,13 +1,14 @@
 import { CHANGELOG } from '../../../../shared/changelog'
-import { FAQ } from '../../../../shared/faq'
+import { getFaq } from '../../../../shared/faq'
 import { FaqItem } from './FaqItem'
 import { CollapsibleSection } from '../../shared/CollapsibleSection'
+import { m } from '../../../../shared/paraglide/messages.js'
 
 export function FaqTab(): JSX.Element {
   return (
     <>
       <div className="mt-3 flex flex-col gap-3">
-        {FAQ.map((section) => (
+        {getFaq().map((section) => (
           <div key={section.section} className="flex flex-col gap-3">
             <div className="settings-section-title mt-1">{section.section}</div>
             {section.items.map((item) => (
@@ -19,7 +20,7 @@ export function FaqTab(): JSX.Element {
 
       {/* Changelog */}
       <section>
-        <CollapsibleSection title={<span className="text-xs text-text-dim">Changelog</span>}>
+        <CollapsibleSection title={<span className="text-xs text-text-dim">{m.settings_changelog()}</span>}>
           <div className="mt-2 flex flex-col gap-[10px]">
             {CHANGELOG.map((entry) => (
               <div key={entry.version}>

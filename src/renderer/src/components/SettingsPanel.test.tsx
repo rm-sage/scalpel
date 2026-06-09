@@ -100,6 +100,33 @@ describe('SettingsPanel tab routing', () => {
     expect(screen.getByText('General Tab')).toBeInTheDocument()
   })
 
+  it('shows the Developer tab button in app mode even when developerMode is off', () => {
+    render(
+      <SettingsPanel
+        settings={settings({ developerMode: false })}
+        onSettingsChange={vi.fn()}
+        mode="app"
+        onEditProfile={vi.fn()}
+      />,
+    )
+
+    // The tab button is labelled "Developer"; the mocked panel body is "Developer Tab".
+    expect(screen.getByText('Developer')).toBeInTheDocument()
+  })
+
+  it('hides the Developer tab button in overlay mode when developerMode is off', () => {
+    render(
+      <SettingsPanel
+        settings={settings({ developerMode: false })}
+        onSettingsChange={vi.fn()}
+        mode="overlay"
+        onEditProfile={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('Developer')).not.toBeInTheDocument()
+  })
+
   it('opens the Filter tab from a tab request', () => {
     render(
       <SettingsPanel

@@ -108,6 +108,16 @@ export const TIER_DATA_MANIFEST_URL =
 /** Base URL for the per-game tier datasets. Append `tiers-poe1.json` / `tiers-poe2.json`. */
 export const TIER_DATA_BASE_URL = 'https://raw.githubusercontent.com/scalpelpoe/scalpel/main/src/shared/data/tiers/'
 
+/** Runtime-fetched manifest for the premium-mods dataset (hash + schemaVersion).
+ *  Polled daily; when its hash changes the client downloads the full
+ *  premium-mods.json below. Bundled copy is the offline fallback. */
+export const PREMIUM_MODS_MANIFEST_URL =
+  'https://raw.githubusercontent.com/scalpelpoe/scalpel/main/src/shared/data/items/premium-mods-manifest.json'
+
+/** Full premium-mods dataset (single file covers both PoE1 and PoE2). */
+export const PREMIUM_MODS_URL =
+  'https://raw.githubusercontent.com/scalpelpoe/scalpel/main/src/shared/data/items/premium-mods.json'
+
 /** "Powered by..." attribution links shown under the regex output bar. The
  *  underlying mod / regex data ships from these projects; we point users at the
  *  source so they can compare against the upstream tools and contribute upstream. */

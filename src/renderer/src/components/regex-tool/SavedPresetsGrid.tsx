@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CloseSmall } from '@icon-park/react'
 import type { RegexPreset } from '../../../../shared/types'
+import type { GeneratorKey } from './generator-types'
 import { prettyHotkey } from '../settings/utils'
 import { textColorForBg } from './preset-colors'
 
@@ -12,7 +13,7 @@ interface SavedPresetsGridProps {
   presets: RegexPreset[]
   /** Active generator tab. Presets with no generator are treated as 'maps'
    *  (legacy default before the per-game split). */
-  generator: 'maps' | 'custom' | 'flasks' | 'waystones' | 'tablet' | 'vendor'
+  generator: GeneratorKey
   loadPreset: (preset: RegexPreset) => void
   deletePreset: (id: string) => void
   /** Returns a hotkey accelerator string if the preset has a bound macro, else undefined. */

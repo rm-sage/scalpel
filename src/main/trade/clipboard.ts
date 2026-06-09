@@ -67,7 +67,11 @@ function cleanBaseType(
   itemClass?: string,
   affixNames?: { prefix?: string; suffix?: string },
 ): string {
-  const clean = rawBase.replace(/^Superior\s+/i, '')
+  // PoE2 prepends "Superior" (quality) or "Exceptional" (extra rune sockets) to
+  // a white base's name; neither is part of the actual base type, so peel them off
+  // before matching. "Advanced"/"Expert" are NOT stripped -- those are genuinely
+  // distinct PoE2 base types.
+  const clean = rawBase.replace(/^Superior\s+/i, '').replace(/^Exceptional\s+/i, '')
   if (rarity === 'Magic') {
     // First try bases specific to this item class for the active game (avoids
     // false matches and keeps PoE1/PoE2 base lists from shadowing each other).
@@ -903,13 +907,17 @@ function parseAdvancedMods(text: string): AdvancedMod[] {
         currentMod.randomSupport = true
       }
 
-      // Parse roll ranges: "41(39-42)%" or "+140(130-144)" or "-18(-20--10)%"
-      const rangeMatches = line.matchAll(/(-?\d+(?:\.\d+)?)\((-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)\)/g)
+      // Parse roll ranges: "41(39-42)%", "+140(130-144)", "-18(-20--10)%", or the
+      // single-value form a corruption-overrolled fixed mod uses ("85(75)%" -- the
+      // value exceeds the listed base). The "-max" half is optional; when absent the
+      // base is a single value, so min === max (issue #378).
+      const rangeMatches = line.matchAll(/(-?\d+(?:\.\d+)?)\((-?\d+(?:\.\d+)?)(?:-(-?\d+(?:\.\d+)?))?\)/g)
       for (const rm of rangeMatches) {
+        const min = parseFloat(rm[2])
         currentMod.ranges.push({
           value: parseFloat(rm[1]),
-          min: parseFloat(rm[2]),
-          max: parseFloat(rm[3]),
+          min,
+          max: rm[3] !== undefined ? parseFloat(rm[3]) : min,
         })
       }
     }

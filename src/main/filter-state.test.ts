@@ -1,7 +1,7 @@
-import { mkdtempSync, writeFileSync } from 'fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const MOCK_USER_DATA = vi.hoisted(() => `${process.env.TEMP ?? process.cwd()}\\scalpel-filter-state-${Date.now()}`)
 
@@ -26,8 +26,13 @@ Show
 `
 
 describe('filter-state', () => {
+  const PRIOR_E2E = process.env.SCALPEL_E2E
   beforeEach(() => {
     clearFilterState()
+  })
+  afterEach(() => {
+    if (PRIOR_E2E === undefined) delete process.env.SCALPEL_E2E
+    else process.env.SCALPEL_E2E = PRIOR_E2E
   })
 
   it('clears loaded filter resources when loading an empty path', () => {
@@ -51,6 +56,23 @@ describe('filter-state', () => {
     expect(getColorFrequencies()).toEqual({})
     expect(getIntents().intents).toEqual([])
     expect(__hasKnownBaseTypeForTest('Zzz Scalpel Test Base')).toBe(false)
+  })
+
+  it('auto-repairs a damaged filter on load', () => {
+    delete process.env.SCALPEL_E2E
+    // Block keeps a real condition (Rarity), so repair strips only the dangling
+    // BaseType and leaves a valid block to inspect (rather than removing it).
+    const damaged = ['#name: Dmg', 'Show', '\tRarity Normal', '\tBaseType ==', '\tSetTextColor 255 0 0 255', ''].join(
+      '\n',
+    )
+    const path = writeFilter(damaged)
+    const file = loadFilter(path)
+    expect(file).not.toBeNull()
+    // On-disk file was repaired.
+    expect(readFileSync(path, 'utf-8')).not.toMatch(/BaseType ==/)
+    // Loaded model has no empty conditions and kept the Rarity condition.
+    expect(getCurrentFilter()!.blocks[0].conditions.every((c) => c.values.length > 0)).toBe(true)
+    expect(getCurrentFilter()!.blocks[0].conditions.some((c) => c.type === 'Rarity')).toBe(true)
   })
 
   it('clears stale filter state after a failed load', () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { buildWaystoneRegex } from './waystone-engine'
+import { buildWaystoneRegex, type WaystoneQuantities } from './waystone-engine'
+import { generateNumberRegex } from './waystone-number-regex'
 import { generateWaystoneRegex } from './__fixtures__/poe2re/WaystoneResult'
 import type { SelectOption } from './__fixtures__/poe2re/SelectOption'
 import type { Settings } from './__fixtures__/poe2re/Settings'
@@ -30,10 +31,13 @@ function makeSettings(overrides: {
   tierMax?: number
   corrupted?: boolean
   uncorrupted?: boolean
-  dropOverEnabled?: boolean
-  dropOverValue?: number
   delirious?: boolean
   anyPack?: boolean
+  packSize?: number | null
+  monsterEffectiveness?: number | null
+  monsterRarity?: number | null
+  itemRarity?: number | null
+  dropChance?: number | null
   prefixSelectType?: 'any' | 'all'
   prefixIds?: number[]
   suffixIds?: number[]
@@ -73,8 +77,10 @@ function makeSettings(overrides: {
       modifier: {
         over100: overrides.over100 ?? false,
         round10: overrides.round10 ?? false,
-        dropOverX: overrides.dropOverEnabled ?? false,
-        dropOverValue: overrides.dropOverValue ?? 100,
+        // Drop chance moved to the "Quantity & yield" quantifiers; the fixture's legacy
+        // dropOverX path is kept off so parity covers only what the engine still emits here.
+        dropOverX: false,
+        dropOverValue: 100,
         delirious: overrides.delirious ?? false,
         anyPack: overrides.anyPack ?? false,
         prefixSelectType: overrides.prefixSelectType ?? 'any',
@@ -160,10 +166,15 @@ function ours(overrides: Parameters<typeof makeSettings>[0]): string {
       uncorrupted: overrides.uncorrupted ?? false,
     },
     qualifiers: {
-      dropOverEnabled: overrides.dropOverEnabled ?? false,
-      dropOverValue: overrides.dropOverValue ?? 100,
       delirious: overrides.delirious ?? false,
       anyPack: overrides.anyPack ?? false,
+    },
+    quantities: {
+      packSize: overrides.packSize ?? null,
+      monsterEffectiveness: overrides.monsterEffectiveness ?? null,
+      monsterRarity: overrides.monsterRarity ?? null,
+      itemRarity: overrides.itemRarity ?? null,
+      dropChance: overrides.dropChance ?? null,
     },
     selections: {
       want: new Set(overrides.prefixIds ?? []),
@@ -192,10 +203,13 @@ function findId(textIncludes: string, affix: 'PREFIX' | 'SUFFIX'): number {
   return m.id
 }
 
+// Four representative mods for the parity cases: two PREFIX, two SUFFIX. The constant
+// names are historical labels -- what matters is the affix, so the cases exercise
+// prefix vs suffix handling. (FIRE/ENFEEBLE are prefixes; BLEEDING/STUN are suffixes.)
 const FIRE = findId('Extra Fire', 'PREFIX')
-const ENFEEBLE = findId('Enfeeble', 'PREFIX')
-const BLEEDING = findId('Bleeding', 'SUFFIX')
-const STUN = findId('Stun Buildup', 'SUFFIX')
+const ENFEEBLE = findId('Extra Cold', 'PREFIX')
+const BLEEDING = findId('maximum Player Resistances', 'SUFFIX')
+const STUN = findId('less effect of Curses', 'SUFFIX')
 
 // ----- parity table ----------------------------------------------------------
 
@@ -247,15 +261,13 @@ const CASES: Case[] = [
   // goodSpecial qualifiers (any/all variants)
   { label: 'delirious only', args: { delirious: true } },
   { label: 'anyPack only', args: { anyPack: true } },
-  { label: 'dropOver 200%', args: { dropOverEnabled: true, dropOverValue: 200 } },
-  { label: 'dropOver 700%', args: { dropOverEnabled: true, dropOverValue: 700 } },
   {
     label: 'all goodSpecial any',
-    args: { delirious: true, anyPack: true, dropOverEnabled: true, dropOverValue: 300, prefixSelectType: 'any' },
+    args: { delirious: true, anyPack: true, prefixSelectType: 'any' },
   },
   {
     label: 'all goodSpecial all',
-    args: { delirious: true, anyPack: true, dropOverEnabled: true, dropOverValue: 300, prefixSelectType: 'all' },
+    args: { delirious: true, anyPack: true, prefixSelectType: 'all' },
   },
   {
     label: 'goodSpecial + prefix any',
@@ -275,8 +287,6 @@ const CASES: Case[] = [
       corrupted: true,
       delirious: true,
       anyPack: true,
-      dropOverEnabled: true,
-      dropOverValue: 200,
       prefixIds: [FIRE, ENFEEBLE],
       suffixIds: [BLEEDING, STUN],
       prefixSelectType: 'any',
@@ -289,8 +299,6 @@ const CASES: Case[] = [
       tierMax: 11,
       uncorrupted: true,
       delirious: true,
-      dropOverEnabled: true,
-      dropOverValue: 500,
       prefixIds: [FIRE],
       suffixIds: [BLEEDING],
       prefixSelectType: 'all',
@@ -324,6 +332,123 @@ const CASES: Case[] = [
   },
 ]
 
+describe('waystone-engine: affix-agnostic selection', () => {
+  it('SUFFIX mod in want set appears in the positive (non-negated) output', () => {
+    const bleedingMod = WAYSTONE_MODS.find((m) => m.id === BLEEDING)!
+    const result = buildWaystoneRegex({
+      mods: WAYSTONE_MODS,
+      tier: { min: 1, max: 16 },
+      rarity: { corrupted: false, uncorrupted: false },
+      qualifiers: { delirious: false, anyPack: false },
+      quantities: {
+        packSize: null,
+        monsterEffectiveness: null,
+        monsterRarity: null,
+        itemRarity: null,
+        dropChance: null,
+      },
+      selections: {
+        want: new Set([BLEEDING]),
+        avoid: new Set(),
+        wantMode: 'any',
+        wantValues: {},
+        avoidValues: {},
+      },
+      round10: false,
+      over100: false,
+    })
+    // Should appear inside the quoted positive group, not the negated "!..." group.
+    expect(result).toContain(`"${bleedingMod.regex}"`)
+    expect(result).not.toMatch(new RegExp(`!.*${bleedingMod.regex}`))
+  })
+
+  it('PREFIX mod in avoid set appears in the negated "!..." group', () => {
+    const fireMod = WAYSTONE_MODS.find((m) => m.id === FIRE)!
+    const result = buildWaystoneRegex({
+      mods: WAYSTONE_MODS,
+      tier: { min: 1, max: 16 },
+      rarity: { corrupted: false, uncorrupted: false },
+      qualifiers: { delirious: false, anyPack: false },
+      quantities: {
+        packSize: null,
+        monsterEffectiveness: null,
+        monsterRarity: null,
+        itemRarity: null,
+        dropChance: null,
+      },
+      selections: {
+        want: new Set(),
+        avoid: new Set([FIRE]),
+        wantMode: 'any',
+        wantValues: {},
+        avoidValues: {},
+      },
+      round10: false,
+      over100: false,
+    })
+    // Should appear as "!<token>" in the negated group
+    expect(result).toContain(`"!${fireMod.regex}"`)
+  })
+})
+
+describe('waystone-engine: Quantity & yield quantifiers', () => {
+  const noQuant: WaystoneQuantities = {
+    packSize: null,
+    monsterEffectiveness: null,
+    monsterRarity: null,
+    itemRarity: null,
+    dropChance: null,
+  }
+  const build = (quantities: WaystoneQuantities): string =>
+    buildWaystoneRegex({
+      mods: WAYSTONE_MODS,
+      tier: { min: 1, max: 16 },
+      rarity: { corrupted: false, uncorrupted: false },
+      qualifiers: { delirious: false, anyPack: false },
+      quantities,
+      selections: { want: new Set(), avoid: new Set(), wantMode: 'any', wantValues: {}, avoidValues: {} },
+      round10: false,
+      over100: false,
+    })
+
+  it('emits each field with its token + number-regex + %', () => {
+    expect(build({ ...noQuant, packSize: 50 })).toBe(`"ack siz.*${generateNumberRegex('50', false, false)}%"`)
+    expect(build({ ...noQuant, monsterEffectiveness: 30 })).toBe(
+      `"ffectiv.*${generateNumberRegex('30', false, false)}%"`,
+    )
+    expect(build({ ...noQuant, monsterRarity: 25 })).toBe(`"er rar.*${generateNumberRegex('25', false, false)}%"`)
+    expect(build({ ...noQuant, itemRarity: 40 })).toBe(`"m rar.*${generateNumberRegex('40', false, false)}%"`)
+    expect(build({ ...noQuant, dropChance: 200 })).toBe(`"p c.*${generateNumberRegex('200', false, false)}%"`)
+  })
+
+  it('emits set fields in token order and skips 0/null', () => {
+    const out = build({ ...noQuant, packSize: 50, monsterRarity: 25 })
+    expect(out).toBe(
+      `"ack siz.*${generateNumberRegex('50', false, false)}%" "er rar.*${generateNumberRegex('25', false, false)}%"`,
+    )
+  })
+
+  it('produces no quantifier parts when all are unset', () => {
+    expect(build(noQuant)).toBe('')
+  })
+
+  it('honors the over100 toggle (3-digit rolls match a 2-digit threshold)', () => {
+    const out = buildWaystoneRegex({
+      mods: WAYSTONE_MODS,
+      tier: { min: 1, max: 16 },
+      rarity: { corrupted: false, uncorrupted: false },
+      qualifiers: { delirious: false, anyPack: false },
+      quantities: { ...noQuant, monsterRarity: 50 },
+      selections: { want: new Set(), avoid: new Set(), wantMode: 'any', wantValues: {}, avoidValues: {} },
+      round10: false,
+      over100: true,
+    })
+    expect(out).toBe(`"er rar.*${generateNumberRegex('50', false, true)}%"`)
+    // over100=true must widen vs over100=false for a 10-99 threshold.
+    expect(generateNumberRegex('50', false, true)).not.toBe(generateNumberRegex('50', false, false))
+  })
+})
+
 describe('waystone-engine: parity with poe2.re reference implementation', () => {
   for (const c of CASES) {
     it(c.label, () => {
@@ -331,9 +456,15 @@ describe('waystone-engine: parity with poe2.re reference implementation', () => 
     })
   }
 
-  it('user-reported case: tier 2-16 + fire + enfeeble matches poe2.re exactly', () => {
+  it('user-reported case: tier 2-16 + two prefixes matches poe2.re exactly', () => {
     const args = { tierMin: 2, tierMax: 16, prefixIds: [FIRE, ENFEEBLE] }
-    const expected = '"r [2-9]\\)|1[0123456]\\)" "fire$|eble"'
+    // The tier slice is deterministic; the mod tokens come from the selected prefixes in
+    // WAYSTONE_MODS order, joined for "any" mode. Derived from the data so the pin
+    // survives a waystone data refresh.
+    const tokens = WAYSTONE_MODS.filter((m) => m.id === FIRE || m.id === ENFEEBLE)
+      .map((m) => m.regex)
+      .join('|')
+    const expected = `"r [2-9]\\)|1[0123456]\\)" "${tokens}"`
     expect(theirs(args)).toBe(expected)
     expect(ours(args)).toBe(expected)
   })

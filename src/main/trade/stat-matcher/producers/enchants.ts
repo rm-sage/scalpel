@@ -6,12 +6,16 @@ type EnchantItemInfo = {
   baseType?: string
 }
 
-// Process enchant lines (cluster jewel enchantments)
-export function buildEnchantFilters(itemInfo: EnchantItemInfo | undefined): StatFilter[] {
+// Process enchant lines (cluster jewel enchantments, weapon/armour corruption
+// enchantments). `preferLocal` is set for items that carry local affixes
+// (weapons/armour): their enchants -- e.g. a "Corruption Enhancement" granting
+// "increased Attack Speed" -- live under the trade API's "(Local)" enchant stat,
+// which matchModToStat otherwise discards in favour of a global lookalike (#399).
+export function buildEnchantFilters(itemInfo: EnchantItemInfo | undefined, preferLocal = false): StatFilter[] {
   const enchantFilters: StatFilter[] = []
   if (itemInfo?.enchants) {
     for (const enchant of itemInfo.enchants) {
-      const matched = matchModToStat(enchant, false, 'enchant')
+      const matched = matchModToStat(enchant, preferLocal, 'enchant')
       if (matched) {
         let minVal: number | null = matched.option ? null : matched.value
         let maxVal: number | null = null

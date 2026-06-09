@@ -29,7 +29,7 @@ const LOW_PRIORITY_PATTERNS = [
   /knockback/i,
   /reduced attribute requirements/i,
   /increased stun duration/i,
-  /life regenerated per second/i,
+  /life regenerat(?:ed|ion) per second/i, // PoE1 "Regenerated", PoE2 "Regeneration"
   /thorns/i,
   /stun and block recovery/i,
   /stun duration on enemies/i,

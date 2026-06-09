@@ -22,6 +22,11 @@ export type PseudoContribution = {
   /** When true, the emitted pseudo row defaults to unchecked (enabled: false) so it
    *  is an opt-in summary rather than an active filter. */
   disabledByDefault?: boolean
+  /** When true, this contribution comes from an attribute mod (Str -> Life, Int -> Mana)
+   *  rather than a direct life/mana/resistance mod. Attribute contributions are deferred:
+   *  they only fold in and suppress the source row when the same pseudo also has at least
+   *  one non-attribute (real) contributor on the same item. */
+  attributeDerived?: boolean
 }
 
 export const PSEUDO_CONTRIBUTIONS: Record<string, PseudoContribution[]> = {}
@@ -43,7 +48,13 @@ function buildPseudoMap(): void {
     string,
     string,
     number?,
-    { minCount?: number; nonWeaponOnly?: boolean; keepSourceRow?: boolean; disabledByDefault?: boolean }?,
+    {
+      minCount?: number
+      nonWeaponOnly?: boolean
+      keepSourceRow?: boolean
+      disabledByDefault?: boolean
+      attributeDerived?: boolean
+    }?,
   ]
   const ELE_DMG_OPTS = { minCount: 2, nonWeaponOnly: true }
   const pseudoMappings: Mapping[] = [
@@ -75,15 +86,21 @@ function buildPseudoMap(): void {
     [/to maximum life/i, 'pseudo.pseudo_total_life', 'Total Life'],
     [/to maximum mana/i, 'pseudo.pseudo_total_mana', 'Total Mana'],
     // Strength: +# Str alone, +# Str+Dex hybrid, +# Str+Int hybrid, +# all Attrs
-    [/^\+?# to Strength$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5],
-    [/^\+?# to Strength and Dexterity$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5],
-    [/^\+?# to Strength and Intelligence$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5],
-    [/^\+?# to all Attributes$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5],
+    [/^\+?# to Strength$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5, { attributeDerived: true }],
+    [/^\+?# to Strength and Dexterity$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5, { attributeDerived: true }],
+    [/^\+?# to Strength and Intelligence$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5, { attributeDerived: true }],
+    [/^\+?# to all Attributes$/i, 'pseudo.pseudo_total_life', 'Total Life', 0.5, { attributeDerived: true }],
     // Intelligence: +# Int alone, +# Dex+Int hybrid, +# Str+Int hybrid, +# all Attrs
-    [/^\+?# to Intelligence$/i, 'pseudo.pseudo_total_mana', 'Total Mana', 0.5],
-    [/^\+?# to Dexterity and Intelligence$/i, 'pseudo.pseudo_total_mana', 'Total Mana', 0.5],
-    [/^\+?# to Strength and Intelligence$/i, 'pseudo.pseudo_total_mana', 'Total Mana', 0.5],
-    [/^\+?# to all Attributes$/i, 'pseudo.pseudo_total_mana', 'Total Mana', 0.5],
+    [/^\+?# to Intelligence$/i, 'pseudo.pseudo_total_mana', 'Total Mana', 0.5, { attributeDerived: true }],
+    [
+      /^\+?# to Dexterity and Intelligence$/i,
+      'pseudo.pseudo_total_mana',
+      'Total Mana',
+      0.5,
+      { attributeDerived: true },
+    ],
+    [/^\+?# to Strength and Intelligence$/i, 'pseudo.pseudo_total_mana', 'Total Mana', 0.5, { attributeDerived: true }],
+    [/^\+?# to all Attributes$/i, 'pseudo.pseudo_total_mana', 'Total Mana', 0.5, { attributeDerived: true }],
   ]
 
   // Added elemental damage rolls -- consolidated into the trade pseudo when 2+

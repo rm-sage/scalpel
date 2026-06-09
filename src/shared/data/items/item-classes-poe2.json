@@ -996,6 +996,50 @@
       2
     ]
   },
+  "Charms": {
+    "bases": [
+      {
+        "name": "Amethyst Charm"
+      },
+      {
+        "name": "Antidote Charm"
+      },
+      {
+        "name": "Dousing Charm"
+      },
+      {
+        "name": "Golden Charm"
+      },
+      {
+        "name": "Grounding Charm"
+      },
+      {
+        "name": "Ruby Charm"
+      },
+      {
+        "name": "Sapphire Charm"
+      },
+      {
+        "name": "Silver Charm"
+      },
+      {
+        "name": "Staunching Charm"
+      },
+      {
+        "name": "Stone Charm"
+      },
+      {
+        "name": "Thawing Charm"
+      },
+      {
+        "name": "Topaz Charm"
+      }
+    ],
+    "size": [
+      1,
+      1
+    ]
+  },
   "Crossbows": {
     "bases": [
       {
@@ -1074,6 +1118,100 @@
     "size": [
       2,
       4
+    ]
+  },
+  "Daggers": {
+    "bases": [
+      {
+        "name": "Arcane Dirk"
+      },
+      {
+        "name": "Bloodletting Dagger"
+      },
+      {
+        "name": "Cinquedea"
+      },
+      {
+        "name": "Crone Knife"
+      },
+      {
+        "name": "Engraved Knife"
+      },
+      {
+        "name": "Glass Shank"
+      },
+      {
+        "name": "Kris Knife"
+      },
+      {
+        "name": "Mail Breaker"
+      },
+      {
+        "name": "Moon Dagger"
+      },
+      {
+        "name": "Obsidian Dagger"
+      },
+      {
+        "name": "Parrying Dagger"
+      },
+      {
+        "name": "Simple Dagger"
+      },
+      {
+        "name": "Skinning Knife"
+      }
+    ],
+    "size": [
+      1,
+      3
+    ]
+  },
+  "Flails": {
+    "bases": [
+      {
+        "name": "Abyssal Flail"
+      },
+      {
+        "name": "Chain Flail"
+      },
+      {
+        "name": "Great Flail"
+      },
+      {
+        "name": "Guarded Flail"
+      },
+      {
+        "name": "Holy Flail"
+      },
+      {
+        "name": "Icicle Flail"
+      },
+      {
+        "name": "Iron Flail"
+      },
+      {
+        "name": "Ring Flail"
+      },
+      {
+        "name": "Slender Flail"
+      },
+      {
+        "name": "Splintered Flail"
+      },
+      {
+        "name": "Stone Flail"
+      },
+      {
+        "name": "Tearing Flail"
+      },
+      {
+        "name": "Twin Flail"
+      }
+    ],
+    "size": [
+      2,
+      3
     ]
   },
   "Foci": {
@@ -1742,6 +1880,158 @@
       2
     ]
   },
+  "Jewels": {
+    "bases": [
+      {
+        "name": "Emerald"
+      },
+      {
+        "name": "Ruby"
+      },
+      {
+        "name": "Sapphire"
+      },
+      {
+        "name": "Diamond"
+      },
+      {
+        "name": "Time-Lost Emerald"
+      },
+      {
+        "name": "Time-Lost Ruby"
+      },
+      {
+        "name": "Time-Lost Sapphire"
+      },
+      {
+        "name": "Time-Lost Diamond"
+      },
+      {
+        "name": "Timeless Jewel"
+      }
+    ],
+    "size": [
+      1,
+      1
+    ]
+  },
+  "Life Flasks": {
+    "bases": [
+      {
+        "name": "Lesser Life Flask"
+      },
+      {
+        "name": "Medium Life Flask"
+      },
+      {
+        "name": "Greater Life Flask"
+      },
+      {
+        "name": "Grand Life Flask"
+      },
+      {
+        "name": "Giant Life Flask"
+      },
+      {
+        "name": "Gargantuan Life Flask"
+      },
+      {
+        "name": "Colossal Life Flask"
+      },
+      {
+        "name": "Ultimate Life Flask"
+      },
+      {
+        "name": "Transcendent Life Flask"
+      }
+    ],
+    "size": [
+      1,
+      2
+    ]
+  },
+  "Mana Flasks": {
+    "bases": [
+      {
+        "name": "Lesser Mana Flask"
+      },
+      {
+        "name": "Medium Mana Flask"
+      },
+      {
+        "name": "Greater Mana Flask"
+      },
+      {
+        "name": "Grand Mana Flask"
+      },
+      {
+        "name": "Giant Mana Flask"
+      },
+      {
+        "name": "Gargantuan Mana Flask"
+      },
+      {
+        "name": "Colossal Mana Flask"
+      },
+      {
+        "name": "Ultimate Mana Flask"
+      },
+      {
+        "name": "Transcendent Mana Flask"
+      }
+    ],
+    "size": [
+      1,
+      2
+    ]
+  },
+  "One Hand Axes": {
+    "bases": [
+      {
+        "name": "Bandit Hatchet"
+      },
+      {
+        "name": "Battle Axe"
+      },
+      {
+        "name": "Bearded Axe"
+      },
+      {
+        "name": "Boarding Hatchet"
+      },
+      {
+        "name": "Carving Hatchet"
+      },
+      {
+        "name": "Crescent Axe"
+      },
+      {
+        "name": "Dread Hatchet"
+      },
+      {
+        "name": "Dull Hatchet"
+      },
+      {
+        "name": "Extended Cleaver"
+      },
+      {
+        "name": "Fury Cleaver"
+      },
+      {
+        "name": "Hook Axe"
+      },
+      {
+        "name": "Profane Cleaver"
+      },
+      {
+        "name": "Sacrificial Axe"
+      }
+    ],
+    "size": [
+      2,
+      3
+    ]
+  },
   "One Hand Maces": {
     "bases": [
       {
@@ -1833,6 +2123,53 @@
       },
       {
         "name": "Wooden Club"
+      }
+    ],
+    "size": [
+      2,
+      3
+    ]
+  },
+  "One Hand Swords": {
+    "bases": [
+      {
+        "name": "Broadsword"
+      },
+      {
+        "name": "Charred Shortsword"
+      },
+      {
+        "name": "Commander Sword"
+      },
+      {
+        "name": "Cutlass"
+      },
+      {
+        "name": "Dark Blade"
+      },
+      {
+        "name": "Falchion"
+      },
+      {
+        "name": "Messer"
+      },
+      {
+        "name": "Runic Shortsword"
+      },
+      {
+        "name": "Scimitar"
+      },
+      {
+        "name": "Shortsword"
+      },
+      {
+        "name": "Sickle Sword"
+      },
+      {
+        "name": "Treasured Blade"
+      },
+      {
+        "name": "Vampiric Blade"
       }
     ],
     "size": [
@@ -2395,6 +2732,53 @@
       2
     ]
   },
+  "Two Hand Axes": {
+    "bases": [
+      {
+        "name": "Arched Greataxe"
+      },
+      {
+        "name": "Ceremonial Halberd"
+      },
+      {
+        "name": "Elegant Glaive"
+      },
+      {
+        "name": "Ember Greataxe"
+      },
+      {
+        "name": "Executioner Greataxe"
+      },
+      {
+        "name": "Jagged Greataxe"
+      },
+      {
+        "name": "Light Halberd"
+      },
+      {
+        "name": "Monument Greataxe"
+      },
+      {
+        "name": "Reaver Glaive"
+      },
+      {
+        "name": "Rending Halberd"
+      },
+      {
+        "name": "Savage Greataxe"
+      },
+      {
+        "name": "Splitting Greataxe"
+      },
+      {
+        "name": "Vile Greataxe"
+      }
+    ],
+    "size": [
+      2,
+      4
+    ]
+  },
   "Two Hand Maces": {
     "bases": [
       {
@@ -2471,6 +2855,53 @@
       },
       {
         "name": "Zealot Greathammer"
+      }
+    ],
+    "size": [
+      2,
+      4
+    ]
+  },
+  "Two Hand Swords": {
+    "bases": [
+      {
+        "name": "Ancient Greatblade"
+      },
+      {
+        "name": "Arced Longsword"
+      },
+      {
+        "name": "Blessed Claymore"
+      },
+      {
+        "name": "Broad Greatsword"
+      },
+      {
+        "name": "Corroded Longsword"
+      },
+      {
+        "name": "Flanged Greatblade"
+      },
+      {
+        "name": "Iron Greatsword"
+      },
+      {
+        "name": "Keen Greatsword"
+      },
+      {
+        "name": "Obsidian Greatsword"
+      },
+      {
+        "name": "Regalia Longsword"
+      },
+      {
+        "name": "Rippled Greatsword"
+      },
+      {
+        "name": "Stone Greatsword"
+      },
+      {
+        "name": "Ultra Greatsword"
       }
     ],
     "size": [

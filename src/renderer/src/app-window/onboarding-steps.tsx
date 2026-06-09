@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
 import { Info } from '@icon-park/react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../shared/use-auth'
 import appIcon from '../../../../resources/icon.png'
 import { getGameFeatures } from '../../../shared/game-features'
@@ -15,6 +15,7 @@ import { IconGlow } from '../shared/IconGlow'
 import type { SelectedGames } from './constants'
 import { NavButtons } from './NavButtons'
 import { StepHeader } from './StepHeader'
+import { m } from '../../../shared/paraglide/messages.js'
 
 function GameCard({
   alt,
@@ -78,20 +79,17 @@ export function WelcomeStep({
         alt="Scalpel"
         className="mb-5"
       />
-      <StepHeader
-        title="Welcome to Scalpel"
-        subtitle="Path of Exile's first fourth-party tool. Select which game(s) you play to get started."
-      />
+      <StepHeader title={m.onb_welcome_title()} subtitle={m.onb_welcome_subtitle()} />
       <div className="mb-5">
         <div className="flex gap-6 justify-center">
           <GameCard
-            alt="Path of Exile 1"
+            alt={m.onb_poe1_alt()}
             image={poe1Logo}
             selected={selectedGames.poe1}
             onClick={() => onSelectedGamesChange({ ...selectedGames, poe1: !selectedGames.poe1 })}
           />
           <GameCard
-            alt="Path of Exile 2"
+            alt={m.onb_poe2_alt()}
             image={poe2Logo}
             selected={selectedGames.poe2}
             onClick={() => onSelectedGamesChange({ ...selectedGames, poe2: !selectedGames.poe2 })}
@@ -100,7 +98,7 @@ export function WelcomeStep({
       </div>
       <NavButtons
         onNext={onNext}
-        nextLabel="Continue"
+        nextLabel={m.common_continue()}
         nextDisabled={!anySelected}
         onBackToSettings={onBackToSettings}
       />
@@ -140,14 +138,14 @@ export function FilterFolderStep({
       <StepHeader
         stepNum={stepNum}
         totalSteps={totalSteps}
-        title={prefix ? `Point to your ${prefix} filter folder` : 'Point to your filter folder'}
-        subtitle={`Choose your filter folder, generally ${folderHint}, so Scalpel can find your filters. You can skip this and set it up later from settings.`}
+        title={prefix ? m.onb_folder_title_game({ prefix }) : m.onb_folder_title()}
+        subtitle={m.onb_folder_subtitle({ hint: folderHint })}
       />
       <FilterPicker settings={settings} onSettingsChange={onSettingsChange} mode="folder" />
       <NavButtons
         onBack={onBack}
         onNext={onNext}
-        secondaryLabel="Skip for now"
+        secondaryLabel={m.onb_skip_for_now()}
         onSecondary={onNext}
         onBackToSettings={onBackToSettings}
       />
@@ -182,8 +180,8 @@ export function FilterStep({
       <StepHeader
         stepNum={stepNum}
         totalSteps={totalSteps}
-        title={prefix ? `Select your ${prefix} filter` : 'Select your filter'}
-        subtitle="Pick your starting filter, or skip this for now and add one later from settings. If you select an online filter, it will be resaved locally for fast editing."
+        title={prefix ? m.onb_filter_title_game({ prefix }) : m.onb_filter_title()}
+        subtitle={m.onb_filter_subtitle()}
       />
       <div className="-mt-3">
         <FilterPicker
@@ -198,7 +196,7 @@ export function FilterStep({
         onBack={onBack}
         onNext={onNext}
         nextDisabled={!settings.activeProfile?.filterPath}
-        secondaryLabel="Skip for now"
+        secondaryLabel={m.onb_skip_for_now()}
         onSecondary={onNext}
         onBackToSettings={onBackToSettings}
       />
@@ -224,28 +222,25 @@ export function OnlineFilterSetupStep({
   return (
     <div>
       <StepHeader
-        title="Set your filter in game"
-        subtitle={`"${filterName}.filter" has been copied to your filter folder. You need to select it in Path of Exile's settings so the game uses it.`}
+        title={m.onb_online_title()}
+        subtitle={m.onb_online_subtitle({ filter: filterName })}
         stepNum={stepNum}
         totalSteps={totalSteps}
       />
 
       <ol className="text-xs text-text-dim m-0 pl-5 leading-8 list-decimal -mt-4">
-        <li>
-          Open <strong className="text-text">Options</strong> in Path of Exile
-        </li>
-        <li>
-          Go to the <strong className="text-text">Game</strong> tab
-        </li>
-        <li>
-          Under <strong className="text-text">Item Filter</strong>, select{' '}
-          <strong className="text-accent">{filterName}</strong> from the dropdown
-        </li>
+        <li>{m.onb_online_step1()}</li>
+        <li>{m.onb_online_step2()}</li>
+        <li>{m.onb_online_step3({ filter: filterName })}</li>
       </ol>
 
-      <img src={poeFilterSettingImg} alt="PoE filter dropdown" className="mt-4 rounded border border-border w-full" />
+      <img
+        src={poeFilterSettingImg}
+        alt={m.onb_online_img_alt()}
+        className="mt-4 rounded border border-border w-full"
+      />
 
-      <NavButtons onNext={onNext} onBack={onBack} nextLabel="Done" onBackToSettings={onBackToSettings} />
+      <NavButtons onNext={onNext} onBack={onBack} nextLabel={m.common_done()} onBackToSettings={onBackToSettings} />
     </div>
   )
 }
@@ -258,6 +253,7 @@ export function HotkeyStep({
   stepNum,
   totalSteps,
   onBackToSettings,
+  showWasdTip,
 }: {
   settings: AppSettings
   onUpdate: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
@@ -266,18 +262,33 @@ export function HotkeyStep({
   stepNum: number
   totalSteps: number
   onBackToSettings?: () => void
+  showWasdTip?: boolean
 }): JSX.Element {
   return (
     <div>
       <StepHeader
         stepNum={stepNum}
         totalSteps={totalSteps}
-        title="Set your filter hotkey"
-        subtitle="This key combo activates the overlay while you're in game. Hover an item and press it to analyze your filter."
+        title={m.onb_hotkey_title()}
+        subtitle={m.onb_hotkey_subtitle()}
       />
       <HotkeyField value={settings.hotkey} onChange={(acc) => onUpdate('hotkey', acc)} />
+      <WasdHotkeyTip show={showWasdTip} />
       <NavButtons onBack={onBack} onNext={onNext} onBackToSettings={onBackToSettings} />
     </div>
+  )
+}
+
+/** PoE2 binds W/A/S/D to movement, so a hotkey sharing one of those letters makes
+ *  the character lurch when fired. We can't fully suppress it (the game reads raw
+ *  key state), so nudge WASD players toward a combo without those letters. */
+function WasdHotkeyTip({ show }: { show?: boolean }): JSX.Element | null {
+  if (!show) return null
+  return (
+    <p className="text-[10px] text-text-dim flex items-center gap-1 m-0 ml-1 mt-1.5">
+      <Info size={12} theme="two-tone" fill={['currentColor', 'rgba(255,255,255,0.2)']} className="flex shrink-0" />
+      Tip: If you play WASD, it's best to choose a hotkey combo without those letters.
+    </p>
   )
 }
 
@@ -289,6 +300,7 @@ export function PriceCheckHotkeyStep({
   stepNum,
   totalSteps,
   onBackToSettings,
+  showWasdTip,
 }: {
   settings: AppSettings
   onUpdate: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
@@ -297,16 +309,18 @@ export function PriceCheckHotkeyStep({
   stepNum: number
   totalSteps: number
   onBackToSettings?: () => void
+  showWasdTip?: boolean
 }): JSX.Element {
   return (
     <div>
       <StepHeader
         stepNum={stepNum}
         totalSteps={totalSteps}
-        title="Set your price check hotkey"
-        subtitle="This key combo is used to... price check items. You should know how to use this one."
+        title={m.onb_pc_hotkey_title()}
+        subtitle={m.onb_pc_hotkey_subtitle()}
       />
       <HotkeyField value={settings.priceCheckHotkey} onChange={(acc) => onUpdate('priceCheckHotkey', acc)} />
+      <WasdHotkeyTip show={showWasdTip} />
       <NavButtons onBack={onBack} onNext={onNext} onBackToSettings={onBackToSettings} />
     </div>
   )
@@ -332,34 +346,34 @@ export function TradeLoginStep({
       <StepHeader
         stepNum={stepNum}
         totalSteps={totalSteps}
-        title="Log into the trade site"
-        subtitle="This is optional, but logging in lets you travel directly to a seller's hideout to buy items from within Scalpel."
+        title={m.onb_trade_title()}
+        subtitle={m.onb_trade_subtitle()}
       />
       <div className="setting-box mb-6">
         {auth === null ? (
-          <span className="value text-text-dim">Checking...</span>
+          <span className="value text-text-dim">{m.onb_trade_checking()}</span>
         ) : auth.loggedIn ? (
           <>
-            <span className="value text-accent">Logged in as {auth.accountName}</span>
+            <span className="value text-accent">{m.onb_trade_logged_in({ account: auth.accountName })}</span>
             <button
               className="text-[11px] text-text-dim shrink-0 ml-2 px-3 py-[5px]"
               onClick={() => {
                 logout()
               }}
             >
-              Logout
+              {m.common_logout()}
             </button>
           </>
         ) : (
           <>
-            <span className="value text-text-dim">Not logged in</span>
+            <span className="value text-text-dim">{m.onb_trade_not_logged_in()}</span>
             <button
               className="primary"
               onClick={() => {
                 login()
               }}
             >
-              Login
+              {m.common_login()}
             </button>
           </>
         )}
@@ -367,7 +381,7 @@ export function TradeLoginStep({
       <NavButtons
         onBack={onBack}
         onNext={onNext}
-        nextLabel={auth?.loggedIn ? 'Continue' : 'Skip'}
+        nextLabel={auth?.loggedIn ? m.common_continue() : m.common_skip()}
         onBackToSettings={onBackToSettings}
       />
     </div>
@@ -435,22 +449,22 @@ export function PreferencesStep({
       <StepHeader
         stepNum={stepNum}
         totalSteps={totalSteps}
-        title="Preferences"
-        subtitle="You can always change these later from settings."
+        title={m.onb_prefs_title()}
+        subtitle={m.onb_prefs_subtitle()}
       />
       <div className="flex flex-col gap-5">
         {both ? (
           <section className="flex flex-col gap-3">
             <LeagueDropdown
               id="league-poe1-onboarding"
-              label="PoE1 League"
+              label={m.onb_prefs_poe1_league()}
               value={leagueForGame(1)}
               options={poe1Leagues}
               onChange={(v) => updateLeagueForGame(1, v)}
             />
             <LeagueDropdown
               id="league-poe2-onboarding"
-              label="PoE2 League"
+              label={m.onb_prefs_poe2_league()}
               value={leagueForGame(2)}
               options={poe2Leagues}
               onChange={(v) => updateLeagueForGame(2, v)}
@@ -460,7 +474,7 @@ export function PreferencesStep({
           <section>
             <LeagueDropdown
               id="league-select-onboarding"
-              label="League"
+              label={m.settings_league_label()}
               value={settings.activeProfile?.league ?? ''}
               options={selectedGames.poe2 ? poe2Leagues : poe1Leagues}
               onChange={(v) => onProfileUpdateForGame(selectedGames.poe2 ? 2 : 1, 'league', v)}
@@ -474,7 +488,7 @@ export function PreferencesStep({
             className="flex items-center gap-[10px] cursor-pointer select-none"
           >
             <Toggle checked={settings.closeOnClickOutside} onChange={(val) => onUpdate('closeOnClickOutside', val)} />
-            <span className="text-xs text-text">Close overlay when clicking outside</span>
+            <span className="text-xs text-text">{m.settings_close_on_click_outside()}</span>
           </div>
         </section>
 
@@ -484,11 +498,11 @@ export function PreferencesStep({
             className="flex items-center gap-[10px] cursor-pointer select-none"
           >
             <Toggle checked={settings.reloadOnSave} onChange={(val) => onUpdate('reloadOnSave', val)} />
-            <span className="text-xs text-text">Reload filter in game on every change</span>
+            <span className="text-xs text-text">{m.onb_prefs_reload()}</span>
           </div>
         </section>
       </div>
-      <NavButtons onBack={onBack} onNext={onNext} nextLabel="Finish" onBackToSettings={onBackToSettings} />
+      <NavButtons onBack={onBack} onNext={onNext} nextLabel={m.common_finish()} onBackToSettings={onBackToSettings} />
     </div>
   )
 }
@@ -496,16 +510,13 @@ export function PreferencesStep({
 export function DoneStep({ onFinish }: { onFinish: () => void }): JSX.Element {
   return (
     <div>
-      <StepHeader
-        title="You're all set!"
-        subtitle="Scalpel is running in your system tray. Hop into Path of Exile, hover an item, and press your hotkey to get started. Feel free to close this window."
-      />
+      <StepHeader title={m.onb_done_title()} subtitle={m.onb_done_subtitle()} />
       <div className="flex gap-[10px] mt-8">
         <button className="primary px-6 py-[10px] text-[13px] font-semibold" onClick={onFinish}>
-          Open Settings
+          {m.onb_done_open_settings()}
         </button>
         <button onClick={() => window.close()} className="px-6 py-[10px] text-[13px]">
-          Close Window
+          {m.onb_done_close_window()}
         </button>
       </div>
     </div>

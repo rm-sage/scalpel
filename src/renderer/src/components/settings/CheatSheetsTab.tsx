@@ -5,6 +5,7 @@ import { generateClientCategoryId } from './utils'
 import type { HotkeySlot } from './hotkey-collisions'
 import { CategoryCard } from './cheatsheets/CategoryCard'
 import { PrefabPicker } from './cheatsheets/PrefabPicker'
+import { m } from '../../../../shared/paraglide/messages.js'
 
 interface Props {
   settings: RuntimeSettings
@@ -24,11 +25,11 @@ export function CheatSheetsTab({ settings, updateProfile, tryHotkey, onError }: 
 
   return (
     <>
-      <div className="settings-section-title mt-3">Cheat Sheets</div>
+      <div className="settings-section-title mt-3">{m.settings_cs_heading()}</div>
 
       {/* Global hotkey */}
       <section>
-        <label>Cheat Sheet Hotkey</label>
+        <label>{m.settings_cs_hotkey()}</label>
         <div className="mt-[6px]">
           <HotkeyField
             value={cheatSheets.globalHotkey}
@@ -56,7 +57,7 @@ export function CheatSheetsTab({ settings, updateProfile, tryHotkey, onError }: 
         <CategoriesEmptyState onAdd={() => setCategories([newCategory()])} />
       ) : (
         <section>
-          <label>Categories</label>
+          <label>{m.settings_cs_categories()}</label>
           <div className="mt-[6px]">
             <ReactSortable
               list={cheatSheets.categories.map((c) => ({ ...c }))}
@@ -90,7 +91,7 @@ export function CheatSheetsTab({ settings, updateProfile, tryHotkey, onError }: 
               onClick={() => setCategories([...cheatSheets.categories, newCategory()])}
               className="text-[11px] text-text-dim self-start px-3 py-1.5 mt-2"
             >
-              + Add Category
+              {m.settings_cs_add_category()}
             </button>
           </div>
         </section>
@@ -100,7 +101,7 @@ export function CheatSheetsTab({ settings, updateProfile, tryHotkey, onError }: 
 }
 
 function newCategory(): CheatSheetCategory {
-  return { id: generateClientCategoryId(), name: 'New Category', hotkey: '', sheets: [] }
+  return { id: generateClientCategoryId(), name: m.settings_cs_new_category(), hotkey: '', sheets: [] }
 }
 
 function CategoriesEmptyState({ onAdd }: { onAdd: () => void }): JSX.Element {
@@ -108,11 +109,9 @@ function CategoriesEmptyState({ onAdd }: { onAdd: () => void }): JSX.Element {
     <section>
       <div className="bg-black/15 rounded p-3 flex flex-col items-center gap-1">
         <button onClick={onAdd} className="text-[11px] px-3 py-1.5">
-          + Add Category
+          {m.settings_cs_add_category()}
         </button>
-        <div className="text-[10px] text-text-dim">
-          Categories group cheat sheets and can be hotkeyed independently.
-        </div>
+        <div className="text-[10px] text-text-dim">{m.settings_cs_empty_desc()}</div>
       </div>
     </section>
   )

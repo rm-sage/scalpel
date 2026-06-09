@@ -11,6 +11,7 @@ export interface ItemInfo {
   baseType: string
   rarity: string
   itemClass: string
+  name?: string
   gemLevel: number
   corrupted: boolean
   mirrored: boolean

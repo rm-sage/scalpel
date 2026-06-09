@@ -3,6 +3,7 @@ import type { PluginManifest } from '../../plugin-sdk/src/types'
 import { readInstalledIds } from './installed-list'
 import { validateManifest } from './manifest-validator'
 import { pluginEntryPath, pluginManifestPath } from './paths'
+import { readUnpackedIds } from './unpacked-list'
 
 export interface InstalledPlugin {
   manifest: PluginManifest
@@ -38,4 +39,9 @@ export function getInstalledPlugins(): InstalledPlugin[] {
     })
   }
   return out
+}
+
+export function getUnpackedPlugins(): InstalledPlugin[] {
+  const unpacked = new Set(readUnpackedIds())
+  return getInstalledPlugins().filter((p) => unpacked.has(p.manifest.id))
 }

@@ -5,6 +5,7 @@ import { iconMap, IP } from '../shared/constants'
 import { PriceAudit, AuditTierControls, useAuditState } from '../components/price-audit'
 import { getActiveMatch } from '../shared/activeMatch'
 import { Notice } from './Notice'
+import { m } from '../../../shared/paraglide/messages.js'
 
 interface AuditViewProps {
   overlayData: OverlayData
@@ -17,10 +18,10 @@ interface AuditViewProps {
 }
 
 function formatTier(t: string): string {
-  const m = t.match(/^t(\d+)(.*)/)
-  if (m) return `T${m[1]}${m[2] ? ` ${m[2]}` : ''}`
-  if (t === 'exhide') return 'Hidden'
-  if (t === 'restex') return 'Rest'
+  const match = t.match(/^t(\d+)(.*)/)
+  if (match) return `T${match[1]}${match[2] ? ` ${match[2]}` : ''}`
+  if (t === 'exhide') return m.audit_tier_hidden()
+  if (t === 'restex') return m.audit_tier_rest()
   return t
 }
 
@@ -161,7 +162,7 @@ function AuditViewInner({
 
           <div className="flex flex-col items-start gap-1 shrink-0">
             <span className="text-[10px] text-text-dim pl-1">
-              {siblingsWithItems.length > 1 ? 'Audit Other Tier' : 'Current Tier'}
+              {siblingsWithItems.length > 1 ? m.audit_other_tier() : m.audit_current_tier()}
             </span>
             <select
               value={blockIndex}
@@ -179,7 +180,7 @@ function AuditViewInner({
                 siblingsWithItems.map((s) => (
                   <option key={s.blockIndex} value={s.blockIndex}>
                     {formatTier(s.tier)}
-                    {s.visibility === 'Hide' ? ' [HIDDEN]' : ''}
+                    {s.visibility === 'Hide' ? ` ${m.audit_hidden_marker()}` : ''}
                   </option>
                 ))
               ) : (
@@ -199,22 +200,12 @@ function AuditViewInner({
   )
 }
 
-const UNAVAILABLE_COPY: Record<'no-match' | 'no-basetypes' | 'ex-tier', { title: string; body: string }> = {
-  'no-match': {
-    title: 'Nothing to audit',
-    body: "This item doesn't match any block in your filter.",
-  },
-  'no-basetypes': {
-    title: 'Nothing to audit',
-    body: "The matched block doesn't list any base types.",
-  },
-  'ex-tier': {
-    title: 'Nothing to audit',
-    body: "Exotic tiers don't list base types in the rule.",
-  },
+function unavailableBody(reason: 'no-match' | 'no-basetypes' | 'ex-tier'): string {
+  if (reason === 'no-basetypes') return m.audit_no_basetypes()
+  if (reason === 'ex-tier') return m.audit_ex_tier()
+  return m.audit_no_match()
 }
 
 function AuditUnavailable({ reason }: { reason: 'no-match' | 'no-basetypes' | 'ex-tier' }): JSX.Element {
-  const copy = UNAVAILABLE_COPY[reason]
-  return <Notice icon={<ChartHistogram size={32} {...IP} />} title={copy.title} body={copy.body} />
+  return <Notice icon={<ChartHistogram size={32} {...IP} />} title={m.audit_nothing()} body={unavailableBody(reason)} />
 }

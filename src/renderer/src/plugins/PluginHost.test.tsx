@@ -31,6 +31,8 @@ beforeEach(() => {
     pluginStorageKeys: vi.fn(async () => []),
     pluginRegisterHotkey: vi.fn(async () => undefined),
     pluginUnregisterHotkey: vi.fn(async () => undefined),
+    pluginRegisterTab: vi.fn(async () => undefined),
+    pluginUnregisterTab: vi.fn(async () => undefined),
     pluginTriggerMainHotkey: vi.fn(async () => null),
     onPluginMacro: vi.fn((h: (action: string) => void) => {
       pluginMacroListener = h
@@ -338,6 +340,8 @@ describe('PluginHost', () => {
       pluginStorageKeys: vi.fn(async () => []),
       pluginRegisterHotkey: vi.fn(async () => undefined),
       pluginUnregisterHotkey: vi.fn(async () => undefined),
+      pluginRegisterTab: vi.fn(async () => undefined),
+      pluginUnregisterTab: vi.fn(async () => undefined),
       pluginRegisterOverlay,
       onPluginMacro: vi.fn(() => () => {}),
       onPluginInstalled: vi.fn(() => () => {}),
@@ -391,6 +395,8 @@ describe('PluginHost', () => {
       pluginStorageKeys: vi.fn(async () => []),
       pluginRegisterHotkey: vi.fn(async () => undefined),
       pluginUnregisterHotkey: vi.fn(async () => undefined),
+      pluginRegisterTab: vi.fn(async () => undefined),
+      pluginUnregisterTab: vi.fn(async () => undefined),
       onPluginMacro: vi.fn(() => () => {}),
       onPluginInstalled: vi.fn(() => () => {}),
       onPluginUninstalled: vi.fn((h: (pluginId: string) => void) => {

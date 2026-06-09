@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render } from '@testing-library/react'
+import { render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PluginsSection } from './PluginsSection'
 import type { RuntimeSettings } from '../../../../shared/types'
@@ -51,5 +51,30 @@ describe('PluginsSection hotkey rows', () => {
     )
     await findByText('Demo')
     expect(queryByText('Toggle Event Log')).toBeNull()
+  })
+})
+
+describe('PluginsSection installed icon', () => {
+  it('falls back to the registry iconUrl when the installed manifest omits one', async () => {
+    ;(window as unknown as { api: Record<string, unknown> }).api = {
+      listInstalledPlugins: vi.fn(async () => [
+        { manifest: { id: 'demo', name: 'Demo', version: '1.0.0', author: 'me' }, entryUrl: '' },
+      ]),
+      pluginListRegisteredHotkeys: vi.fn(async () => []),
+      pluginFetchRegistry: vi.fn(async () => ({
+        ok: true,
+        snapshot: { plugins: [{ id: 'demo', iconUrl: 'http://example/demo-icon.png' }] },
+      })),
+      pluginUninstall: vi.fn(async () => ({ ok: true })),
+      onPluginInstalled: vi.fn(() => () => {}),
+      onPluginHotkeysChanged: vi.fn(() => () => {}),
+    }
+    const { container, findByText } = render(
+      <PluginsSection onError={noop} settings={settings} update={noop} tryHotkey={tryHotkey} />,
+    )
+    await findByText('Demo')
+    await waitFor(() => {
+      expect(container.querySelector('img[src="http://example/demo-icon.png"]')).toBeTruthy()
+    })
   })
 })

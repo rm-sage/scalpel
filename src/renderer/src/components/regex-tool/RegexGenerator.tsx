@@ -20,10 +20,11 @@ import { FlaskGenerator } from './FlaskGenerator'
 import { WaystonesGenerator } from './WaystonesGenerator'
 import { VendorGenerator } from './VendorGenerator'
 import { TabletGenerator } from './TabletGenerator'
+import { RelicGenerator } from './RelicGenerator'
 import { usePoeVersion } from '../../shared/poe-version-context'
 import { HotkeyField } from '../settings/HotkeyField'
 import { PresetColorPicker } from './PresetColorPicker'
-import type { GeneratorConfig, GeneratorHandle } from './generator-types'
+import type { GeneratorConfig, GeneratorHandle, GeneratorKey } from './generator-types'
 import type { AppSettings, RegexPreset, RegexPresetTag, RuntimeSettings } from '../../../../shared/types'
 import type { HotkeySlot } from '../settings/hotkey-collisions'
 
@@ -54,10 +55,9 @@ const GENERATORS_POE2 = [
   { key: 'waystones', label: 'Waystones' },
   { key: 'tablet', label: 'Tablet' },
   { key: 'vendor', label: 'Vendor' },
+  { key: 'relic', label: 'Relic' },
   { key: 'custom', label: 'Custom' },
 ] as const satisfies readonly GeneratorConfig[]
-
-type GeneratorKey = 'maps' | 'flasks' | 'waystones' | 'tablet' | 'vendor' | 'custom'
 
 export function RegexGenerator({ settings, update, tryHotkey }: Props): JSX.Element {
   // Move legacy unsuffixed regex-tool keys into the poe1: namespace before any
@@ -120,6 +120,7 @@ export function RegexGenerator({ settings, update, tryHotkey }: Props): JSX.Elem
   const waystonesRef = useRef<GeneratorHandle>(null)
   const tabletRef = useRef<GeneratorHandle>(null)
   const vendorRef = useRef<GeneratorHandle>(null)
+  const relicRef = useRef<GeneratorHandle>(null)
   const refForGenerator = (g: GeneratorKey): React.RefObject<GeneratorHandle> => {
     switch (g) {
       case 'maps':
@@ -132,6 +133,8 @@ export function RegexGenerator({ settings, update, tryHotkey }: Props): JSX.Elem
         return tabletRef
       case 'vendor':
         return vendorRef
+      case 'relic':
+        return relicRef
       case 'custom':
         return customRef
     }
@@ -482,6 +485,8 @@ export function RegexGenerator({ settings, update, tryHotkey }: Props): JSX.Elem
         return <TabletGenerator ref={tabletRef} {...sharedProps} />
       case 'vendor':
         return <VendorGenerator ref={vendorRef} {...sharedProps} />
+      case 'relic':
+        return <RelicGenerator ref={relicRef} {...sharedProps} />
       case 'custom':
         return <CustomGenerator ref={customRef} {...sharedProps} />
     }

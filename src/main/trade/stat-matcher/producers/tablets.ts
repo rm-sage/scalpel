@@ -26,6 +26,19 @@ export function normalizeTabletModKey(text: string): string {
     .trim()
 }
 
+/** Drop the map-scoping phrasing a tablet's clipboard mod carries ("...found in Map",
+ *  "Breaches in Map have...", "...in your Maps") which the trade /data/stats text never
+ *  has ("...found", "Breaches have..."). KEEPS the #/#% roll placeholders, because
+ *  matchModToStat matches the placeholder form of the stat text. Used as a fallback when
+ *  the tablet-mods.json lookup misses a mod (e.g. game content newer than that table). */
+export function stripTabletMapScoping(text: string): string {
+  return text
+    .replace(/\s+in your Maps\b/gi, '')
+    .replace(/\s+in Map\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function buildTabletFilters(ctx: MatchContext): StatFilter[] {
   if (!ctx.isTablet) return []
   const { explicits, advancedMods, pct } = ctx

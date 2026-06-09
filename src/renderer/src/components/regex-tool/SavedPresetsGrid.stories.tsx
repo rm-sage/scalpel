@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 import { SavedPresetsGrid } from './SavedPresetsGrid'
 import type { RegexPreset } from '../../../../shared/types'
+import type { GeneratorKey } from './generator-types'
 
 /** SavedPresetsGrid renders a wrapping grid of "Saved Regex" boxes beneath the
  *  regex tool's chip header. Each box shows the preset name, has an X to delete,
@@ -60,10 +61,7 @@ const SAMPLE_PRESETS: RegexPreset[] = [
   },
 ]
 
-const Host = (props: {
-  generator: 'maps' | 'flasks' | 'custom' | 'waystones'
-  presets: RegexPreset[]
-}): JSX.Element => {
+const Host = (props: { generator: GeneratorKey; presets: RegexPreset[] }): JSX.Element => {
   const [presets, setPresets] = useState(props.presets)
   return (
     <SavedPresetsGrid

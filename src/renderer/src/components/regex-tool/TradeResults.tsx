@@ -26,6 +26,9 @@ interface TradeResultsProps {
   actionStatus: Record<string, 'pending' | 'success' | 'failed'>
   setActionStatus: React.Dispatch<React.SetStateAction<Record<string, 'pending' | 'success' | 'failed'>>>
   rateLimitTiers: Array<{ used: number; max: number; window: number; penalty: number; lastUpdate?: number }>
+  /** Item class forwarded to TradeListings (drives its display logic). Defaults to the
+   *  maps flow; the waystone/tablet generators pass their own class. */
+  itemClass?: string
 }
 
 /** Full trade-results panel for the map regex flow: the header bar (with the high-
@@ -47,6 +50,7 @@ export function TradeResults({
   actionStatus,
   setActionStatus,
   rateLimitTiers,
+  itemClass = 'Maps',
 }: TradeResultsProps): JSX.Element {
   const warnHighVolume = (tradeTotal ?? 0) > RESULTS_WARNING_THRESHOLD
   // Read poeVersion once for the "Open in Trade" URL. Version is stable per process
@@ -105,7 +109,7 @@ export function TradeResults({
           <TradeListings
             listings={tradeListings}
             total={tradeTotal}
-            itemClass="Maps"
+            itemClass={itemClass}
             itemName=""
             itemRarity="Normal"
             expandedListing={expandedListing}

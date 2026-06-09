@@ -6,6 +6,7 @@ import { startClientLogWatcher } from './client-log'
 import { guardNativeListener, registerDiagnosticProvider } from './diagnostics'
 import { getPoeVersion, setPoeVersion } from './game-state'
 import { loadTierData, refreshTierData } from './tier-data'
+import { loadPremiumMods, refreshPremiumMods } from './premium-mods'
 import { closeAllOverlaysOnPoeExit, isAnyScalpelWindowFocused, isInsideAnySecondaryOverlay } from './windowing'
 import { POE_SIDEBAR_RATIO } from '../shared/poe-geometry'
 
@@ -266,6 +267,10 @@ export function createOverlayWindow(version: 1 | 2 = 1): BrowserWindow {
     .catch(() => {})
   // Re-check for fresher tier data every 6 hours.
   setInterval(() => refreshTierData(version).catch(() => {}), 6 * 60 * 60 * 1000)
+  loadPremiumMods()
+    .then(() => refreshPremiumMods())
+    .catch(() => {})
+  setInterval(() => refreshPremiumMods().catch(() => {}), 24 * 60 * 60 * 1000)
   overlayWindow = new BrowserWindow({
     ...OVERLAY_WINDOW_OPTS,
     show: false,

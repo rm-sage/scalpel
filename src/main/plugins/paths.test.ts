@@ -36,4 +36,9 @@ describe('plugin paths', () => {
       join('/test/userData', 'plugins', 'jewel-economy', 'manifest.json'),
     )
   })
+
+  it('unpackedJsonPath returns userData/plugins/unpacked.json', async () => {
+    const { unpackedJsonPath } = await import('./paths')
+    expect(unpackedJsonPath()).toBe(join('/test/userData', 'plugins', 'unpacked.json'))
+  })
 })

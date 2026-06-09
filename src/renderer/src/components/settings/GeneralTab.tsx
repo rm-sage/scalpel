@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Github } from '@icon-park/react'
 import type { AppSettings, ProfileSettingValue, RuntimeSettings } from '../../../../shared/types'
 import { getGameFeatures } from '../../../../shared/game-features'
 import { GITHUB_REPO_URL, KOFI_URL } from '../../../../shared/endpoints'
 import { reportDiagnosticError } from '../../shared/diagnostics'
+import { CollapsibleSection } from '../../shared/CollapsibleSection'
 import kofiIcon from '../../assets/other/kofi-logo.svg'
 import { SettingToggleBox } from './SettingToggleBox'
+import { LOCALE_LABELS, setAppLocale, SUPPORTED_LOCALES, useCurrentLocale } from '../../shared/locale'
+import { m } from '../../../../shared/paraglide/messages.js'
 
 interface Props {
   settings: RuntimeSettings
@@ -16,9 +19,17 @@ interface Props {
 }
 
 export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }: Props): JSX.Element {
+  const locale = useCurrentLocale()
   const [reportMessage, setReportMessage] = useState<string | null>(null)
   const [reporting, setReporting] = useState(false)
   const [simulateCrash, setSimulateCrash] = useState(false)
+  const [debugLog, setDebugLog] = useState('')
+  const loadDebugLog = (): void => {
+    window.api.getDebugLog().then(setDebugLog)
+  }
+  useEffect(() => {
+    loadDebugLog()
+  }, [])
   const features = getGameFeatures(settings.poeVersion)
   const cachedLeagues = settings.poeVersion === 2 ? settings.leaguesPoe2 : settings.leaguesPoe1
   const leagueOptions: readonly string[] = cachedLeagues && cachedLeagues.length > 0 ? cachedLeagues : features.leagues
@@ -29,9 +40,9 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
     setReportMessage(null)
     try {
       const result = await window.api.createBugReport()
-      setReportMessage(`Report created: ${result.reportPath}`)
+      setReportMessage(m.settings_report_created({ path: result.reportPath }))
     } catch (err) {
-      setReportMessage(err instanceof Error ? err.message : 'Failed to create report')
+      setReportMessage(err instanceof Error ? err.message : m.settings_report_failed())
     } finally {
       setReporting(false)
     }
@@ -43,21 +54,52 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
 
   return (
     <>
-      <div className="settings-section-title mt-3">General</div>
+      <div className="settings-section-title mt-3">{m.settings_general_heading()}</div>
 
       <SettingToggleBox
-        label="Start in tray"
+        label={m.settings_start_in_tray()}
         checked={settings.startInTray}
         onChange={(val) => update('startInTray', val)}
       />
 
+      {/* Language. Reads the live locale (not settings.locale) so the box reflects
+          the switch immediately; setAppLocale persists + broadcasts to other windows. */}
+      <section>
+        <label>{m.settings_language_label()}</label>
+        <div className="setting-box mt-[6px] relative">
+          <span className="value">{LOCALE_LABELS[locale]}</span>
+          <button
+            className="primary"
+            onClick={() => {
+              const sel = document.getElementById('language-select') as HTMLSelectElement | null
+              sel?.showPicker?.()
+              sel?.focus()
+            }}
+          >
+            {m.common_change()}
+          </button>
+          <select
+            id="language-select"
+            value={locale}
+            onChange={(e) => setAppLocale(e.target.value as (typeof SUPPORTED_LOCALES)[number])}
+            className="absolute inset-0 opacity-0 cursor-pointer"
+          >
+            {SUPPORTED_LOCALES.map((code) => (
+              <option key={code} value={code}>
+                {LOCALE_LABELS[code]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
+
       {/* League */}
       {(() => {
-        const PRIVATE_LEAGUE_LABEL = 'Private League'
+        const PRIVATE_LEAGUE_LABEL = m.settings_private_league()
         const isPrivate = !leagueOptions.includes(activeLeague)
         return (
           <section>
-            <label>League</label>
+            <label>{m.settings_league_label()}</label>
             <div className="setting-box mt-[6px] relative">
               <span className="value">{activeLeague || PRIVATE_LEAGUE_LABEL}</span>
               <button
@@ -68,7 +110,7 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
                   sel?.focus()
                 }}
               >
-                Change
+                {m.common_change()}
               </button>
               <select
                 id="league-select-unified"
@@ -95,7 +137,7 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
                 type="text"
                 value={activeLeague}
                 onChange={(e) => updateProfile('league', e.target.value)}
-                placeholder="Enter Private League - Full name including (PL#####)"
+                placeholder={m.settings_private_league_placeholder()}
                 className="mt-[6px] w-full text-[11px] bg-black/30 rounded px-2 py-[5px] border-none"
               />
             )}
@@ -105,9 +147,9 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
 
       {/* Update channel */}
       <section>
-        <label>Update channel</label>
+        <label>{m.settings_update_channel()}</label>
         <div className="flex gap-1.5 mt-[6px]">
-          {(['stable', 'beta'] as const).map((ch) => (
+          {(['stable', 'beta', 'experimental'] as const).map((ch) => (
             <button
               key={ch}
               onClick={() => update('updateChannel', ch)}
@@ -115,15 +157,20 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
                 settings.updateChannel === ch ? 'bg-accent text-bg-solid' : 'text-text-dim'
               }`}
             >
-              {ch === 'stable' ? 'Stable' : 'Beta'}
+              {{
+                stable: m.settings_channel_stable,
+                beta: m.settings_channel_beta,
+                experimental: m.settings_channel_experimental,
+              }[ch]()}
             </button>
           ))}
         </div>
-        {settings.updateChannel === 'beta' && (
+        {settings.updateChannel !== 'stable' && (
           <div className="mt-2 flex flex-col gap-1.5">
             <p className="text-[10px] text-text-dim">
-              Warning: expect beta releases to break stuff and be generally annoying. Please join discord to tell me
-              what to fix and watch me squirm
+              {settings.updateChannel === 'experimental'
+                ? m.settings_experimental_warning()
+                : m.settings_beta_warning()}
             </p>
             <a
               href="https://discord.com/invite/nUNcrmEAP5"
@@ -136,14 +183,14 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
               className="flex items-center justify-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded no-underline"
               style={{ background: '#5865F2', color: '#fff' }}
             >
-              Join Discord
+              {m.settings_join_discord()}
             </a>
           </div>
         )}
       </section>
 
       <section>
-        <label>Filter sound preview volume</label>
+        <label>{m.settings_preview_volume()}</label>
         <div className="flex items-center gap-[10px] mt-[2px]">
           <input
             type="range"
@@ -161,21 +208,18 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
       </section>
 
       <section>
-        <label>Bug reports</label>
+        <label>{m.settings_bug_reports()}</label>
         <div className="mt-[6px] flex flex-col gap-2">
           <button onClick={reportBug} disabled={reporting} className="self-start text-[11px] px-3 py-1.5 text-text-dim">
-            {reporting ? 'Creating report...' : 'Report a bug'}
+            {reporting ? m.settings_report_creating() : m.settings_report_a_bug()}
           </button>
-          <p className="text-[10px] text-text-dim">
-            Creates a local diagnostics file with app version, OS/runtime info, selected non-sensitive settings, and
-            recent redacted logs. Nothing is uploaded automatically. Review it before attaching.
-          </p>
+          <p className="text-[10px] text-text-dim">{m.settings_bug_reports_desc()}</p>
           {reportMessage && <div className="text-[10px] text-text-dim break-all">{reportMessage}</div>}
         </div>
       </section>
 
       <section>
-        <div className="settings-section-title mt-3">Support Development</div>
+        <div className="settings-section-title mt-3">{m.settings_support_development()}</div>
         <div className="flex gap-1.5 mt-[6px] flex-wrap">
           <button
             onClick={() => window.api.openExternal(KOFI_URL)}
@@ -196,7 +240,7 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
 
       {import.meta.env.DEV && (
         <section>
-          <div className="settings-section-title mt-3">Dev Only Stuff</div>
+          <div className="settings-section-title mt-3">{m.settings_dev_only()}</div>
           <div className="flex gap-1.5 mt-[6px] flex-wrap">
             <button
               onClick={() => {
@@ -208,14 +252,14 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
               }}
               className="text-[11px] px-3 py-1.5 text-text-dim"
             >
-              Reset tooltips
+              {m.settings_reset_tooltips()}
             </button>
             <button
               onClick={() => window.api.devFakeUpdate()}
               className="text-[11px] px-3 py-1.5 text-text-dim"
               title="Inject a fake update-available event so you can test the channel-switch rescind flow"
             >
-              Fake update banner
+              {m.settings_fake_update_banner()}
             </button>
             <button
               onClick={() =>
@@ -229,14 +273,14 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
               className="text-[11px] px-3 py-1.5 text-text-dim"
               title="Report a handled diagnostics error without breaking the UI"
             >
-              Simulate a small error
+              {m.settings_simulate_small_error()}
             </button>
             <button
               onClick={() => setSimulateCrash(true)}
               className="text-[11px] px-3 py-1.5 text-text-dim"
               title="Throw during render so the diagnostics error boundary catches it"
             >
-              Simulate a fatal crash
+              {m.settings_simulate_fatal_crash()}
             </button>
             {onShowOnboarding && (
               <button
@@ -244,7 +288,7 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
                 className="text-[11px] px-3 py-1.5 text-text-dim"
                 title="Re-enter the onboarding flow to review it"
               >
-                Review Onboarding
+                {m.settings_review_onboarding()}
               </button>
             )}
             <button
@@ -252,11 +296,29 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
               className="text-[11px] px-3 py-1.5 text-text-dim"
               title="Clear all adaptive price-check learned preferences"
             >
-              Reset PC Learnings
+              {m.settings_reset_pc_learnings()}
             </button>
           </div>
         </section>
       )}
+
+      <section>
+        <CollapsibleSection title={<span className="text-xs text-text-dim">Debug Log</span>}>
+          <div className="mt-2 flex flex-col gap-1.5">
+            <div className="flex gap-1.5">
+              <button onClick={loadDebugLog} className="text-[11px] px-3 py-1.5 text-text-dim">
+                Refresh
+              </button>
+              <button onClick={() => void window.api.openLogFolder()} className="text-[11px] px-3 py-1.5 text-text-dim">
+                Open log folder
+              </button>
+            </div>
+            <pre className="text-[10px] leading-[14px] text-text-dim bg-black/30 rounded p-2 max-h-[300px] overflow-auto whitespace-pre-wrap break-words">
+              {debugLog || 'No log entries.'}
+            </pre>
+          </div>
+        </CollapsibleSection>
+      </section>
     </>
   )
 }

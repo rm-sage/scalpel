@@ -15,6 +15,19 @@ const { spawnSync } = require('node:child_process')
 const { rmSync } = require('node:fs')
 
 const env = { ...process.env }
+
+// Compile Paraglide messages into src/shared/paraglide/ (gitignored, auto-generated).
+// Runs here so a fresh checkout has the i18n runtime before the husky pre-commit
+// hook (tsc + vitest, which do NOT run `npm run build`) ever needs to import it.
+const i18n = spawnSync(
+  'paraglide-js',
+  ['compile', '--project', './project.inlang', '--outdir', './src/shared/paraglide'],
+  { stdio: 'inherit', shell: true, env },
+)
+if ((i18n.status ?? 1) !== 0) {
+  process.exit(i18n.status ?? 1)
+}
+
 if (process.platform === 'linux') {
   const flag = '-Wno-error=incompatible-pointer-types'
   env.CFLAGS = env.CFLAGS ? `${env.CFLAGS} ${flag}` : flag

@@ -1,5 +1,6 @@
 import type { OverlayData } from '../../../shared/types'
 import { UpdateAvailableBanner, JustUpdatedBanner, BrickedReleaseBanner } from '../shared/update-banners'
+import { m } from '../../../shared/paraglide/messages.js'
 
 interface UpdateBannerProps {
   updateVersion: string | null
@@ -46,9 +47,7 @@ export function UpdateBanner({
 
       {needsElevation && (
         <div className="flex items-center justify-between px-3.5 py-1.5 text-[11px] shrink-0 gap-2 bg-[rgba(239,83,80,0.15)]">
-          <span className="font-semibold text-[#ef5350]">
-            Can't read items. If PoE is running as admin, Scalpel needs to be too.
-          </span>
+          <span className="font-semibold text-[#ef5350]">{m.overlay_needs_elevation()}</span>
         </div>
       )}
 

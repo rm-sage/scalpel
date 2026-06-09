@@ -33,6 +33,7 @@ import {
   applyBaseModeToFilters,
   applyCraftingReadyToFilters,
   isCraftingReadyState,
+  isPerfectUniqueRoll,
   shouldIncludeImplicitsInBase,
 } from './base-mode'
 import { applyLearnedDecisions } from './learned-decisions'
@@ -582,6 +583,8 @@ export function PriceCheck({
                       f.type !== 'implicit' &&
                       f.type !== 'enchant' &&
                       !f.foulborn &&
+                      !isPerfectUniqueRoll(f, item.rarity) &&
+                      !f.premium &&
                       f.enabled,
                   ).length === 0
 

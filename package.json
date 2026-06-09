@@ -1,6 +1,6 @@
 {
   "name": "scalpel",
-  "version": "0.9.12-rc3-rmsage.1",
+  "version": "0.9.13-rc5-rmsage.1",
   "description": "Path of Exile's First Fourth-Party Tool",
   "author": "Scalpel",
   "license": "AGPL-3.0-only",
@@ -14,9 +14,10 @@
   },
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "npm run build:internal-assets && node scripts/sync-regex-data.js & electron-vite dev",
-    "build": "npm run build:internal-assets && electron-vite build",
+    "dev": "npm run build:i18n && npm run build:internal-assets && node scripts/sync-regex-data.js & electron-vite dev",
+    "build": "npm run build:i18n && npm run build:internal-assets && electron-vite build",
     "build:internal-assets": "node scripts/build-internal-assets.mjs",
+    "build:i18n": "paraglide-js compile --project ./project.inlang --outdir ./src/shared/paraglide",
     "build-tier-data": "node scripts/build-tier-data.js",
     "sync-regex": "node scripts/sync-regex-data.js",
     "sync-prefabs": "node scripts/sync-prefabs.js",
@@ -50,6 +51,7 @@
     "@biomejs/biome": "^2.4.15",
     "@electron/asar": "^4.1.1",
     "@icon-park/react": "^1.4.2",
+    "@inlang/paraglide-js": "^2.18.2",
     "@playwright/test": "^1.60.0",
     "@storybook/react-vite": "^10.3.6",
     "@testing-library/jest-dom": "^6.9.1",

@@ -12,7 +12,9 @@ import {
   isBulkExchangeItem,
   searchBulkExchange,
   searchMapsByRegex,
+  searchTabletsByRegex,
   searchTrade,
+  searchWaystonesByRegex,
 } from '../trade/trade'
 
 async function clickTradeButton(
@@ -362,6 +364,87 @@ export function register(store: Store<AppSettings>): void {
         params.nightmare,
         params.originator,
         params.corrupted8mod,
+        tradeStatus,
+        tradePriceOption,
+        collapse,
+      )
+      return { ...result, league }
+    },
+  )
+
+  ipcMain.handle(
+    'waystone-regex-trade',
+    async (
+      _event,
+      params: {
+        tier: number
+        avoidTexts: string[]
+        wantTexts: string[]
+        wantMode: 'any' | 'all'
+        wantValues: Record<number, number>
+        avoidValues: Record<number, number>
+        qualifiers: {
+          corrupted: boolean
+          uncorrupted: boolean
+          delirious: boolean
+          anyPack: boolean
+        }
+        quantities: {
+          packSize: number | null
+          monsterEffectiveness: number | null
+          monsterRarity: number | null
+          itemRarity: number | null
+          dropChance: number | null
+        }
+      },
+    ) => {
+      const league = getProfileBackedSetting(store, 'league')
+      const tradeStatus = store.get('tradeStatus') ?? 'available'
+      const tradePriceOption = getProfileBackedSetting(store, 'tradePriceOption') ?? 'chaos_divine'
+      const collapse = store.get('tradeCollapseListings') ?? true
+      const result = await searchWaystonesByRegex(
+        league,
+        params.tier,
+        params.avoidTexts,
+        params.wantTexts,
+        params.wantMode,
+        params.wantValues,
+        params.avoidValues,
+        params.qualifiers,
+        params.quantities,
+        tradeStatus,
+        tradePriceOption,
+        collapse,
+      )
+      return { ...result, league }
+    },
+  )
+
+  ipcMain.handle(
+    'tablet-regex-trade',
+    async (
+      _event,
+      params: {
+        wantTexts: string[]
+        wantMode: 'any' | 'all'
+        wantValues: Record<number, number>
+        rarity: { normal: boolean; magic: boolean }
+        typeFlags: Record<string, boolean>
+        uses: { enabled: boolean; value: number }
+      },
+    ) => {
+      const league = getProfileBackedSetting(store, 'league')
+      const tradeStatus = store.get('tradeStatus') ?? 'available'
+      const tradePriceOption = getProfileBackedSetting(store, 'tradePriceOption') ?? 'chaos_divine'
+      const collapse = store.get('tradeCollapseListings') ?? true
+      const result = await searchTabletsByRegex(
+        league,
+        params.wantTexts,
+        params.wantMode,
+        params.wantValues,
+        params.rarity,
+        params.typeFlags,
+        params.uses,
         tradeStatus,
         tradePriceOption,
         collapse,

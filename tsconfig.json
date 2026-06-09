@@ -6,6 +6,7 @@
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
+    "allowJs": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,

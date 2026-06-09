@@ -408,6 +408,16 @@ export function registerDiagnostics(deps: {
   ipcMain.handle('diagnostics:show-report', (_event, reportPath: string) => {
     shell.showItemInFolder(reportPath)
   })
+  ipcMain.handle('diagnostics:get-log', (): string => recentLog())
+  ipcMain.handle('diagnostics:open-log-folder', () => {
+    const path = logPath()
+    if (path && existsSync(path)) {
+      shell.showItemInFolder(path)
+    } else {
+      const dir = diagnosticsDir()
+      if (dir) void shell.openPath(dir)
+    }
+  })
 
   registerDiagnosticProvider('platformDiagnostics', collectPlatformDiagnostics)
   registerDiagnosticProvider('logDiagnostics', collectLogDiagnostics)
@@ -415,6 +425,9 @@ export function registerDiagnostics(deps: {
 
 /** Test-only: the redaction pass that scrubs report and log content. */
 export const _redactForTests = redact
+
+/** Test-only: returns the recent (tail) of the on-disk diagnostics log. */
+export const _recentLogForTests = recentLog
 
 /** Test-only: trims a log file to its most recent tail when it exceeds maxBytes. */
 export const _trimLogToTailForTests = trimLogToTail

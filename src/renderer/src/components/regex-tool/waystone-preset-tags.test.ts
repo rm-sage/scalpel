@@ -3,7 +3,9 @@ import { generateWaystonePresetTags } from './waystone-preset-tags'
 import { WAYSTONE_MODS } from '../../../../shared/data/regex/waystone-mods'
 
 const FIRE = WAYSTONE_MODS.find((m) => m.affix === 'PREFIX' && m.text.toLowerCase().includes('extra fire'))!
-const BLEED = WAYSTONE_MODS.find((m) => m.affix === 'SUFFIX' && m.text.toLowerCase().includes('bleeding'))!
+const BLEED = WAYSTONE_MODS.find(
+  (m) => m.affix === 'SUFFIX' && m.text.toLowerCase().includes('maximum player resistances'),
+)!
 
 /** Build a full PresetTagState with neutral defaults; override per case. */
 function state(
@@ -14,10 +16,9 @@ function state(
     avoid: new Set<number>(),
     tier: { min: 1, max: 16 },
     rarity: { corrupted: false, uncorrupted: false },
-    dropOverEnabled: false,
-    dropOverValue: 100,
     delirious: false,
     anyPack: false,
+    quantities: { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
     wantValues: {},
     avoidValues: {},
     ...over,

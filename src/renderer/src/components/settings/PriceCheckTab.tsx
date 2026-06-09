@@ -10,6 +10,7 @@ import {
 } from '../price-check/search-settings'
 import { SettingSelectBox } from './SettingSelectBox'
 import { SettingToggleBox } from './SettingToggleBox'
+import { m } from '../../../../shared/paraglide/messages.js'
 
 interface Props {
   settings: RuntimeSettings
@@ -21,11 +22,11 @@ interface Props {
 export function PriceCheckTab({ settings, update, updateProfile, tryHotkey }: Props): JSX.Element {
   return (
     <>
-      <div className="settings-section-title mt-3">Trade Settings</div>
+      <div className="settings-section-title mt-3">{m.settings_pc_trade_settings()}</div>
       {/* Group the two top rows tighter than the outer section gap, matching Defaults. */}
       <div className="flex flex-col gap-[10px]">
         <section>
-          <label>Price check hotkey</label>
+          <label>{m.settings_pc_hotkey()}</label>
           <div className="mt-[2px]">
             <HotkeyField
               value={settings.priceCheckHotkey}
@@ -38,24 +39,24 @@ export function PriceCheckTab({ settings, update, updateProfile, tryHotkey }: Pr
         </section>
 
         <section>
-          <label>Trade site login</label>
+          <label>{m.settings_pc_trade_login()}</label>
           <div className="mt-[2px]">
             <PoeLoginButton />
           </div>
         </section>
       </div>
 
-      <div className="settings-section-title mt-3">Defaults</div>
+      <div className="settings-section-title mt-3">{m.settings_pc_defaults()}</div>
 
       <div className="grid grid-cols-2 gap-x-2 gap-y-[10px]">
         <SettingSelectBox
-          label="Trade listings"
+          label={m.settings_pc_trade_listings()}
           value={settings.tradeStatus ?? 'available'}
           options={STATUS_OPTIONS}
           onChange={(v) => update('tradeStatus', v)}
         />
         <SettingSelectBox
-          label="Buyout currency"
+          label={m.settings_pc_buyout_currency()}
           value={
             settings.activeProfile?.tradePriceOption ?? (settings.poeVersion === 2 ? 'exalted_divine' : 'chaos_divine')
           }
@@ -63,24 +64,24 @@ export function PriceCheckTab({ settings, update, updateProfile, tryHotkey }: Pr
           onChange={(v) => updateProfile('tradePriceOption', v)}
         />
         <SettingSelectBox
-          label="Listing time"
+          label={m.settings_pc_listing_time()}
           value={settings.tradeDefaultListedTime ?? ''}
           options={LISTED_TIME_OPTIONS}
           onChange={(v) => update('tradeDefaultListedTime', v)}
         />
         <SettingSelectBox
-          label="Trade Results View"
+          label={m.settings_pc_results_view()}
           value={settings.tradeResultsView ?? 'default'}
           options={RESULTS_VIEW_OPTIONS}
           onChange={(v) => update('tradeResultsView', v)}
         />
         <SettingToggleBox
-          label="Collapse Listings by Account"
+          label={m.settings_pc_collapse_listings()}
           checked={settings.tradeCollapseListings ?? true}
           onChange={(val) => update('tradeCollapseListings', val)}
         />
         <section>
-          <label>Default search percentage</label>
+          <label>{m.settings_pc_default_percent()}</label>
           <div className="setting-box mt-[2px] min-h-[40px] flex items-center gap-[10px]">
             <input
               type="range"
@@ -97,34 +98,34 @@ export function PriceCheckTab({ settings, update, updateProfile, tryHotkey }: Pr
           </div>
         </section>
         <SettingSelectBox
-          label="Adaptive defaults"
+          label={m.settings_pc_adaptive_defaults()}
           value={settings.adaptiveDefaultsMode ?? 'eager'}
           options={ADAPTIVE_MODE_OPTIONS}
           onChange={(v) => update('adaptiveDefaultsMode', v)}
         />
       </div>
 
-      <div className="settings-section-title mt-3">Additional Settings</div>
+      <div className="settings-section-title mt-3">{m.settings_pc_additional()}</div>
 
       {/* Tighten the toggle group; outer fragment gap is for top-level sections, too sparse for stacked rows. */}
       <div className="flex flex-col gap-[10px]">
         <SettingToggleBox
-          label='Default all items to "Base" - can simplify unchecking unwanted mods'
+          label={m.settings_pc_default_base()}
           checked={settings.tradeDefaultToBase ?? false}
           onChange={(val) => update('tradeDefaultToBase', val)}
         />
         <SettingToggleBox
-          label='PoE2: default white/magic items to "Crafting Ready" (base + ilvl + affixes)'
+          label={m.settings_pc_crafting_ready()}
           checked={settings.tradePoe2CraftingReadyDefault ?? true}
           onChange={(val) => update('tradePoe2CraftingReadyDefault', val)}
         />
         <SettingToggleBox
-          label="Don't hide mods I uncheck"
+          label={m.settings_pc_keep_unchecked()}
           checked={settings.tradeKeepUncheckedVisible ?? false}
           onChange={(val) => update('tradeKeepUncheckedVisible', val)}
         />
         <SettingToggleBox
-          label="Never auto-search"
+          label={m.settings_pc_never_autosearch()}
           checked={settings.tradeNeverAutoSearch ?? false}
           onChange={(val) => update('tradeNeverAutoSearch', val)}
         />

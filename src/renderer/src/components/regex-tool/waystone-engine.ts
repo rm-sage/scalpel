@@ -12,26 +12,53 @@ export interface WaystoneRarity {
 }
 
 export interface WaystoneQualifiers {
-  /** Drop-chance threshold mod chip ("Waystone drop chance over"). When enabled,
-   *  generates a regex that matches `: +<digit>{2-3}` style suffixes. */
-  dropOverEnabled: boolean
-  dropOverValue: number
   delirious: boolean
   anyPack: boolean
 }
 
+/** "Quantity & yield" numeric thresholds (poe2.re's waystone quantifiers). Each is a
+ *  minimum % the waystone must roll; 0 / null means "no constraint". They generate a
+ *  `"<token>.*<numberRegex>%"` part and (in the trade path) a map_filter min. */
+export interface WaystoneQuantities {
+  /** Monster Pack Size (trade: map_packsize). */
+  packSize: number | null
+  /** Monster Effectiveness (regex only -- no trade filter exists). */
+  monsterEffectiveness: number | null
+  /** Monster Rarity (regex only -- no trade filter exists). */
+  monsterRarity: number | null
+  /** Item Rarity / IIR (trade: map_iir). */
+  itemRarity: number | null
+  /** Waystone Drop Chance (trade: map_bonus). */
+  dropChance: number | null
+}
+
+/** Short regex token (a unique substring of each waystone property line) paired with the
+ *  quantity field that drives it, producing `"<token>.*<numberRegex>%"`. Tokens are
+ *  case-insensitive fragments chosen to match only their property line:
+ *    "ack siz" -> P[ack Siz]e, "ffectiv" -> E[ffectiv]eness, "er rar" -> Monst[er Rar]ity,
+ *    "m rar" -> Ite[m Rar]ity, "p c" -> Dro[p C]hance. */
+export const WAYSTONE_QUANTIFIER_TOKENS: Array<[keyof WaystoneQuantities, string]> = [
+  ['packSize', 'ack siz.*'],
+  ['monsterEffectiveness', 'ffectiv.*'],
+  ['monsterRarity', 'er rar.*'],
+  ['itemRarity', 'm rar.*'],
+  ['dropChance', 'p c.*'],
+]
+
 export interface WaystoneSelections {
-  /** Mod ids the user wants to MATCH (prefixes / good mods). */
+  /** Mod ids the user wants to MATCH (will appear in the positive/good regex group).
+   *  Any mod regardless of affix can be placed here. */
   want: Set<number>
-  /** Mod ids the user wants to AVOID (suffixes / bad mods). */
+  /** Mod ids the user wants to AVOID (will appear in the negated "!..." group).
+   *  Any mod regardless of affix can be placed here. */
   avoid: Set<number>
-  /** "any" = match if any selected prefix is present; "all" = require all. */
+  /** "any" = match if any selected mod is present; "all" = require all. */
   wantMode: 'any' | 'all'
-  /** Per-mod magnitude thresholds for want (prefix) mods, keyed by mod id. A selected
+  /** Per-mod magnitude thresholds for want mods, keyed by mod id. A selected
    *  mod with a non-zero value gets a number-regex prefix; absent/falsy means the bare
    *  mod token. */
   wantValues: Record<number, number>
-  /** Same as wantValues, for avoid (suffix) mods. */
+  /** Same as wantValues, for avoid mods. */
   avoidValues: Record<number, number>
 }
 
@@ -40,6 +67,7 @@ interface BuildArgs {
   tier: WaystoneTier
   rarity: WaystoneRarity
   qualifiers: WaystoneQualifiers
+  quantities: WaystoneQuantities
   selections: WaystoneSelections
   /** "Round down to nearest 10" -- compresses magnitude regex. */
   round10: boolean
@@ -56,11 +84,12 @@ interface BuildArgs {
  *  output as extra whitespace between adjacent sections. Trade regex tolerates the
  *  extra space, and matching the upstream behavior keeps the parity test honest. */
 export function buildWaystoneRegex(args: BuildArgs): string {
-  const { mods, tier, rarity, qualifiers, selections, round10, over100, customText } = args
+  const { mods, tier, rarity, qualifiers, quantities, selections, round10, over100, customText } = args
   const parts = [
     buildTierRegex(tier),
     buildModifierRegex(mods, selections, qualifiers, round10, over100),
     buildRarityRegex(rarity),
+    ...buildQuantifierRegexes(quantities, round10, over100),
     customText || null,
   ].filter((p): p is string => p !== null)
   if (parts.length === 0) return ''
@@ -110,18 +139,14 @@ function buildModifierRegex(
   round10: boolean,
   over100: boolean,
 ): string {
-  const wantMods = mods.filter((m) => m.affix === 'PREFIX' && selections.want.has(m.id))
-  const avoidMods = mods.filter((m) => m.affix === 'SUFFIX' && selections.avoid.has(m.id))
+  const wantMods = mods.filter((m) => selections.want.has(m.id))
+  const avoidMods = mods.filter((m) => selections.avoid.has(m.id))
 
   const wantRegex = wantMods.map((m) => modToken(m, selections.wantValues[m.id], round10, over100))
 
   const wantWithMode = selections.wantMode === 'any' ? wantRegex.join('|') : wantRegex.map((r) => `"${r}"`).join(' ')
 
   const goodSpecial: string[] = []
-  if (qualifiers.dropOverEnabled) {
-    const firstDigit = qualifiers.dropOverValue.toString()[0]
-    goodSpecial.push(`: \\+[${firstDigit}-9]\\d\\d`)
-  }
   if (qualifiers.delirious) goodSpecial.push('delir')
   if (qualifiers.anyPack) goodSpecial.push('al pac')
 
@@ -146,6 +171,24 @@ function buildRarityRegex(rarity: WaystoneRarity): string | null {
   if (rarity.corrupted) return 'corr'
   if (rarity.uncorrupted) return '!corr'
   return null
+}
+
+/** "Quantity & yield" parts: one `"<token>.*<numberRegex>%"` per set threshold, in
+ *  poe2.re order. A 0/null/empty value (or a number-regex that collapses to empty)
+ *  produces no part. Mirrors poe2.re's `generateQuantifiers` + `addQuantifier`. */
+function buildQuantifierRegexes(quantities: WaystoneQuantities, round10: boolean, over100: boolean): string[] {
+  const out: string[] = []
+  for (const [key, token] of WAYSTONE_QUANTIFIER_TOKENS) {
+    const value = quantities[key]
+    if (!value || value <= 0) continue
+    // Honor the "Match numbers over 100%" toggle here too: yield/quantity stats
+    // (Pack Size, Monster Rarity, ...) commonly roll above 100%, so a 2-digit
+    // threshold must still match 3-digit rolls when the toggle is on.
+    const num = generateNumberRegex(String(value), round10, over100)
+    if (num === '') continue
+    out.push(`"${token}${num}%"`)
+  }
+  return out
 }
 
 function range(start: number, end: number): number[] {

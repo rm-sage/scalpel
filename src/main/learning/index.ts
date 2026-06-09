@@ -3,6 +3,7 @@ import Store from 'electron-store'
 import type { AppSettings, PoeItem } from '../../shared/types'
 import type { StatFilter } from '../trade/trade'
 import type { AdaptiveMode, CounterRecord } from './types'
+import { LEARNING_BASELINE_VERSION, needsBaselineReset } from './baseline'
 import { CounterStore, type LearningPersistence } from './counter-store'
 import { captureObservation, computeLearnedDecisions } from './engine'
 
@@ -21,10 +22,16 @@ export function initLearning(settings: Store<AppSettings>, version: 1 | 2): void
   settingsRef = settings
   sessionItems.clear()
   sessionSeq = 0
-  const data = new Store<{ buckets: Record<string, Record<string, CounterRecord>> }>({
+  const data = new Store<{ buckets: Record<string, Record<string, CounterRecord>>; baselineVersion?: number }>({
     name: `scalpel-learning-poe${version}`,
     defaults: { buckets: {} },
   })
+  // One-time wipe when defaults shift (see learning/baseline.ts). Runs before
+  // CounterStore loads so the cleared buckets are what it reads.
+  if (needsBaselineReset(data.get('baselineVersion'), LEARNING_BASELINE_VERSION)) {
+    data.set('buckets', {})
+    data.set('baselineVersion', LEARNING_BASELINE_VERSION)
+  }
   const persistence: LearningPersistence = {
     load: () => data.get('buckets'),
     save: (b) => data.set('buckets', b),

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import type { FilterFile } from '../shared/types'
 import { loadIntents, resetIntents } from './filter/intent-recorder'
 import { parseFilterFile } from './filter/parser'
+import { repairFilterOnLoad } from './filter/sanitize'
 import { clearFilterBaseTypes, registerFilterBaseTypes } from './trade/clipboard'
 import { saveVersion } from './update/versions'
 
@@ -166,7 +167,8 @@ export function loadFilter(path: string, autoVersionLabel?: string): FilterFile 
 
   try {
     const content = readFileSync(path, 'utf-8')
-    currentFilter = parseFilterFile(path, content)
+    const repaired = repairFilterOnLoad(path, content)
+    currentFilter = parseFilterFile(path, repaired)
     colorFreqCache = null
     for (const cb of filterLoadedCallbacks) cb()
     // Load intent log for this filter

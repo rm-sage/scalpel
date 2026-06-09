@@ -100,11 +100,24 @@ export function PluginHost(props: PluginHostProps): JSX.Element | null {
           delete: (key) => window.api.pluginStorageDelete(m.id, key),
           keys: () => window.api.pluginStorageKeys(m.id),
         },
+        gameConfig: {
+          read: () => window.api.gameConfigRead(),
+          write: (content) => window.api.gameConfigWrite(content),
+          onChange: (handler) => window.api.onGameConfigChange(handler),
+        },
+        prices: {
+          getPrices: (opts) => window.api.pricesGet(opts),
+          refresh: () => window.api.pricesRefresh(),
+          onChange: (handler) => window.api.onPricesChange(handler),
+        },
         registerTab: (pluginId, opts) => {
           setTabs((prev) => {
             if (prev.find((t) => t.pluginId === pluginId)) return prev
             return [...prev, { pluginId, ...opts, overlay: pendingOverlayRef.current.get(pluginId) }]
           })
+          // Mirror registerHotkey: report to main so any window (incl. the
+          // standalone app settings) can list this tab for the Show/Hide UI.
+          void window.api.pluginRegisterTab(pluginId, opts.label, opts.icon)
         },
         registerHotkey: (pluginId, opts, handler) => {
           pluginHotkeyHandlersRef.current.set(pluginId, handler)
@@ -166,6 +179,7 @@ export function PluginHost(props: PluginHostProps): JSX.Element | null {
       pluginHotkeyHandlersRef.current.delete(pluginId)
       pendingOverlayRef.current.delete(pluginId)
       void window.api.pluginUnregisterHotkey(pluginId)
+      void window.api.pluginUnregisterTab(pluginId)
       onPluginUnloadedRef.current?.(pluginId)
     })
   }, [])

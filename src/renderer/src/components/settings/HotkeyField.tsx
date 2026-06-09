@@ -47,7 +47,7 @@ export function HotkeyField({
 
   return (
     <div ref={ref}>
-      <div className="setting-box group" onClick={() => setRecording(true)}>
+      <div className="setting-box group min-h-[40px]" onClick={() => setRecording(true)}>
         <span className={`value ${recording ? 'recording' : ''}`}>
           {recording ? 'Press your desired key combo...' : prettyHotkey(value) || placeholder}
         </span>

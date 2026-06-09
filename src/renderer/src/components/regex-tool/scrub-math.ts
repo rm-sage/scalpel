@@ -27,3 +27,13 @@ export function snapToStep(value: number, step: number, decimals: number): numbe
   const factor = 10 ** decimals
   return Math.round(Math.round(value / step) * step * factor) / factor
 }
+
+/** Midpoint of a "min-max" placeholder range (e.g. "20-40" -> 30, "1-1.5" -> 1.25),
+ *  or null when the placeholder is not a plain numeric range. Used to seed an empty
+ *  field at the middle of its range when the user starts scrubbing it. */
+export function placeholderRangeMidpoint(placeholder: string): number | null {
+  const m = placeholder.match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$/)
+  if (!m) return null
+  const mid = (parseFloat(m[1]) + parseFloat(m[2])) / 2
+  return Number.isNaN(mid) ? null : mid
+}

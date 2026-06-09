@@ -6,7 +6,7 @@ import uniqueInfoPoe2 from '../../shared/data/items/unique-info-poe2.json'
 import { POE_NINJA_API } from '../../shared/endpoints'
 import type { NinjaItemRef } from '../../shared/external-link'
 import { deriveItemVariant } from '../../shared/external-link'
-import type { PriceInfo } from '../../shared/types'
+import type { PriceEntry, PriceInfo } from '../../shared/types'
 import { getPoeVersion } from '../game-state'
 import { getManifest } from '../manifest'
 import { fetchAndBuildPoe2PriceMap, fetchPoe2PricesFromProxy, type Poe2PriceResult } from './prices.poe2'
@@ -89,6 +89,17 @@ let priceMap = new Map<string, PriceInfo>()
 // unique items; the direct-ninja exchange fallback leaves it empty.
 let pricesByVariant = new Map<string, PriceInfo>()
 let lastFetchTime = 0
+// Plugin-facing price snapshot, rebuilt on each successful refresh. Separate
+// from priceMap because it retains display-case names + category slugs that the
+// lowercased lookup map discards.
+let priceEntries: PriceEntry[] = []
+let priceEntriesUpdatedAt: number | null = null
+const priceUpdateListeners = new Set<() => void>()
+
+function notifyPriceUpdate(): void {
+  for (const cb of priceUpdateListeners) cb()
+}
+
 // PoE2 now uses the EE2 proxy by default (one CDN-cached request per refresh),
 // matching the same load profile as PoE1's dense endpoint. Both versions use
 // the same 10-minute TTL; the direct-ninja fallback path is kept but is not
@@ -217,15 +228,34 @@ function buildUniquesByBaseFromDense(resp: DenseResponse): void {
   saveCachedUniquesByBase(merged)
 }
 
-function processDenseResponse(resp: DenseResponse): void {
+// Dense overview.type -> stable category slug for the plugin price API. Mirrors
+// PoE2's manifest slugs where they overlap so 'currency' is identical across
+// games (the one cross-game guarantee). Unlisted types fall back to a
+// kebab-cased slug of the type.
+const POE1_DENSE_CATEGORY: Record<string, string> = {
+  Currency: 'currency',
+  Fragment: 'fragments',
+  DivinationCard: 'divination-cards',
+  Oil: 'oils',
+  Incubator: 'incubators',
+  Scarab: 'scarabs',
+  Fossil: 'fossils',
+  Resonator: 'resonators',
+  Essence: 'essences',
+}
+function poe1Category(type: string): string {
+  return POE1_DENSE_CATEGORY[type] ?? type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+}
+
+export function processDenseResponse(resp: DenseResponse, entriesOut: PriceEntry[]): void {
   let divineRate = 0
 
-  // Process all overviews (currency + items use the same line format)
   const allOverviews = [...(resp.currencyOverviews ?? []), ...(resp.itemOverviews ?? [])]
 
   for (const overview of allOverviews) {
     const isDivCards = overview.type === 'DivinationCard'
     const isSkillGem = overview.type === 'SkillGem'
+    const category = poe1Category(overview.type)
     for (const line of overview.lines ?? []) {
       const name = line.name
       const chaos = line.chaos
@@ -246,12 +276,14 @@ function processDenseResponse(resp: DenseResponse): void {
       // the caller has full item context.
       pricesByVariant.set(`${name.toLowerCase()}|${line.variant ?? ''}`, info)
       if (isDivCards) divCardPriceMap.set(name.toLowerCase(), info)
+
+      entriesOut.push({ name, category, chaosValue: chaos, divineValue: info.divineValue, graph: line.graph })
     }
   }
 
-  // Second pass to fill in divine values for items processed before Divine Orb was found.
-  // Mirrored below for the variant-keyed map; both maps need backfill since they hold
-  // distinct PriceInfo objects.
+  // Second pass to fill in divine values for items processed before Divine Orb
+  // was found. Mirrored across the variant-keyed map and the plugin entries
+  // snapshot; all three need backfill since they hold distinct objects.
   if (divineRate > 0) {
     for (const [key, info] of priceMap) {
       if (info.divineValue == null) {
@@ -262,6 +294,9 @@ function processDenseResponse(resp: DenseResponse): void {
       if (info.divineValue == null) {
         pricesByVariant.set(key, { ...info, divineValue: info.chaosValue / divineRate })
       }
+    }
+    for (const entry of entriesOut) {
+      if (entry.divineValue == null) entry.divineValue = entry.chaosValue / divineRate
     }
   }
 }
@@ -279,6 +314,7 @@ function resetCache(league: string, now: number): void {
   pricesByVariant = new Map()
   divCardPriceMap = new Map()
   gemNames = new Set()
+  priceEntries = []
   lastFetchTime = now
 }
 
@@ -303,12 +339,19 @@ export async function refreshPrices(league: string): Promise<void> {
       pricesByVariant = result.pricesByVariant
       uniqueBaseMapPoe2 = result.uniquesByBase
       saveCachedUniquesByBasePoe2(result.uniquesByBase)
+      priceEntries = result.entries
+      priceEntriesUpdatedAt = now
+      notifyPriceUpdate()
       return
     }
     const resp = (await fetchJson(`${DENSE_URL}?league=${encodeURIComponent(league)}&language=en`)) as DenseResponse
     resetCache(league, now)
-    processDenseResponse(resp)
+    const freshEntries: PriceEntry[] = []
+    processDenseResponse(resp, freshEntries)
     buildUniquesByBaseFromDense(resp)
+    priceEntries = freshEntries
+    priceEntriesUpdatedAt = now
+    notifyPriceUpdate()
   } catch (e) {
     console.error('[FilterScalpel] Failed to fetch prices:', e)
     // Don't update lastFetchTime on failure so the next call retries instead of being
@@ -319,6 +362,31 @@ export async function refreshPrices(league: string): Promise<void> {
 /** Forget the last-fetch timestamp so the next refreshPrices() call bypasses the TTL. */
 export function invalidatePriceCache(): void {
   lastFetchTime = 0
+}
+
+/** Plugin-facing read of the current price snapshot, optionally filtered to one
+ *  category slug (e.g. 'currency'). `updatedAt` is the epoch-ms of the last
+ *  successful fetch, or null if none yet. */
+export function getPriceEntries(category?: string): { prices: PriceEntry[]; updatedAt: number | null } {
+  const prices = category ? priceEntries.filter((e) => e.category === category) : priceEntries
+  return { prices, updatedAt: priceEntriesUpdatedAt }
+}
+
+/** Subscribe to "price snapshot refreshed" events. Fires after each successful
+ *  refreshPrices(). Returns an unsubscribe function. */
+export function subscribePriceUpdates(cb: () => void): () => void {
+  priceUpdateListeners.add(cb)
+  return () => {
+    priceUpdateListeners.delete(cb)
+  }
+}
+
+/** Test hook: seed the plugin price snapshot without a network call. Also fires
+ *  the update emitter so subscriber wiring can be asserted. */
+export function _setPriceEntriesForTests(entries: PriceEntry[], updatedAt: number | null): void {
+  priceEntries = entries
+  priceEntriesUpdatedAt = updatedAt
+  notifyPriceUpdate()
 }
 
 export function lookupPrice(itemName: string, baseType: string): PriceInfo | undefined {

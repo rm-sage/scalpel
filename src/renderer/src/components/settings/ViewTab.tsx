@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AppSettings, HideableTabKey } from '../../../../shared/types'
 import { ScrubInput } from '../regex-tool/ScrubInput'
 import { SettingToggleBox } from './SettingToggleBox'
@@ -8,6 +8,7 @@ import { getGameFeatures } from '../../../../shared/game-features'
 import { DIV_CARD_ICON_URL, IP } from '../../shared/constants'
 import dustIconAsset from '../../assets/currency/thaumaturgic-dust.png'
 import poereIcon from '../../assets/other/poere-logo.svg'
+import { m } from '../../../../shared/paraglide/messages.js'
 
 interface Props {
   settings: AppSettings
@@ -44,43 +45,70 @@ export function ViewTab({ settings, update, updateMany }: Props): JSX.Element {
     update('hiddenTabs', [...next])
   }
 
+  // Plugin-contributed tabs are dynamic, so they're fetched from the main-side
+  // registry (works identically in the overlay and the standalone app window)
+  // rather than hardcoded like the built-in tabs above.
+  const [pluginTabs, setPluginTabs] = useState<Array<{ pluginId: string; label: string; icon: string }>>([])
+  useEffect(() => {
+    let alive = true
+    const load = (): void => {
+      void window.api.pluginListRegisteredTabs().then((tabs) => {
+        if (alive) setPluginTabs(tabs)
+      })
+    }
+    load()
+    const off = window.api.onPluginTabsChanged(load)
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  const hiddenPlugins = new Set<string>(settings.hiddenPluginTabIds ?? [])
+  const togglePluginHidden = (id: string): void => {
+    const next = new Set(hiddenPlugins)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    update('hiddenPluginTabIds', [...next])
+  }
+
   const TOGGLEABLE: Array<{ key: HideableTabKey; icon: React.ReactNode; title: string; show: boolean }> = [
-    { key: 'item', icon: <Filter size={16} {...IP} />, title: 'Filter Editor', show: true },
-    { key: 'pricecheck', icon: <Buy size={16} {...IP} />, title: 'Price Checker', show: true },
+    { key: 'item', icon: <Filter size={16} {...IP} />, title: m.feature_filter_editor(), show: true },
+    { key: 'pricecheck', icon: <Buy size={16} {...IP} />, title: m.feature_price_checker(), show: true },
     {
       key: 'dust',
       icon: <img src={dustIconAsset} alt="" className="w-[18px] h-[18px] object-contain" />,
-      title: 'Dust Explorer',
+      title: m.feature_dust_explorer(),
       show: features.dustExplorer,
     },
     {
       key: 'divcards',
       icon: <img src={DIV_CARD_ICON_URL} alt="" className="w-[18px] h-[18px] object-contain" />,
-      title: 'Div Card Explorer',
+      title: m.feature_div_card_explorer(),
       show: features.divCards,
     },
     {
       key: 'regex',
       icon: <img src={poereIcon} alt="" className="w-[18px] h-[18px] object-contain" />,
-      title: 'Regex Tool',
+      title: m.feature_regex_tool(),
       show: features.regexTool,
     },
-    { key: 'extras', icon: <AllApplication size={16} {...IP} />, title: 'Extra Features', show: true },
+    { key: 'extras', icon: <AllApplication size={16} {...IP} />, title: m.feature_extra_features(), show: true },
   ]
 
   // Settings and Close get a grey border in the preview row -- they exist in the title
   // bar but the user can't hide them.
   const FIXED_PREVIEW: Array<{ icon: React.ReactNode; title: string }> = [
-    { icon: <Setting size={16} {...IP} />, title: 'Settings (always visible)' },
-    { icon: <CloseSmall size={16} {...IP} />, title: 'Close (always visible)' },
+    { icon: <Setting size={16} {...IP} />, title: m.settings_tab_settings_always() },
+    { icon: <CloseSmall size={16} {...IP} />, title: m.settings_tab_close_always() },
   ]
 
   return (
     <>
-      <div className="settings-section-title mt-3">Customize View</div>
+      <div className="settings-section-title mt-3">{m.settings_customize_view()}</div>
 
       <section>
-        <label>Show/Hide Tabs</label>
+        <label>{m.settings_show_hide_tabs()}</label>
         <div className="flex gap-1.5 mt-[6px] items-center">
           {TOGGLEABLE.filter((t) => t.show).map((t) => {
             const isHidden = hidden.has(t.key)
@@ -106,6 +134,23 @@ export function ViewTab({ settings, update, updateMany }: Props): JSX.Element {
               </button>
             )
           })}
+          {pluginTabs.map((t) => {
+            const isHidden = hiddenPlugins.has(t.pluginId)
+            return (
+              <button
+                key={t.pluginId}
+                onClick={() => togglePluginHidden(t.pluginId)}
+                title={t.label}
+                className={`${TAB_BUTTON_BASE} [&_svg]:w-4 [&_svg]:h-4 [&_svg]:block`}
+                style={{
+                  background: isHidden ? TAB_FILL_OFF : TAB_FILL_ON,
+                  color: isHidden ? '#fff' : '#171821',
+                  border: 'none',
+                }}
+                dangerouslySetInnerHTML={{ __html: t.icon }}
+              />
+            )
+          })}
           {FIXED_PREVIEW.map((b) => (
             <button
               key={b.title}
@@ -126,7 +171,7 @@ export function ViewTab({ settings, update, updateMany }: Props): JSX.Element {
 
       {/* Overlay scale */}
       <section>
-        <label>Overlay scale</label>
+        <label>{m.settings_overlay_scale()}</label>
         <div className="flex items-center gap-1.5 mt-[6px]">
           {SCALE_PRESETS.map((scale) => (
             <button
@@ -146,7 +191,7 @@ export function ViewTab({ settings, update, updateMany }: Props): JSX.Element {
             onClick={() => setCustomScale(true)}
             className={`text-[11px] px-3 py-1.5 ${customScale ? 'bg-accent text-bg-solid' : 'text-text-dim'}`}
           >
-            Custom
+            {m.common_custom()}
           </button>
           {customScale && (
             <ScrubInput
@@ -165,13 +210,13 @@ export function ViewTab({ settings, update, updateMany }: Props): JSX.Element {
 
       {/* Open side (mount side at scan time; doesn't affect dragging) */}
       <section>
-        <label>Open Scalpel on:</label>
+        <label>{m.settings_open_scalpel_on()}</label>
         <div className="flex gap-1.5 mt-[6px]">
           {(
             [
-              ['both', 'Both sides'],
-              ['right', 'Only right'],
-              ['left', 'Only left'],
+              ['both', m.settings_side_both()],
+              ['right', m.settings_side_right()],
+              ['left', m.settings_side_left()],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -189,12 +234,12 @@ export function ViewTab({ settings, update, updateMany }: Props): JSX.Element {
 
       {/* Close on click outside */}
       <SettingToggleBox
-        label="Close overlay when clicking outside"
+        label={m.settings_close_on_click_outside()}
         checked={settings.closeOnClickOutside}
         onChange={(val) => update('closeOnClickOutside', val)}
       />
       <SettingToggleBox
-        label="Show currency names instead of icons (accessibility)"
+        label={m.settings_currency_names()}
         checked={settings.currencyLabelsAsText}
         onChange={(val) => update('currencyLabelsAsText', val)}
       />

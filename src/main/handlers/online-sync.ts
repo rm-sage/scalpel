@@ -3,9 +3,10 @@ import { basename, join } from 'node:path'
 import { ipcMain } from 'electron'
 import type Store from 'electron-store'
 import type { AppSettings } from '../../shared/types'
-import { saveBaseline } from '../baselines'
+import { getBaselineByLocalPath, saveBaseline } from '../baselines'
 import { clearIntents, getIntents } from '../filter/intent-recorder'
 import { replayIntents } from '../filter/intent-replay'
+import { applyLocalNameHeader } from '../filter/local-name'
 import { writeFilterSelective } from '../filter/writer'
 import { loadFilter } from '../filter-state'
 import { switchFilterInGame } from '../overlay'
@@ -76,8 +77,7 @@ export function register(store: Store<AppSettings>): void {
         const originalContent = readFileSync(sourcePath, 'utf-8')
         saveBaseline(filterName, originalContent, sourcePath, targetPath)
         // Copy file and update #name: header so PoE recognises the local copy
-        let content = originalContent
-        content = content.replace(/^#name:.+$/m, `#name: ${localName}`)
+        const content = applyLocalNameHeader(originalContent, localName)
         writeFileSync(targetPath, content, 'utf-8')
         clearIntents()
         // Set as active filter
@@ -104,6 +104,41 @@ export function register(store: Store<AppSettings>): void {
     return { ok: true }
   })
 
+  ipcMain.handle('online-sync-status', (): { hasOnlineSource: boolean } => {
+    // True only when the online source file is actually present in OnlineFilters.
+    // Every error case (no folder, no #name match, not a -local filter) -> false.
+    const result = findOnlineFilter(store)
+    return { hasOnlineSource: !('error' in result) }
+  })
+
+  ipcMain.handle('filter-reset-availability', (): { canReset: boolean } => {
+    const filterPath = getProfileBackedSetting(store, 'filterPath') as string
+    if (!filterPath || !basename(filterPath, '.filter').endsWith('-local')) return { canReset: false }
+    return { canReset: getBaselineByLocalPath(filterPath) !== null }
+  })
+
+  ipcMain.handle('reset-filter-to-online', async (): Promise<{ ok: boolean; error?: string }> => {
+    const filterPath = getProfileBackedSetting(store, 'filterPath') as string
+    if (!filterPath) return { ok: false, error: 'No filter configured' }
+    const localFileName = basename(filterPath, '.filter')
+    if (!localFileName.endsWith('-local')) return { ok: false, error: 'Active filter is not an imported online filter' }
+    const baseline = getBaselineByLocalPath(filterPath)
+    if (!baseline) return { ok: false, error: 'No baseline found for this filter' }
+    try {
+      // Reversible checkpoint of the pre-reset (edited) file.
+      saveVersion(filterPath, true, 'Before reset')
+      // Overwrite with the clean baseline, keeping the -local #name header.
+      writeFileSync(filterPath, applyLocalNameHeader(baseline.content, localFileName), 'utf-8')
+      // Discard recorded edits so a later sync does not re-apply them.
+      clearIntents()
+      loadFilter(filterPath, 'Filter Reset')
+      await switchFilterInGame(localFileName, localFileName)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  })
+
   ipcMain.handle(
     'quick-update-filter',
     async (): Promise<{
@@ -116,6 +151,7 @@ export function register(store: Store<AppSettings>): void {
         bothChanged: number
         added: number
         removed: number
+        skippedForValidity?: number
       }
       conflicts?: Array<{ description: string; actionType: string }>
     }> => {
@@ -124,14 +160,25 @@ export function register(store: Store<AppSettings>): void {
 
       try {
         const upstreamContent = readFileSync(info.onlineFilePath, 'utf-8')
+        // Keep the local copy's "-local" #name header (matching import); the
+        // baseline below still stores the original upstream content.
+        const localContent = applyLocalNameHeader(upstreamContent, info.localFileName)
         const intentLog = getIntents()
 
+        let skippedForValidity = 0
         if (intentLog.intents.length === 0) {
           // No intents - overwrite with upstream
-          writeFileSync(info.localPath, upstreamContent, 'utf-8')
+          writeFileSync(info.localPath, localContent, 'utf-8')
         } else {
-          const result = replayIntents(upstreamContent, info.localPath, intentLog, { forceApply: true })
-          writeFilterSelective(result.filter, result.modifiedBlocks)
+          const result = replayIntents(localContent, info.localPath, intentLog, { forceApply: true })
+          const { fallbackBlocks } = writeFilterSelective(result.filter, result.modifiedBlocks, result.removedBlocks)
+          skippedForValidity = fallbackBlocks.length
+          if (fallbackBlocks.length > 0 && process.env.SCALPEL_DEBUG_LOG) {
+            console.warn(
+              '[online-sync] quick-update dropped edits to keep filter valid:',
+              fallbackBlocks.map((i) => result.filter.blocks[i].tierTag ?? `block ${i}`),
+            )
+          }
         }
 
         // Update baseline for migration-era compatibility
@@ -156,6 +203,7 @@ export function register(store: Store<AppSettings>): void {
             bothChanged: 0,
             added: 0,
             removed: 0,
+            skippedForValidity,
           },
         }
       } catch (err) {
@@ -175,21 +223,23 @@ export function register(store: Store<AppSettings>): void {
       ok: boolean
       error?: string
       conflicts?: Array<{ description: string; intentIndex: number; options: Array<{ label: string; action: string }> }>
-      stats?: { applied: number; skipped: number; conflicts: number }
+      stats?: { applied: number; skipped: number; conflicts: number; skippedForValidity?: number }
     } => {
       try {
         const upstreamContent = readFileSync(onlinePath, 'utf-8')
+        // Preserve the local copy's "-local" #name header (matching import).
+        const localContent = applyLocalNameHeader(upstreamContent, basename(localPath, '.filter'))
         const intentLog = getIntents()
 
         if (intentLog.intents.length === 0) {
           // No intents - overwrite with upstream
-          writeFileSync(localPath, upstreamContent, 'utf-8')
+          writeFileSync(localPath, localContent, 'utf-8')
           const currentPath = getProfileBackedSetting(store, 'filterPath')
           if (currentPath === localPath) loadFilter(localPath, 'Online Filter Updated')
           return { ok: true, stats: { applied: 0, skipped: 0, conflicts: 0 } }
         }
 
-        const result = replayIntents(upstreamContent, localPath, intentLog, { forceApply: true })
+        const result = replayIntents(localContent, localPath, intentLog, { forceApply: true })
 
         // Only block on actionable conflicts (ones with resolution options)
         // Orphaned intents (tier removed, basetype removed) are auto-skipped
@@ -207,14 +257,20 @@ export function register(store: Store<AppSettings>): void {
         }
 
         // No actionable conflicts - serialize and write
-        writeFilterSelective(result.filter, result.modifiedBlocks)
+        const { fallbackBlocks } = writeFilterSelective(result.filter, result.modifiedBlocks, result.removedBlocks)
+        if (fallbackBlocks.length > 0 && process.env.SCALPEL_DEBUG_LOG) {
+          console.warn(
+            '[online-sync] merge dropped edits to keep filter valid:',
+            fallbackBlocks.map((i) => result.filter.blocks[i].tierTag ?? `block ${i}`),
+          )
+        }
 
         saveVersion(localPath, false, 'Online Filter Merged')
 
         const currentPath = getProfileBackedSetting(store, 'filterPath')
         if (currentPath === localPath) loadFilter(localPath, 'Online Filter Merged')
 
-        return { ok: true, stats: result.stats }
+        return { ok: true, stats: { ...result.stats, skippedForValidity: fallbackBlocks.length } }
       } catch (err) {
         return { ok: false, error: String(err) }
       }

@@ -4,7 +4,10 @@ import { Whiteboard } from './index'
 import '../styles.css'
 import { bootstrapTheme } from '../shared/apply-theme'
 import { DiagnosticErrorBoundary, installRendererDiagnostics } from '../shared/diagnostics'
+import { bootstrapLocale, bootstrapLocaleSync, LocaleProvider } from '../shared/locale'
 
+bootstrapLocaleSync()
+void bootstrapLocale()
 void bootstrapTheme()
 installRendererDiagnostics('whiteboard')
 
@@ -12,7 +15,9 @@ const root = document.getElementById('root')!
 createRoot(root).render(
   <StrictMode>
     <DiagnosticErrorBoundary source="whiteboard">
-      <Whiteboard />
+      <LocaleProvider>
+        <Whiteboard />
+      </LocaleProvider>
     </DiagnosticErrorBoundary>
   </StrictMode>,
 )

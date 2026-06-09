@@ -30,6 +30,16 @@ const baseDeps = () => ({
     delete: vi.fn(async () => undefined),
     keys: vi.fn(async () => []),
   },
+  gameConfig: {
+    read: vi.fn(async () => ({ content: '', path: '' })),
+    write: vi.fn(async () => ({ backupPath: null })),
+    onChange: vi.fn(() => () => {}),
+  },
+  prices: {
+    getPrices: vi.fn(async () => ({ prices: [], updatedAt: null })),
+    refresh: vi.fn(async () => undefined),
+    onChange: vi.fn(() => () => {}),
+  },
 })
 
 describe('createPluginContext', () => {
@@ -134,6 +144,19 @@ describe('createPluginContext storage', () => {
     expect(deps.storage.delete).toHaveBeenCalledWith('k')
     await ctx.storage.keys()
     expect(deps.storage.keys).toHaveBeenCalled()
+  })
+})
+
+describe('createPluginContext prices', () => {
+  it('routes getPrices/refresh/onChange through deps', async () => {
+    const deps = baseDeps()
+    const ctx = createPluginContext(deps)
+    await ctx.prices.getPrices({ category: 'currency' })
+    expect(deps.prices.getPrices).toHaveBeenCalledWith({ category: 'currency' })
+    await ctx.prices.refresh()
+    expect(deps.prices.refresh).toHaveBeenCalled()
+    ctx.prices.onChange(() => {})
+    expect(deps.prices.onChange).toHaveBeenCalled()
   })
 })
 

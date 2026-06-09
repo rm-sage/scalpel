@@ -17,6 +17,13 @@ export interface StatFilter {
    *  ("Exterminate"). Optional - falls back to `option` when not set. */
   displayValue?: string
   foulborn?: boolean
+  /** True when a unique mod rolled at or above its best possible value (perfect, or
+   *  over-rolled by Vaal/corruption above the listed max / single value). Drives the
+   *  price-check default-enable for uniques (issue #378). */
+  perfectRoll?: boolean
+  /** True when this mod is a curated premium mod for the item's unique (premium-mods
+   *  manifest); preserved through Base mode like foulborn/perfectRoll. */
+  premium?: boolean
   modTier?: number
   modRange?: { min: number; max: number }
   /** Resolved tier ladder for scrubbable affixes (single-stat or trade-averaged,

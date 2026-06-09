@@ -1,5 +1,5 @@
 import { Fragment, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { Components, AddOne, Search, CloseSmall } from '@icon-park/react'
+import { Components, AddOne, Search, CloseSmall, Buy, Left } from '@icon-park/react'
 import {
   TAB_COLORS,
   RegexCheckbox,
@@ -19,6 +19,9 @@ import { InfoChip } from '../../shared/InfoChip'
 import { TABLET_MODS } from '../../../../shared/data/regex/tablet-mods'
 import { buildTabletRegex } from './tablet-engine'
 import { generateTabletPresetTags, TYPE_LABELS, type TabletTagState } from './tablet-preset-tags'
+import { useRegexTrade } from './useRegexTrade'
+import { TradeResults } from './TradeResults'
+import { useAuth } from '../../shared/use-auth'
 import type { RegexPreset } from '../../../../shared/types'
 import type { GeneratorHandle, GeneratorProps } from './generator-types'
 
@@ -74,6 +77,18 @@ export const TabletGenerator = forwardRef<GeneratorHandle, GeneratorProps>(funct
   const [tab, setTab] = useState<CategoryTab>('qualifiers')
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [showTradeResults, setShowTradeResults] = useState(false)
+
+  // ---- Trade state -----------------------------------------------------------
+  const trade = useRegexTrade()
+  const [expandedListing, setExpandedListing] = useState<string | null>(null)
+  const [actionStatus, setActionStatus] = useState<Record<string, 'pending' | 'success' | 'failed'>>({})
+  const { loggedIn } = useAuth()
+
+  const priceChipMinWidth = useMemo(() => {
+    const maxDigits = trade.listings.reduce((max, l) => Math.max(max, l.price ? String(l.price.amount).length : 0), 0)
+    return 38 + maxDigits * 9
+  }, [trade.listings])
 
   const type = {
     breach: !!typeFlags.breach,
@@ -117,6 +132,7 @@ export const TabletGenerator = forwardRef<GeneratorHandle, GeneratorProps>(funct
       closePanels: () => {
         setSearchOpen(false)
         setSearch('')
+        setShowTradeResults(false)
       },
       getPresetPayload: () => ({
         avoid: [],
@@ -239,6 +255,7 @@ export const TabletGenerator = forwardRef<GeneratorHandle, GeneratorProps>(funct
                 setSearchOpen(false)
                 setSearch('')
               } else {
+                setShowTradeResults(false)
                 setSearchOpen(true)
                 onPanelOpen?.()
               }
@@ -246,6 +263,43 @@ export const TabletGenerator = forwardRef<GeneratorHandle, GeneratorProps>(funct
           />
           {sharedSaveChip}
           {sharedLoadChip}
+          <FilterChip
+            label={
+              showTradeResults ? (
+                <>
+                  <Left size={12} theme="outline" fill="currentColor" /> Go Back
+                </>
+              ) : (
+                <>
+                  <Buy size={12} theme="outline" fill="currentColor" /> Trade
+                </>
+              )
+            }
+            active={showTradeResults}
+            solidInactive={!showTradeResults && regex.trim().length > 0}
+            onClick={async () => {
+              if (showTradeResults) {
+                setShowTradeResults(false)
+                return
+              }
+              setSearchOpen(false)
+              setSearch('')
+              const wantTexts = TABLET_MODS.filter((m) => want.has(m.id)).map((m) => m.text)
+              setExpandedListing(null)
+              setActionStatus({})
+              await trade.runSearch(() =>
+                window.api.tabletRegexTrade({
+                  wantTexts,
+                  wantMode,
+                  wantValues,
+                  rarity: { normal, magic },
+                  typeFlags,
+                  uses: { enabled: usesEnabled, value: usesValue },
+                }),
+              )
+              setShowTradeResults(true)
+            }}
+          />
         </div>
         <div
           className="overflow-hidden transition-all duration-150"
@@ -274,56 +328,79 @@ export const TabletGenerator = forwardRef<GeneratorHandle, GeneratorProps>(funct
 
       {sharedSavedPresets}
 
-      {/* Category tab strip */}
-      <div className="flex gap-1 px-2 pt-1 pb-0 bg-bg-card">
-        {(
-          [
-            ['qualifiers', 'Qualifiers', AddOne, qualifierCount],
-            ['affixes', 'Affixes', Components, want.size],
-          ] as const
-        ).map(([k, label, Icon, count], i, arr) => {
-          const isActive = tab === k
-          const showSep = i > 0 && !isActive && tab !== arr[i - 1][0]
-          return (
-            <Fragment key={k}>
-              {showSep && <TabSeparator />}
-              <button
-                onClick={() => setTab(k)}
-                className={`flex-1 flex items-center justify-between px-3 text-[11px] py-[5px] border-none cursor-pointer transition-colors relative ${isActive ? 'regex-tab-active' : ''}`}
-                style={{
-                  background: isActive ? 'var(--bg-solid)' : 'transparent',
-                  color: isActive ? TAB_COLORS.qualifiers : 'var(--text-dim)',
-                  fontWeight: 600,
-                  borderRadius: isActive ? '6px 6px 0 0' : '6px',
-                  padding: isActive ? '5px 12px' : '1px 11px',
-                  ...(isActive ? {} : { margin: '4px 1px' }),
-                  minHeight: isActive ? 30 : undefined,
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) e.currentTarget.style.background = 'transparent'
-                }}
-              >
-                <span className="flex items-center gap-[6px]">
-                  <Icon size={15} theme="two-tone" fill={['currentColor', 'rgba(255,255,255,0.2)']} />
-                  {label}
-                </span>
-                {count > 0 && (
-                  <span style={{ transform: 'translateY(1px)' }}>
-                    <InfoChip color={TAB_COLORS.qualifiers}>
-                      <span className="font-bold">{count}</span>
-                    </InfoChip>
-                  </span>
-                )}
-              </button>
-            </Fragment>
-          )
-        })}
-      </div>
+      {showTradeResults && (
+        <TradeResults
+          tradeTotal={trade.total}
+          tradeQueryId={trade.queryId}
+          tradeLeague={trade.league}
+          tradeError={trade.error}
+          tradeListings={trade.listings}
+          tradeRemainingIds={trade.remainingIds}
+          tradeLoadMore={trade.loadMore}
+          loadingMore={trade.loadingMore}
+          expandedListing={expandedListing}
+          setExpandedListing={setExpandedListing}
+          priceChipMinWidth={priceChipMinWidth}
+          loggedIn={loggedIn}
+          actionStatus={actionStatus}
+          setActionStatus={setActionStatus}
+          rateLimitTiers={trade.rateLimitTiers}
+          itemClass="Tablet"
+        />
+      )}
 
-      {tab === 'affixes' && (
+      {/* Category tab strip */}
+      {!showTradeResults && (
+        <div className="flex gap-1 px-2 pt-1 pb-0 bg-bg-card">
+          {(
+            [
+              ['qualifiers', 'Qualifiers', AddOne, qualifierCount],
+              ['affixes', 'Affixes', Components, want.size],
+            ] as const
+          ).map(([k, label, Icon, count], i, arr) => {
+            const isActive = tab === k
+            const showSep = i > 0 && !isActive && tab !== arr[i - 1][0]
+            return (
+              <Fragment key={k}>
+                {showSep && <TabSeparator />}
+                <button
+                  onClick={() => setTab(k)}
+                  className={`flex-1 flex items-center justify-between px-3 text-[11px] py-[5px] border-none cursor-pointer transition-colors relative ${isActive ? 'regex-tab-active' : ''}`}
+                  style={{
+                    background: isActive ? 'var(--bg-solid)' : 'transparent',
+                    color: isActive ? TAB_COLORS.qualifiers : 'var(--text-dim)',
+                    fontWeight: 600,
+                    borderRadius: isActive ? '6px 6px 0 0' : '6px',
+                    padding: isActive ? '5px 12px' : '1px 11px',
+                    ...(isActive ? {} : { margin: '4px 1px' }),
+                    minHeight: isActive ? 30 : undefined,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) e.currentTarget.style.background = 'transparent'
+                  }}
+                >
+                  <span className="flex items-center gap-[6px]">
+                    <Icon size={15} theme="two-tone" fill={['currentColor', 'rgba(255,255,255,0.2)']} />
+                    {label}
+                  </span>
+                  {count > 0 && (
+                    <span style={{ transform: 'translateY(1px)' }}>
+                      <InfoChip color={TAB_COLORS.qualifiers}>
+                        <span className="font-bold">{count}</span>
+                      </InfoChip>
+                    </span>
+                  )}
+                </button>
+              </Fragment>
+            )
+          })}
+        </div>
+      )}
+
+      {!showTradeResults && tab === 'affixes' && (
         <div
           className="flex items-center justify-end gap-[6px] px-3 py-[6px] border-b border-border"
           style={{ background: 'var(--bg-solid)' }}
@@ -343,7 +420,7 @@ export const TabletGenerator = forwardRef<GeneratorHandle, GeneratorProps>(funct
         </div>
       )}
 
-      {tab === 'affixes' && (
+      {!showTradeResults && tab === 'affixes' && (
         <ModList
           grouped={grouped}
           selected={want as Set<string | number>}
@@ -358,7 +435,7 @@ export const TabletGenerator = forwardRef<GeneratorHandle, GeneratorProps>(funct
         />
       )}
 
-      {tab === 'qualifiers' && (
+      {!showTradeResults && tab === 'qualifiers' && (
         <div className="flex-1 overflow-y-auto bg-bg-card">
           <QualifierSection label="RARITY">
             <ToggleRow label="Normal" checked={normal} onChange={setNormal} />

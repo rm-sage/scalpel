@@ -26,3 +26,28 @@ export const NUMERIC_CONDITION_TYPES = new Set<string>([
   'BaseEnergyShield',
   'BaseWard',
 ])
+
+/** Multi-value "list" conditions that require at least one value to be valid. An
+ *  empty value list on one of these (e.g. a dangling `BaseType ==`) is genuine
+ *  corruption - the only kind the old buggy writers could leave behind. Used to
+ *  scope damage detection / validation so a legitimately value-less line (a bare
+ *  boolean like `Corrupted`, or an unknown future keyword the parser models as a
+ *  condition) is never mistaken for damage and stripped. */
+export const VALUE_LIST_CONDITION_TYPES = new Set<string>([
+  'BaseType',
+  'Class',
+  'Rarity',
+  'HasExplicitMod',
+  'HasImplicitMod',
+  'HasInfluence',
+  'HasEnchantment',
+  'EnchantmentPassiveNode',
+  'ArchnemesisMod',
+  'Prophecy',
+])
+
+/** True when a condition is a value-list type whose value list is empty - i.e.
+ *  genuine "dangling condition" corruption. */
+export function isEmptyValueListCondition(type: string, valueCount: number): boolean {
+  return valueCount === 0 && VALUE_LIST_CONDITION_TYPES.has(type)
+}

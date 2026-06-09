@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { useRegexTrade } from './useRegexTrade'
 import {
   MAP_MODS,
   DANGER_COLORS,
@@ -29,7 +30,6 @@ import { ScrubInput } from './ScrubInput'
 import { generatePresetTags } from './preset-tags'
 import { InfoChip } from '../../shared/InfoChip'
 import { useAuth } from '../../shared/use-auth'
-import type { Listing } from '../price-check/types'
 import type { RegexPreset } from '../../../../shared/types'
 import type { GeneratorHandle, GeneratorProps } from './generator-types'
 import { zebraRowBg } from '../../shared/utils'
@@ -115,48 +115,17 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
   )
 
   // ---- Trade state ---------------------------------------------------------
-  const [tradeSearching, setTradeSearching] = useState(false)
-  const [tradeListings, setTradeListings] = useState<Listing[]>([])
-  const [tradeTotal, setTradeTotal] = useState<number | null>(null)
-  const [tradeQueryId, setTradeQueryId] = useState<string | null>(null)
-  // Mirror of tradeQueryId for stale-response detection in tradeLoadMore.
-  // See PriceCheck.tsx queryIdRef for the full rationale.
-  const tradeQueryIdRef = useRef<string | null>(null)
-  const [tradeLeague, setTradeLeague] = useState<string>('')
-  const [tradeError, setTradeError] = useState<string | null>(null)
-  const [tradeRemainingIds, setTradeRemainingIds] = useState<string[]>([])
-  const [loadingMore, setLoadingMore] = useState(false)
-  // Auto-prefetch the second batch of map listings after a fresh trade search
-  // lands. Mirrors PriceCheck's behavior - the /fetch rate-limit bucket resets
-  // fast enough that one extra call back-to-back is safe.
-  const tradeAutoPrefetchedFor = useRef<string | null>(null)
-  useEffect(() => {
-    if (!tradeQueryId || tradeRemainingIds.length === 0) return
-    if (tradeAutoPrefetchedFor.current === tradeQueryId) return
-    // Defer if a previous tradeLoadMore is still in flight; effect re-fires once
-    // `loadingMore` clears. See PriceCheck.tsx auto-prefetch effect for details.
-    if (loadingMore) return
-    tradeAutoPrefetchedFor.current = tradeQueryId
-    void tradeLoadMore()
-  }, [tradeQueryId, tradeRemainingIds.length, loadingMore])
+  const trade = useRegexTrade()
   const [expandedListing, setExpandedListing] = useState<string | null>(null)
   const [actionStatus, setActionStatus] = useState<Record<string, 'pending' | 'success' | 'failed'>>({})
   const { loggedIn } = useAuth()
-  const [rateLimitTiers, setRateLimitTiers] = useState<
-    Array<{ used: number; max: number; window: number; penalty: number }>
-  >([])
   const [tradeOriginator, setTradeOriginator] = useState(false)
   const [tradeCorrupted8mod, setTradeCorrupted8mod] = useState(false)
 
-  useEffect(() => {
-    const unsub = window.api.onRateLimit((state) => setRateLimitTiers(state.tiers))
-    return unsub
-  }, [])
-
   const priceChipMinWidth = useMemo(() => {
-    const maxDigits = tradeListings.reduce((max, l) => Math.max(max, l.price ? String(l.price.amount).length : 0), 0)
+    const maxDigits = trade.listings.reduce((max, l) => Math.max(max, l.price ? String(l.price.amount).length : 0), 0)
     return 38 + maxDigits * 9
-  }, [tradeListings])
+  }, [trade.listings])
 
   // ---- Derived values ------------------------------------------------------
   const selected = tab === 'avoid' ? avoid : want
@@ -226,18 +195,16 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
 
   // ---- Trade search --------------------------------------------------------
   const searchMapTrade = async (tier: number, nightmare: boolean): Promise<void> => {
-    setTradeSearching(true)
-    setTradeError(null)
     setExpandedListing(null)
     setActionStatus({})
-    try {
-      const avoidTexts = MAP_MODS.filter((m) => avoid.has(m.id)).map((m) => m.text)
-      const wantTexts = MAP_MODS.filter((m) => want.has(m.id)).map((m) => m.text)
-      const qualObj: Record<string, number> = {}
-      for (const [k, v] of Object.entries(qualifiers)) {
-        if (v != null && v > 0) qualObj[k] = v
-      }
-      const result = (await window.api.mapRegexTrade({
+    const avoidTexts = MAP_MODS.filter((m) => avoid.has(m.id)).map((m) => m.text)
+    const wantTexts = MAP_MODS.filter((m) => want.has(m.id)).map((m) => m.text)
+    const qualObj: Record<string, number> = {}
+    for (const [k, v] of Object.entries(qualifiers)) {
+      if (v != null && v > 0) qualObj[k] = v
+    }
+    await trade.runSearch(() =>
+      window.api.mapRegexTrade({
         tier,
         avoidTexts,
         wantTexts,
@@ -246,39 +213,9 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
         nightmare,
         originator: tradeOriginator,
         corrupted8mod: tradeCorrupted8mod,
-      })) as { total: number; listings: Listing[]; queryId: string; league: string; remainingIds: string[] }
-      setTradeListings(result.listings)
-      setTradeTotal(result.total)
-      setTradeQueryId(result.queryId)
-      tradeQueryIdRef.current = result.queryId
-      setTradeLeague(result.league)
-      setTradeRemainingIds(result.remainingIds)
-      setPanel('trade')
-    } catch (e) {
-      console.error('[regex] Trade search failed:', e)
-      setTradeError(e instanceof Error ? e.message : 'Search failed')
-      setPanel('trade')
-    } finally {
-      setTradeSearching(false)
-    }
-  }
-
-  const tradeLoadMore = async (): Promise<void> => {
-    if (!tradeQueryId || tradeRemainingIds.length === 0 || loadingMore) return
-    const fetchQueryId = tradeQueryId
-    setLoadingMore(true)
-    try {
-      const result = await window.api.fetchMoreListings(fetchQueryId, tradeRemainingIds)
-      // Stale-response guard: drop if the user has re-run the search while this
-      // fetch was in flight. Mirrors the same guard in PriceCheck.loadMore.
-      if (tradeQueryIdRef.current !== fetchQueryId) return
-      setTradeListings((prev) => [...prev, ...result.listings])
-      setTradeRemainingIds(result.remainingIds)
-    } catch {
-      // silently fail
-    } finally {
-      setLoadingMore(false)
-    }
+      }),
+    )
+    setPanel('trade')
   }
 
   // ---- Imperative handle ---------------------------------------------------
@@ -369,14 +306,14 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
           <FilterChip
             label={
               <>
-                <Buy size={12} theme="outline" fill="currentColor" /> {tradeSearching ? 'Searching...' : 'Trade'}
+                <Buy size={12} theme="outline" fill="currentColor" /> {trade.searching ? 'Searching...' : 'Trade'}
               </>
             }
             active={showTierPicker || showTradeResults}
             onClick={() => {
               if (showTradeResults) {
                 setPanel(null)
-              } else if (tradeQueryId && !showTierPicker) {
+              } else if (trade.queryId && !showTierPicker) {
                 setPanel('trade')
               } else {
                 openPanel('tier')
@@ -422,7 +359,7 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
           tradeCorrupted8mod={tradeCorrupted8mod}
           setTradeCorrupted8mod={setTradeCorrupted8mod}
           hasNightmareMod={hasNightmareMod}
-          tradeSearching={tradeSearching}
+          tradeSearching={trade.searching}
           regex={regex}
           tierIcons={tierIcons}
           searchMapTrade={searchMapTrade}
@@ -457,21 +394,21 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
         toggle={toggle}
         toggleCollapse={toggleCollapse}
         tradeProps={{
-          tradeTotal,
-          tradeQueryId,
-          tradeLeague,
-          tradeError,
-          tradeListings,
-          tradeRemainingIds,
-          tradeLoadMore,
-          loadingMore,
+          tradeTotal: trade.total,
+          tradeQueryId: trade.queryId,
+          tradeLeague: trade.league,
+          tradeError: trade.error,
+          tradeListings: trade.listings,
+          tradeRemainingIds: trade.remainingIds,
+          tradeLoadMore: trade.loadMore,
+          loadingMore: trade.loadingMore,
           expandedListing,
           setExpandedListing,
           priceChipMinWidth,
           loggedIn,
           actionStatus,
           setActionStatus,
-          rateLimitTiers,
+          rateLimitTiers: trade.rateLimitTiers,
         }}
       />
     </>

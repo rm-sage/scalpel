@@ -69,6 +69,25 @@ export default async function activate(ctx: ScalpelPluginContext): Promise<void>
 
 Beyond a tab, the context also exposes the raw `Client.txt` log tail (`onLogLine`, `getRecentLogLines` - note the log includes chat and whispers) and a separate chrome'd overlay window (`registerOverlay`, `openOverlay`, `closeOverlay`). The overlay `render` runs in its own renderer process, so keep `activate` idempotent. See the "Reading the game log" and "Overlay windows" sections in [PLUGINS.md](../../PLUGINS.md) for the full guide.
 
+It also exposes `ctx.gameConfig` (`read` / `write` / `onChange`) for the running game's `_Config.ini`. The host resolves the path from the detected PoE version, so a plugin never names a path and this is the only file it can touch on disk. First write of a session leaves a timestamped `.bak`. See "Editing the game config" in [PLUGINS.md](../../PLUGINS.md).
+
+`ctx.prices` gives read-only access to the poe.ninja snapshot Scalpel already maintains (the same data behind Price Check). The host owns fetching - a plugin never calls ninja directly because a renderer fetch is CORS-blocked.
+
+```tsx
+const { prices, updatedAt } = await ctx.prices.getPrices({ category: 'currency' })
+// prices: { name, category, chaosValue, divineValue?, graph? }[]
+// updatedAt: epoch-ms of last successful fetch, or null
+
+const off = ctx.prices.onChange(async () => {
+  const fresh = await ctx.prices.getPrices({ category: 'currency' })
+  // re-render with fresh.prices
+})
+
+await ctx.prices.refresh() // force a refetch, bypassing the host cache TTL
+```
+
+`chaosValue` is the baseline-equivalent count (chaos in PoE1, exalt in PoE2). `category === 'currency'` is guaranteed to return currency orbs in both games. See "Reading economy prices" in [PLUGINS.md](../../PLUGINS.md) for the full reference.
+
 Plugins running inside Scalpel inherit CSS variables (`--bg`, `--accent`, `--text`, etc.) from the renderer DOM tree, so the forwarded components render with the correct theme without any extra setup.
 
 For dev environments outside Scalpel (Storybook, isolated unit tests, etc.):

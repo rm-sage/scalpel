@@ -110,7 +110,8 @@ function parseAction(keyword: string, rest: string): FilterAction {
 }
 
 export function parseFilterFile(path: string, content: string): FilterFile {
-  const rawLines = content.split('\n')
+  const eol: '\r\n' | '\n' = content.includes('\r\n') ? '\r\n' : '\n'
+  const rawLines = content.split(/\r?\n/)
   const blocks: FilterBlock[] = []
 
   let currentBlock: Omit<FilterBlock, 'id'> | null = null
@@ -156,6 +157,7 @@ export function parseFilterFile(path: string, content: string): FilterFile {
         continue: false,
         lineStart: lineNum,
         lineEnd: lineNum,
+        bodyEndLine: lineNum,
         leadingComment: pendingComment,
         inlineComment,
         tierTag,
@@ -175,6 +177,7 @@ export function parseFilterFile(path: string, content: string): FilterFile {
 
     if (keyword === 'Continue') {
       currentBlock.continue = true
+      currentBlock.bodyEndLine = lineNum
       continue
     }
 
@@ -187,9 +190,10 @@ export function parseFilterFile(path: string, content: string): FilterFile {
       // Unknown condition types are evaluated as 'unknown' by the matcher.
       currentBlock.conditions.push(parseCondition(keyword, rest))
     }
+    currentBlock.bodyEndLine = lineNum
   }
 
   finalizeBlock(rawLines.length)
 
-  return { path, blocks, rawLines }
+  return { path, blocks, rawLines, eol }
 }

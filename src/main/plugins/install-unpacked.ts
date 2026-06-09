@@ -4,6 +4,7 @@ import type { InstallResult } from './install-types'
 import { addInstalledId } from './installed-list'
 import { validateManifest } from './manifest-validator'
 import { pluginDir } from './paths'
+import { addUnpackedId } from './unpacked-list'
 
 export type { InstallResult }
 
@@ -32,8 +33,9 @@ export function installUnpacked(sourceDir: string): InstallResult {
     copyFileSync(manifestPath, join(destDir, 'manifest.json'))
     copyFileSync(entryPath, join(destDir, 'plugin.js'))
 
-    // Append to installed.json if new.
+    // Append to installed.json and unpacked.json if new.
     addInstalledId(id)
+    addUnpackedId(id)
   } catch (e) {
     rmSync(destDir, { recursive: true, force: true })
     return { ok: false, error: `install write failed: ${(e as Error).message}` }

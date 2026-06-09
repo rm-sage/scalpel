@@ -1,3 +1,5 @@
+import { m } from '../../../shared/paraglide/messages.js'
+
 export function NavButtons({
   onBack,
   onNext,
@@ -19,18 +21,18 @@ export function NavButtons({
     <div className="flex gap-[10px] mt-8">
       {onBackToSettings && (
         <button onClick={onBackToSettings} className="px-5 py-[10px] text-[12px] text-text-dim">
-          Back to Settings
+          {m.onb_back_to_settings()}
         </button>
       )}
       <div className="flex-1" />
       {onBack && (
         <button onClick={onBack} className="px-5 py-[10px] text-[13px]">
-          Back
+          {m.common_back()}
         </button>
       )}
       {onSecondary && (
         <button onClick={onSecondary} className="px-5 py-[10px] text-[13px]">
-          {secondaryLabel ?? 'Skip'}
+          {secondaryLabel ?? m.common_skip()}
         </button>
       )}
       <button
@@ -38,7 +40,7 @@ export function NavButtons({
         onClick={onNext}
         disabled={nextDisabled}
       >
-        {nextLabel ?? 'Continue'}
+        {nextLabel ?? m.common_continue()}
       </button>
     </div>
   )

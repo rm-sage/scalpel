@@ -1,8 +1,9 @@
 import { ipcMain } from 'electron'
 import type Store from 'electron-store'
-import type { AppSettings, FilterAction, FilterBlock, PoeItem } from '../../shared/types'
+import type { AppSettings, FilterAction, FilterBlock, FilterChange, PoeItem } from '../../shared/types'
 import { evaluateAndSend } from '../evaluation'
-import { record } from '../filter/intent-recorder'
+import { describeIntent } from '../filter/intent-describe'
+import { getIntents, record } from '../filter/intent-recorder'
 import {
   moveBaseTypeBetweenTiers,
   updateQualityThresholds,
@@ -384,5 +385,17 @@ export function register(store: Store<AppSettings>): void {
     const path = getProfileBackedSetting(store, 'filterPath')
     if (!path) return { ok: false, error: 'No filter path set' }
     return { ok: !!loadFilter(path) }
+  })
+
+  ipcMain.handle('get-filter-changes', (): FilterChange[] => {
+    const { intents } = getIntents()
+    return intents
+      .map((intent) => {
+        const { description, itemName } = describeIntent(intent)
+        // Content-derived key so it stays stable as the compacted log reorders.
+        const id = `${intent.type}-${intent.target.typePath}-${intent.target.tier}-${intent.timestamp}`
+        return { id, description, itemName, timestamp: intent.timestamp }
+      })
+      .sort((a, b) => b.timestamp - a.timestamp) // newest first, matching Session Edits
   })
 }

@@ -5,6 +5,11 @@ import type { ThemePalette } from './theme/palette'
 
 export type GameVariant = 1 | 2
 
+/** UI language. Keep in sync with `locales` in project.inlang/settings.json --
+ *  the Paraglide runtime is the authority at runtime; this mirrors it for the
+ *  settings contract. */
+export type AppLocale = 'en' | 'es' | 'de'
+
 export interface PoeProfile {
   schemaVersion: 1
   id: string
@@ -99,6 +104,11 @@ export interface FilterBlock {
   continue: boolean
   lineStart: number
   lineEnd: number
+  /** 1-based line number of the block's last body line (Show/Hide/Minimal,
+   *  condition, action, or Continue). Unlike lineEnd it does NOT extend into the
+   *  inter-block content that follows the block. Used by the writer to keep
+   *  trailing blank lines / section comments out of a block's own range. */
+  bodyEndLine?: number
   /** Any comment line immediately above the block */
   leadingComment?: string
   /** The inline comment on the Show/Hide line (e.g. "%D9 $type->currency->fossil $tier->t1") */
@@ -112,6 +122,9 @@ export interface FilterFile {
   blocks: FilterBlock[]
   /** Raw lines — used to write back changes while preserving unmodified sections */
   rawLines: string[]
+  /** Dominant line ending of the source file. Writers join output with this so
+   *  CRLF/LF is preserved. Optional: literals that omit it default to '\n'. */
+  eol?: '\r\n' | '\n'
 }
 
 // ─── Item Types ───────────────────────────────────────────────────────────
@@ -464,7 +477,7 @@ export interface AppSettings {
    *  in a real drop zone (not town, not hideout). */
   useCurrentZoneAreaLevel: boolean
   reloadOnSave: boolean
-  updateChannel: 'stable' | 'beta'
+  updateChannel: 'stable' | 'beta' | 'experimental'
   tradeStatus: 'securable' | 'online' | 'available'
   /** Maps to PoE trade `trade_filters.collapse.option`. When true, the API groups
    *  multiple listings from the same seller into one row. */
@@ -507,6 +520,10 @@ export interface AppSettings {
   /** Title-bar tab keys the user has hidden. Toggleable from View settings.
    *  'settings' and 'close' are never hidden. */
   hiddenTabs?: HideableTabKey[]
+  /** Plugin ids whose contributed title-bar tab is hidden. Arbitrary plugin id
+   *  strings (no typed tuple like hiddenTabs); stale ids for uninstalled plugins
+   *  are harmless and never match a live registered tab. */
+  hiddenPluginTabIds?: string[]
   /** When true, enables developer tooling (e.g. Load unpacked plugin button). */
   developerMode?: boolean
   /** Optional override for the plugin registry URL. Defaults to the
@@ -518,6 +535,10 @@ export interface AppSettings {
   themeId: string
   /** User's saved custom palette, used only when themeId === 'custom'. */
   customThemePalette: ThemePalette | null
+  /** UI language. Global - not mirrored per game. Defaults to 'en'. The renderer
+   *  mirrors this to localStorage for a synchronous pre-paint (see locale.tsx);
+   *  the main process reads it to localize tray/dialog strings. */
+  locale: AppLocale
   /** Controls the adaptive price-check defaults learning engine. 'eager' applies
    *  learned defaults after a little evidence; 'conservative' needs more evidence
    *  before changing a default; 'off' stops applying learned defaults but keeps
@@ -591,6 +612,20 @@ export interface PriceInfo {
   ninjaCategory?: string
 }
 
+/** A single priced item exposed to plugins via the `ctx.prices` capability.
+ *  Distinct from the internal PriceInfo: it retains the display-case name and a
+ *  category slug the internal price map discards. `chaosValue` is the
+ *  baseline-equivalent count (chaos in PoE1, exalt in PoE2); `divineValue` is
+ *  the divine-equivalent when known. `category` is 'currency' for currency orbs
+ *  in both games (guaranteed); other slugs are ninja-derived. */
+export interface PriceEntry {
+  name: string
+  category: string
+  chaosValue: number
+  divineValue?: number
+  graph?: (number | null)[]
+}
+
 // ─── Item Search ────────────────────────────────────────────────────────────
 
 /** A row surfaced in the item-search combobox. The main process assembles these from
@@ -627,6 +662,18 @@ export interface HistoryEntry {
   action: 'block-edit' | 'tier-move' | 'stack-threshold' | 'strand-threshold'
   /** Item name/baseType — used to show the item icon in the history panel */
   itemName?: string
+}
+
+/** A single human-readable Scalpel customization, derived from the intent log. */
+export interface FilterChange {
+  /** Stable key for rendering. */
+  id: string
+  /** Human-readable description of the change. */
+  description: string
+  /** Item base type for move-basetype changes (drives the row icon); absent otherwise. */
+  itemName?: string
+  /** Epoch ms when the intent was recorded. */
+  timestamp: number
 }
 
 // ─── Filter Versions ──────────────────────────────────────────────────────────

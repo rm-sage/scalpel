@@ -17,15 +17,32 @@ export function buildWeaponDpsFilters(
 ): StatFilter[] {
   const out: StatFilter[] = []
 
+  // Normalize physical damage to 20% quality (hoisted above aps gate so
+  // the Damage chip can use them regardless of whether aps is present).
+  const physAvg =
+    itemInfo?.physDamageMin != null && itemInfo?.physDamageMax != null
+      ? ((itemInfo.physDamageMin + itemInfo.physDamageMax) / 2) * qualityNorm
+      : 0
+  const eleAvg = itemInfo?.eleDamageAvg ?? 0
+  const chaosAvg = itemInfo?.chaosDamageAvg ?? 0
+
+  // Damage chip: total per-hit damage (no attack speed multiplier). Off by default.
+  if (physAvg + eleAvg + chaosAvg > 0) {
+    const damage = Math.round((physAvg + eleAvg + chaosAvg) * 10) / 10
+    out.push({
+      id: 'weapon.damage',
+      text: `Damage: ${damage}${qualityNorm > 1 ? ' (20 quality)' : ''}`,
+      value: damage,
+      min: Math.floor(damage * pct),
+      max: null,
+      enabled: false,
+      type: 'weapon',
+      aggregated: true,
+    })
+  }
+
   if (itemInfo?.attacksPerSecond) {
     const aps = itemInfo.attacksPerSecond
-    // Normalize physical damage to 20% quality
-    const physAvg =
-      itemInfo.physDamageMin != null && itemInfo.physDamageMax != null
-        ? ((itemInfo.physDamageMin + itemInfo.physDamageMax) / 2) * qualityNorm
-        : 0
-    const eleAvg = itemInfo.eleDamageAvg ?? 0
-    const chaosAvg = itemInfo.chaosDamageAvg ?? 0
     const pdps = Math.round(physAvg * aps * 10) / 10
     const edps = Math.round(eleAvg * aps * 10) / 10
     const cdps = Math.round(chaosAvg * aps * 10) / 10

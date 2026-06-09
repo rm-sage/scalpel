@@ -11,7 +11,17 @@ vi.mock('../manifest', () => ({
   refreshManifest: vi.fn(),
 }))
 
-import { _setPricesForTests, lookupPrice, lookupPriceForItem, lookupUniquePriceForBase } from './prices'
+import {
+  _setPricesForTests,
+  _setPriceEntriesForTests,
+  getPriceEntries,
+  lookupPrice,
+  lookupPriceForItem,
+  lookupUniquePriceForBase,
+  processDenseResponse,
+  subscribePriceUpdates,
+} from './prices'
+import type { PriceEntry } from '../../shared/types'
 
 const baseItem = (overrides: Record<string, unknown> = {}): Parameters<typeof lookupPriceForItem>[0] => ({
   name: '',
@@ -162,5 +172,83 @@ describe('lookupUniquePriceForBase', () => {
   it('returns undefined when the name is not priced at all', () => {
     _setPricesForTests([{ name: 'Something Else', variant: 'Foo', chaos: 1 }])
     expect(lookupUniquePriceForBase('Nonexistent', 'Foo')).toBeUndefined()
+  })
+})
+
+describe('getPriceEntries', () => {
+  it('filters by category and reports them all when no filter is given', () => {
+    _setPriceEntriesForTests(
+      [
+        { name: 'Divine Orb', category: 'currency', chaosValue: 200 },
+        { name: 'The Doctor', category: 'divination-cards', chaosValue: 1000 },
+      ],
+      1717459200000,
+    )
+    expect(getPriceEntries('currency').prices.map((e) => e.name)).toEqual(['Divine Orb'])
+    expect(getPriceEntries().prices).toHaveLength(2)
+    expect(getPriceEntries().updatedAt).toBe(1717459200000)
+  })
+
+  it('notifies subscribers', () => {
+    let calls = 0
+    const off = subscribePriceUpdates(() => {
+      calls++
+    })
+    _setPriceEntriesForTests([], 1) // helper also fires the emitter
+    expect(calls).toBe(1)
+    off()
+    _setPriceEntriesForTests([], 2)
+    expect(calls).toBe(1)
+  })
+})
+
+describe('processDenseResponse price entries', () => {
+  beforeEach(() => {
+    _setPricesForTests([])
+  })
+
+  it('tags currency entries with category "currency", keeps display names, backfills divine', () => {
+    const resp = {
+      currencyOverviews: [
+        {
+          type: 'Currency',
+          lines: [
+            { name: 'Divine Orb', chaos: 200, graph: [1, 2, 3] },
+            { name: 'Chaos Orb', chaos: 1 },
+          ],
+        },
+      ],
+      itemOverviews: [{ type: 'DivinationCard', lines: [{ name: 'The Doctor', chaos: 1000 }] }],
+    }
+    const entries: PriceEntry[] = []
+    processDenseResponse(resp as never, entries)
+
+    const divine = entries.find((e) => e.name === 'Divine Orb')
+    expect(divine).toMatchObject({ category: 'currency', chaosValue: 200, divineValue: 1 })
+    expect(divine?.graph).toEqual([1, 2, 3])
+
+    const chaos = entries.find((e) => e.name === 'Chaos Orb')
+    expect(chaos).toMatchObject({ category: 'currency', chaosValue: 1, divineValue: 1 / 200 })
+
+    const doctor = entries.find((e) => e.name === 'The Doctor')
+    expect(doctor?.category).toBe('divination-cards')
+  })
+
+  it('backfills divineValue for entries seen before Divine Orb in the response', () => {
+    const resp = {
+      currencyOverviews: [
+        {
+          type: 'Currency',
+          lines: [
+            { name: 'Chaos Orb', chaos: 1 },
+            { name: 'Divine Orb', chaos: 200 },
+          ],
+        },
+      ],
+      itemOverviews: [],
+    }
+    const entries: PriceEntry[] = []
+    processDenseResponse(resp as never, entries)
+    expect(entries.find((e) => e.name === 'Chaos Orb')?.divineValue).toBe(1 / 200)
   })
 })

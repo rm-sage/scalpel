@@ -133,6 +133,24 @@ interface ScalpelPluginContext {
     keys(): Promise<string[]>
   }
 
+  // Read / write / watch the running game's _Config.ini. The host resolves the
+  // path from the detected PoE version; plugins cannot name a path. This is the
+  // only file a plugin can touch on disk. See "Editing the game config" below.
+  gameConfig: {
+    read(): Promise<{ content: string; path: string }>
+    write(content: string): Promise<{ backupPath: string | null }>
+    onChange(handler: () => void): () => void
+  }
+
+  // Read poe.ninja price data Scalpel already maintains (read-only). The host
+  // owns fetching, so plugins never hit ninja directly. See "Reading economy
+  // prices" below.
+  prices: {
+    getPrices(opts?: { category?: string }): Promise<{ prices: PriceEntry[]; updatedAt: number | null }>
+    refresh(): Promise<void>
+    onChange(handler: () => void): () => void
+  }
+
   // Utilities
   fetch: typeof fetch                  // standard browser fetch
   openExternal(url: string): void      // open URL in system browser
@@ -206,6 +224,62 @@ const levelUps = recent.filter((l) => l.includes('is now level')).length
 `onLogLine` fires once per newly appended line, in order, and returns an unsubscribe function. `getRecentLogLines(count?)` resolves to the most recent buffered lines (all of them, up to 200, when you pass no argument).
 
 Heads-up on privacy: `Client.txt` contains **all in-game chat, including private whispers and trade messages**, alongside zone changes and level-ups. The raw tail is handed to you ungated, so treat it accordingly - do not log or transmit lines you don't need.
+
+### Editing the game config
+
+`ctx.gameConfig` reads and writes the running game's `_Config.ini` (the file PoE
+keeps under `Documents\My Games\...`). The host resolves the path from the
+detected PoE version, so a plugin never names a path and can touch no other file.
+
+```tsx
+const { content, path } = await ctx.gameConfig.read()   // rejects if the file is missing
+const { backupPath } = await ctx.gameConfig.write(nextContent)
+const off = ctx.gameConfig.onChange(() => { /* file changed on disk - reload */ })
+```
+
+- `read()` resolves to `{ content, path }`, or rejects if the file does not exist.
+- `write(content)` overwrites the whole file atomically and resolves to
+  `{ backupPath }`. The first write of a session also copies the current file to a
+  timestamped `.bak` beside it (`backupPath` is that path; `null` on later writes).
+- `onChange(handler)` fires when the file changes on disk (e.g. the game rewriting
+  it on exit, or an external editor). It is debounced and never fires for your own
+  `write`. Returns an unsubscribe function.
+
+Heads-up: the game only reads this file at launch and rewrites the whole file from
+its in-memory state when it exits, so your edits apply at the next launch and can
+be clobbered if the game is running. Warn the user, prefer an explicit save, and
+use `onChange` to offer a reload when the file moves underneath you.
+
+### Reading economy prices
+
+`ctx.prices` exposes the poe.ninja price data Scalpel already fetches and caches
+in its main process (the same source behind Price Check). It is read-only, and
+the host owns fetching - a plugin never calls ninja directly, because a renderer
+fetch to ninja is CORS-blocked.
+
+```tsx
+const { prices, updatedAt } = await ctx.prices.getPrices({ category: 'currency' })
+// prices: { name, category, chaosValue, divineValue?, graph? }[]
+// updatedAt: epoch-ms of the last successful fetch, or null
+
+const off = ctx.prices.onChange(async () => {
+  const fresh = await ctx.prices.getPrices({ category: 'currency' })
+  // re-render with fresh.prices
+})
+
+await ctx.prices.refresh() // force a refetch now, bypassing the host cache TTL
+```
+
+- `getPrices(opts?)` resolves to `{ prices, updatedAt }` for the detected game +
+  league. Omit `category` for every priced item; pass a slug to scope it.
+- `chaosValue` is the baseline-equivalent count (chaos in PoE1, exalt in PoE2);
+  `divineValue` is the divine-equivalent when known. A cross-currency rate is
+  just `a.chaosValue / b.chaosValue`.
+- Category contract: `category === 'currency'` returns the currency orbs in
+  both PoE1 and PoE2. Other slugs (`'fragments'`, `'divination-cards'`, ...) are
+  derived from ninja's own categories and can differ between the two games.
+- `refresh()` forces a refetch; `onChange(handler)` fires after any host refresh
+  and returns an unsubscribe function.
 
 ### Overlay windows
 

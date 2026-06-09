@@ -21,12 +21,14 @@ vi.mock('electron', () => ({
 }))
 
 import {
+  _recentLogForTests as recentLog,
   _redactForTests as redact,
   _trimLogToTailForTests as trimLogToTail,
   _environmentSummaryForTests as environmentSummary,
   _settingsSummaryForTests as settingsSummary,
   _githubIssueUrlForTests as githubIssueUrl,
   _runtimeDiagnosticsSummaryForTests as runtimeDiagnosticsSummary,
+  recordMainBreadcrumb,
   registerDiagnostics,
 } from './diagnostics'
 
@@ -43,6 +45,13 @@ beforeAll(() => {
     store: { store: SETTINGS, get: STORE_GET_MOCK } as unknown as Store<AppSettings>,
     getAppWindow: () => null,
     showAppWindow: () => {},
+  })
+})
+
+describe('recentLog', () => {
+  it('returns the tail of the on-disk diagnostics log', () => {
+    recordMainBreadcrumb('scalpel-recent-log-marker')
+    expect(recentLog()).toContain('scalpel-recent-log-marker')
   })
 })
 

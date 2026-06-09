@@ -11,6 +11,8 @@ export type {
   PluginActivate,
   PluginManifest,
   PluginStorage,
+  PriceEntry,
+  PricesApi,
   RegisterHotkeyOptions,
   RegisterOverlayOptions,
   RegisterTabOptions,

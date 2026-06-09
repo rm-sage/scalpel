@@ -6,6 +6,7 @@ import {
   applyBaseModeToFilters,
   applyCraftingReadyToFilters,
   isCraftingReadyState,
+  isPerfectUniqueRoll,
   shouldIncludeImplicitsInBase,
 } from './base-mode'
 
@@ -120,6 +121,47 @@ describe('applyBaseModeToFilters', () => {
     expect(result[0].enabled).toBe(true)
   })
 
+  it('keeps premium mods enabled (not clobbered) while disabling ordinary explicits', () => {
+    const input = [
+      f({ id: 'explicit.stat_premium', type: 'explicit', premium: true, enabled: true }),
+      f({ id: 'explicit.stat_other', type: 'explicit', enabled: true }),
+    ]
+    const result = applyBaseModeToFilters(input, 'Unique', false)
+    expect(result.find((r) => r.id === 'explicit.stat_premium')?.enabled).toBe(true)
+    expect(result.find((r) => r.id === 'explicit.stat_other')?.enabled).toBe(false)
+  })
+
+  it('enables a perfect-or-over-rolled unique explicit pinned to the exact roll', () => {
+    // perfectRoll covers both perfect and over-rolled; pin min to the actual value.
+    const input = [
+      f({ id: 'explicit.stat_x', type: 'explicit', enabled: false, value: 35, min: 27, max: null, perfectRoll: true }),
+    ]
+    const result = applyBaseModeToFilters(input, 'Unique', false)
+    expect(result[0].enabled).toBe(true)
+    expect(result[0].min).toBe(35)
+    expect(result[0].max).toBeNull()
+  })
+
+  it('leaves a non-perfect unique explicit disabled', () => {
+    const input = [f({ id: 'explicit.stat_x', type: 'explicit', enabled: true, value: 25, perfectRoll: undefined })]
+    const result = applyBaseModeToFilters(input, 'Unique', false)
+    expect(result[0].enabled).toBe(false)
+  })
+
+  it('does not auto-enable a perfect-rolled explicit on non-uniques', () => {
+    const input = [f({ id: 'explicit.stat_x', type: 'explicit', enabled: true, value: 30, perfectRoll: true })]
+    const result = applyBaseModeToFilters(input, 'Rare', false)
+    expect(result[0].enabled).toBe(false)
+  })
+
+  it('a learned chip still overrides perfect-roll auto-enable', () => {
+    const input = [
+      f({ id: 'explicit.stat_x', type: 'explicit', enabled: false, learned: true, value: 30, perfectRoll: true }),
+    ]
+    const result = applyBaseModeToFilters(input, 'Unique', false)
+    expect(result[0].enabled).toBe(false)
+  })
+
   it('does not special-case foulborn mods on non-uniques', () => {
     // Foulborn only triggers on unique items; on rare items they'd be disabled like any explicit
     const input = [f({ id: 'explicit.stat_x', type: 'explicit', foulborn: true, enabled: true })]
@@ -182,6 +224,20 @@ describe('applyBaseModeToFilters', () => {
     const result = applyBaseModeToFilters(input, 'Unique', false)
     expect(result[0].enabled).toBe(false)
     expect(result[0].learned).toBe(true)
+  })
+})
+
+describe('isPerfectUniqueRoll', () => {
+  it('is true for a flagged unique mod', () => {
+    expect(isPerfectUniqueRoll(f({ perfectRoll: true }), 'Unique')).toBe(true)
+  })
+
+  it('is false when the flag is absent', () => {
+    expect(isPerfectUniqueRoll(f({ perfectRoll: undefined }), 'Unique')).toBe(false)
+  })
+
+  it('is false for non-unique rarities even when flagged', () => {
+    expect(isPerfectUniqueRoll(f({ perfectRoll: true }), 'Rare')).toBe(false)
   })
 })
 

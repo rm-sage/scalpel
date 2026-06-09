@@ -75,6 +75,7 @@ export function PriceSlider({
   // divine / mirror once the threshold climbs past their conversion rate.
   const poeVersion = usePoeVersion()
   const baselineKey = poeVersion === 2 ? 'exalted' : 'chaos'
+  const baselineSuffix = poeVersion === 2 ? 'ex' : 'c'
   const thresholdInMir = mirrorRate > 0 ? threshold / mirrorRate : 0
   const thresholdInDiv = divineRate > 0 ? threshold / divineRate : 0
   const showMir = thresholdInMir >= 1
@@ -122,8 +123,8 @@ export function PriceSlider({
               ? `${Math.round(thresholdInDiv)}d`
               : `${thresholdInDiv.toFixed(1)}d`
             : threshold < 10
-              ? `${threshold.toFixed(1)}c`
-              : `${Math.round(threshold)}c`}
+              ? `${threshold.toFixed(1)}${baselineSuffix}`
+              : `${Math.round(threshold)}${baselineSuffix}`}
       </span>
     </div>
   )

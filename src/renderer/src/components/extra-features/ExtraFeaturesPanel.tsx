@@ -73,10 +73,7 @@ export function ExtraFeaturesPanel({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1">
-        <h2 className="section-title" style={{ color: 'var(--accent)', fontSize: 16, fontWeight: 700 }}>
-          Extra Features
-        </h2>
-        <p className="text-[11px] text-text-dim">Scalpel includes more than the overlay you see. Set these up below.</p>
+        <h2 className="section-title">Additional Tools & Plugins</h2>
       </div>
 
       <FeatureCard
@@ -85,6 +82,7 @@ export function ExtraFeaturesPanel({
         blurb="Overlay level zone maps or your own reference images while you play."
         bgArt={cheatSheetsArt}
         bgArtOpacity={0.2}
+        bgMaskImage="linear-gradient(to right, black 0%, black 33%, transparent 65%)"
       >
         <HotkeyField
           value={cheatSheets.globalHotkey}
@@ -142,6 +140,7 @@ function FeatureCard({
   blurb,
   bgArt,
   bgArtOpacity = 0.34,
+  bgMaskImage = 'linear-gradient(to right, black 0%, black 33%, transparent 75%)',
   children,
 }: {
   icon: React.ReactNode
@@ -152,6 +151,7 @@ function FeatureCard({
   bgArt?: string
   /** Per-card override for the bleed-art opacity. Defaults to the shared 0.34. */
   bgArtOpacity?: number
+  bgMaskImage?: string
   children: React.ReactNode
 }): JSX.Element {
   return (
@@ -165,8 +165,8 @@ function FeatureCard({
           style={{
             opacity: bgArtOpacity,
             filter: 'blur(2px)',
-            WebkitMaskImage: 'linear-gradient(to right, black 0%, black 40%, transparent 58%)',
-            maskImage: 'linear-gradient(to right, black 0%, black 40%, transparent 58%)',
+            WebkitMaskImage: bgMaskImage,
+            maskImage: bgMaskImage,
           }}
         />
       )}

@@ -3,6 +3,7 @@ import { findAdvMod } from '../adv-mods'
 import type { MatchContext } from '../context'
 import { matchModToStat } from '../mod-matcher'
 import { accumulatePseudo, PSEUDO_CONTRIBUTIONS } from '../pseudo'
+import { dropFragmentDuplicates } from './explicits'
 
 export function processImplicits(ctx: MatchContext): StatFilter[] {
   const { implicits, itemInfo, advancedMods, isWeapon, pseudoAccumulator } = ctx
@@ -49,5 +50,5 @@ export function processImplicits(ctx: MatchContext): StatFilter[] {
     }
   }
 
-  return out
+  return dropFragmentDuplicates(out)
 }

@@ -5,7 +5,10 @@ import { App } from './App'
 import '../styles.css'
 import { bootstrapTheme } from '../shared/apply-theme'
 import { DiagnosticErrorBoundary, installRendererDiagnostics } from '../shared/diagnostics'
+import { bootstrapLocale, bootstrapLocaleSync, LocaleProvider } from '../shared/locale'
 
+bootstrapLocaleSync()
+void bootstrapLocale()
 void bootstrapTheme()
 installRendererDiagnostics('pinned-zone')
 
@@ -13,9 +16,11 @@ const root = document.getElementById('root')!
 createRoot(root).render(
   <StrictMode>
     <DiagnosticErrorBoundary source="pinned-zone">
-      <PoeVersionRoot>
-        <App />
-      </PoeVersionRoot>
+      <LocaleProvider>
+        <PoeVersionRoot>
+          <App />
+        </PoeVersionRoot>
+      </LocaleProvider>
     </DiagnosticErrorBoundary>
   </StrictMode>,
 )

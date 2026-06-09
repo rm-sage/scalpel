@@ -20,6 +20,9 @@ export interface ReplayConflict {
 export interface ReplayResult {
   filter: FilterFile
   modifiedBlocks: Set<number>
+  /** Blocks that should be dropped from the output entirely (e.g. a move emptied
+   *  the block's only condition, which would otherwise become a catch-all). */
+  removedBlocks: Set<number>
   conflicts: ReplayConflict[]
   stats: {
     applied: number
@@ -64,6 +67,7 @@ export function replayIntents(
   const filter = parseFilterFile(upstreamPath, upstreamContent)
   const conflicts: ReplayConflict[] = []
   const modifiedBlocks = new Set<number>()
+  const removedBlocks = new Set<number>()
   let applied = 0
   let skipped = 0
 
@@ -137,7 +141,19 @@ export function replayIntents(
           cond.values = cond.values.filter((v) => v !== p.value)
         }
       }
-      modifiedBlocks.add(current.index)
+      // Drop any BaseType condition that is now empty so we never serialize a
+      // dangling "BaseType ==" line (PoE parse error).
+      current.block.conditions = current.block.conditions.filter(
+        (c) => !(c.type === 'BaseType' && c.values.length === 0),
+      )
+      if (current.block.conditions.length === 0) {
+        // The move emptied the block's only condition; a condition-less block is a
+        // catch-all that matches every item. Drop the whole block instead.
+        removedBlocks.add(current.index)
+        modifiedBlocks.delete(current.index)
+      } else {
+        modifiedBlocks.add(current.index)
+      }
       // Add to target block's BaseType condition
       const targetBaseType = match.block.conditions.find((c) => c.type === 'BaseType')
       if (targetBaseType) {
@@ -190,6 +206,7 @@ export function replayIntents(
   return {
     filter,
     modifiedBlocks,
+    removedBlocks,
     conflicts,
     stats: { applied, skipped: skipped - conflicts.length, conflicts: conflicts.length },
   }

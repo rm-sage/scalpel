@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { SortFour } from '@icon-park/react'
-import { scrubAccumulate } from './scrub-math'
+import { placeholderRangeMidpoint, scrubAccumulate } from './scrub-math'
 
 interface ScrubInputProps {
   value: number | null
@@ -65,17 +65,28 @@ export function ScrubInput({
   const startScrub = (e: React.MouseEvent) => {
     if (editing) return
     e.preventDefault()
-    scrubRef.current = { startX: e.clientX, startVal: value ?? 0 }
+    // Scrubbing an empty field starts at the midpoint of a "min-max" placeholder range
+    // (e.g. "20-40" -> 30) so it begins in a sensible middle rather than at 0. Falls
+    // back to 0 when the placeholder isn't a range. A populated field scrubs from its
+    // current value as before.
+    const rangeMid = value == null ? placeholderRangeMidpoint(placeholder) : null
+    const seed = value ?? (rangeMid != null ? snapToPrecision(Math.min(max, Math.max(min, rangeMid))) : 0)
+    scrubRef.current = { startX: e.clientX, startVal: seed }
     document.body.style.cursor = 'ew-resize'
     document.body.classList.add('scrubbing')
 
+    const startX = e.clientX
     let lastX = e.clientX
-    let accumulator = value ?? 0
+    let accumulator = seed
+    let moved = false
 
     const onMove = (me: MouseEvent) => {
       if (!scrubRef.current) return
       const dx = me.clientX - lastX
       lastX = me.clientX
+      // Past a small threshold this is a scrub, not a click. Tracked so the click
+      // the browser fires on mouseup can be swallowed below.
+      if (Math.abs(me.clientX - startX) > 3) moved = true
       accumulator = scrubAccumulate(accumulator, dx, effectiveStep)
       const clamped = Math.min(max, Math.max(min, accumulator))
       const snapped = snapToPrecision(Math.round(clamped / effectiveStep) * effectiveStep)
@@ -88,6 +99,22 @@ export function ScrubInput({
       document.body.classList.remove('scrubbing')
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      // A drag-release fires a synthetic `click` on the element under the cursor.
+      // When the scrub ends over the mod row, that click would toggle the row off
+      // (the row's onClick is the common ancestor of the down/up targets, so the
+      // scrubber's own stopPropagation never sees it). Swallow that one click at the
+      // capture phase. Only after an actual move, so click-to-edit still works.
+      if (moved) {
+        const swallow = (ce: MouseEvent): void => {
+          ce.stopPropagation()
+          ce.preventDefault()
+          window.removeEventListener('click', swallow, true)
+        }
+        window.addEventListener('click', swallow, true)
+        // Fallback: if no click follows (released over a non-clickable area), drop the
+        // listener on the next tick so it can't swallow a later, unrelated click.
+        setTimeout(() => window.removeEventListener('click', swallow, true), 0)
+      }
     }
 
     window.addEventListener('mousemove', onMove)

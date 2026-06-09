@@ -1,6 +1,6 @@
 import { POE_NINJA_POE2_EXCHANGE, POE2_NINJA_PROXY } from '../../shared/endpoints'
 import { getGameFeatures } from '../../shared/game-features'
-import type { PriceInfo } from '../../shared/types'
+import type { PriceEntry, PriceInfo } from '../../shared/types'
 
 /**
  * PoE2 ninja price fetching + processing. The PoE2 API has no dense/overviews
@@ -11,6 +11,13 @@ import type { PriceInfo } from '../../shared/types'
  * Keep PoE2-specific pricing concerns in this file so the parent `prices.ts`
  * stays focused on dispatch + bookkeeping. No PoE1 data types leak in here.
  */
+
+/** Kebab-case slug fallback for proxy types missing from the manifest map.
+ *  Mirrors poe1Category's fallback in prices.ts so an unmapped type still
+ *  yields a clean category slug instead of a raw PascalCase string. */
+function categorySlug(type: string): string {
+  return type.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+}
 
 interface Poe2ExchangeLine {
   id: string
@@ -38,6 +45,7 @@ export interface Poe2PriceResult {
   priceMap: Map<string, PriceInfo>
   pricesByVariant: Map<string, PriceInfo>
   uniquesByBase: Record<string, string[]>
+  entries: PriceEntry[]
 }
 
 // Categories that currently return populated data on the PoE2 exchange
@@ -74,6 +82,7 @@ export function applyResponse(
   resp: Poe2ExchangeResponse,
   priceMap: Map<string, PriceInfo>,
   ninjaCategory?: string,
+  entriesOut?: PriceEntry[],
 ): void {
   const exaltedPerPrimary = resp.core.rates?.exalted ?? 0
   const nameById = new Map<string, string>()
@@ -87,17 +96,26 @@ export function applyResponse(
     const chaosValue = divineValue * exaltedPerPrimary
     if (!Number.isFinite(chaosValue) || chaosValue <= 0) continue
     priceMap.set(item.name.toLowerCase(), { chaosValue, divineValue, ninjaCategory: 'currency' })
+    entriesOut?.push({ name: item.name, category: 'currency', chaosValue, divineValue })
   }
 
   for (const line of resp.lines ?? []) {
     const name = nameById.get(line.id)
     const primary = line.primaryValue
     if (!name || primary == null || primary <= 0) continue
+    const chaosValue = primary * exaltedPerPrimary
     priceMap.set(name.toLowerCase(), {
-      chaosValue: primary * exaltedPerPrimary,
+      chaosValue,
       divineValue: primary,
       graph: line.sparkline?.data,
       ninjaCategory,
+    })
+    entriesOut?.push({
+      name,
+      category: ninjaCategory ?? 'currency',
+      chaosValue,
+      divineValue: primary,
+      graph: line.sparkline?.data,
     })
   }
 }
@@ -147,12 +165,15 @@ export function applyProxyResponse(
   priceMap: Map<string, PriceInfo>,
   categoryByType: Record<string, string> = {},
   pricesByVariant?: Map<string, PriceInfo>,
+  entriesOut?: PriceEntry[],
 ): void {
   const exaltedPerPrimary = resp.core.rates?.exalted ?? 0
 
   if (exaltedPerPrimary > 0) {
     priceMap.set('divine orb', { chaosValue: exaltedPerPrimary, divineValue: 1, ninjaCategory: 'currency' })
     priceMap.set('exalted orb', { chaosValue: 1, divineValue: 1 / exaltedPerPrimary, ninjaCategory: 'currency' })
+    entriesOut?.push({ name: 'Divine Orb', category: 'currency', chaosValue: exaltedPerPrimary, divineValue: 1 })
+    entriesOut?.push({ name: 'Exalted Orb', category: 'currency', chaosValue: 1, divineValue: 1 / exaltedPerPrimary })
   }
 
   for (const overview of resp.itemOverviews ?? []) {
@@ -168,6 +189,13 @@ export function applyProxyResponse(
       }
       priceMap.set(line.name.toLowerCase(), info)
       pricesByVariant?.set(`${line.name.toLowerCase()}|${line.variant ?? ''}`, info)
+      entriesOut?.push({
+        name: line.name,
+        category: ninjaCategory ?? categorySlug(overview.type),
+        chaosValue: info.chaosValue,
+        divineValue: info.divineValue,
+        graph: line.sparkline?.data,
+      })
     }
   }
 }
@@ -231,9 +259,10 @@ export async function fetchPoe2PricesFromProxy(
   const resp = (await fetchJson(`${POE2_NINJA_PROXY}/${slug}/overviewData.json`)) as Ee2OverviewResponse
   const priceMap = new Map<string, PriceInfo>()
   const pricesByVariant = new Map<string, PriceInfo>()
-  applyProxyResponse(resp, priceMap, categoryByType, pricesByVariant)
+  const entries: PriceEntry[] = []
+  applyProxyResponse(resp, priceMap, categoryByType, pricesByVariant, entries)
   const uniquesByBase = buildPoe2UniquesByBaseFromProxy(resp, staticUniquesByBase)
-  return { priceMap, pricesByVariant, uniquesByBase }
+  return { priceMap, pricesByVariant, uniquesByBase, entries }
 }
 
 /** Fetch every populated exchange category in parallel and return a freshly
@@ -258,12 +287,13 @@ export async function fetchAndBuildPoe2PriceMap(
     ),
   )) as Poe2ExchangeResponse[]
   const priceMap = new Map<string, PriceInfo>()
+  const entries: PriceEntry[] = []
   for (let i = 0; i < responses.length; i++) {
     const type = POE2_EXCHANGE_TYPES[i]
-    applyResponse(responses[i], priceMap, categoryByType[type])
+    applyResponse(responses[i], priceMap, categoryByType[type], entries)
   }
   // The direct-ninja exchange endpoint never returns uniques, so there is
   // no variant data and the base map stays the static catalogue. Empty
   // pricesByVariant preserves today's name-only fallback behavior exactly.
-  return { priceMap, pricesByVariant: new Map(), uniquesByBase: { ...staticUniquesByBase } }
+  return { priceMap, pricesByVariant: new Map(), uniquesByBase: { ...staticUniquesByBase }, entries }
 }

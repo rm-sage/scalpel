@@ -13,6 +13,10 @@ export function installedJsonPath(): string {
   return join(pluginsDir(), 'installed.json')
 }
 
+export function unpackedJsonPath(): string {
+  return join(pluginsDir(), 'unpacked.json')
+}
+
 export function pluginEntryPath(id: string): string {
   return join(pluginDir(id), 'plugin.js')
 }

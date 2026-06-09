@@ -15,6 +15,7 @@ import {
 } from '../../../../shared/macro-scope'
 import { narrowScopeForCrossGameConflict } from './hotkey-collisions'
 import { usePoeVersion } from '../../shared/poe-version-context'
+import { m } from '../../../../shared/paraglide/messages.js'
 
 const STASH_SCROLL_MODIFIER_OPTIONS = [
   { value: 'Ctrl', label: 'Ctrl +' },
@@ -101,7 +102,7 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
   return (
     <>
       {/* Chat Macros */}
-      <div className="settings-section-title mt-3">Chat Macros</div>
+      <div className="settings-section-title mt-3">{m.settings_mac_chat_macros()}</div>
       <section>
         <div className="flex flex-col gap-2">
           {visibleChatCommands.map(({ cmd, i }) => {
@@ -141,7 +142,7 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
                   className="flex items-center gap-[10px] cursor-pointer select-none ml-0.5"
                 >
                   <Toggle checked={cmd.autoSubmit !== false} onChange={(autoSubmit) => updateCmd({ autoSubmit })} />
-                  <span className="text-[11px] text-text-dim">Submit automatically (press Enter)</span>
+                  <span className="text-[11px] text-text-dim">{m.settings_mac_submit_auto()}</span>
                 </div>
               </div>
             )
@@ -153,7 +154,7 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
             }}
             className="text-[11px] text-text-dim self-start px-3 py-1.5"
           >
-            + Add Command
+            {m.settings_mac_add_command()}
           </button>
         </div>
       </section>
@@ -164,7 +165,7 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
        *  button) keeps the surface consistent with the section above. */}
       {(visiblePluginMacros.length > 0 || availablePluginsForNewRow.length > 0) && (
         <>
-          <div className="settings-section-title mt-3">Plugin Hotkeys</div>
+          <div className="settings-section-title mt-3">{m.settings_mac_plugin_hotkeys()}</div>
           <section>
             <div className="flex flex-col gap-2">
               {visiblePluginMacros.map(({ macro, i }) => {
@@ -199,7 +200,11 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
                       className="text-[11px] flex-1 min-w-0 rounded h-[34px] box-border"
                       style={{ padding: '4px 24px 4px 8px' }}
                     >
-                      {orphan && <option value={macro.action}>{`${getPluginName(pluginId)} (not loaded)`}</option>}
+                      {orphan && (
+                        <option value={macro.action}>
+                          {m.settings_mac_plugin_not_loaded({ name: getPluginName(pluginId) })}
+                        </option>
+                      )}
                       {optionsForThisRow.map((p) => (
                         <option key={p.action} value={p.action}>
                           {pluginOptionLabel(p.pluginId, p.label)}
@@ -226,7 +231,7 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
                   }}
                   className="text-[11px] text-text-dim self-start px-3 py-1.5"
                 >
-                  + Add Plugin Hotkey
+                  {m.settings_mac_add_plugin_hotkey()}
                 </button>
               )}
             </div>
@@ -235,7 +240,7 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
       )}
 
       {/* Scalpel Hotkeys */}
-      <div className="settings-section-title mt-3">Scalpel Hotkeys</div>
+      <div className="settings-section-title mt-3">{m.settings_mac_scalpel_hotkeys()}</div>
       <section>
         <div className="flex flex-col gap-2">
           {visibleAppMacros.map(({ macro, i }) => {
@@ -294,7 +299,9 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
                       style={{ padding: '4px 24px 4px 8px' }}
                     >
                       <option value="">
-                        {presetOptions.length === 0 ? 'No saved regexes' : 'Select a saved regex'}
+                        {presetOptions.length === 0
+                          ? m.settings_mac_no_saved_regexes()
+                          : m.settings_mac_select_saved_regex()}
                       </option>
                       {presetOptions.map((opt) => (
                         <option key={opt.id} value={opt.id}>
@@ -313,9 +320,7 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
                   />
                 </div>
                 {showNoPresetsHint && (
-                  <div className="text-[10px] text-accent px-[2px]">
-                    Save a regex in the Regex Tool first, then come back to assign a hotkey
-                  </div>
+                  <div className="text-[10px] text-accent px-[2px]">{m.settings_mac_no_presets_hint()}</div>
                 )}
               </div>
             )
@@ -334,22 +339,22 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
             }}
             className="text-[11px] text-text-dim self-start px-3 py-1.5"
           >
-            + Add Scalpel Hotkey
+            {m.settings_mac_add_scalpel_hotkey()}
           </button>
         </div>
       </section>
 
       {/* Other Macros */}
-      <div className="settings-section-title mt-3">Other Macros</div>
+      <div className="settings-section-title mt-3">{m.settings_mac_other_macros()}</div>
       <div className={settings.stashScrollEnabled ? 'grid grid-cols-2 gap-x-2 gap-y-[10px]' : ''}>
         <SettingToggleBox
-          label="Stash tab scrolling (ModKey + Scroll Wheel)"
+          label={m.settings_mac_stash_scroll()}
           checked={settings.stashScrollEnabled ?? false}
           onChange={(val) => update('stashScrollEnabled', val)}
         />
         {settings.stashScrollEnabled && (
           <SettingSelectBox
-            label="Modifier key"
+            label={m.settings_mac_modifier_key()}
             value={settings.stashScrollModifier ?? 'Ctrl'}
             options={STASH_SCROLL_MODIFIER_OPTIONS}
             onChange={(v) => update('stashScrollModifier', v)}

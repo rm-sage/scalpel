@@ -6,6 +6,7 @@ import type { HotkeySlot } from './hotkey-collisions'
 import { Button } from '../primitives/Button'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { pluginHotkeyBinding } from './plugin-hotkey-binding'
+import { m } from '../../../../shared/paraglide/messages.js'
 
 interface Props {
   onError: (msg: string, tone?: 'error' | 'warn') => void
@@ -27,7 +28,7 @@ const ROW_GRID = 'grid grid-cols-[40px_1fr_auto] gap-3'
  *  both" is the common case and a badge there is just noise. */
 function versionBadge(poeVersions?: (1 | 2)[]): string | null {
   if (!poeVersions || poeVersions.length !== 1) return null
-  return poeVersions[0] === 1 ? 'PoE 1 only' : 'PoE 2 only'
+  return poeVersions[0] === 1 ? m.settings_plg_poe1_only() : m.settings_plg_poe2_only()
 }
 
 /** 40px round plugin mark: real icon when the registry/manifest supplies one,
@@ -63,7 +64,7 @@ function PluginHotkeyBindRow({
         value={hotkey}
         onChange={setHotkey}
         className="w-[200px] shrink-0"
-        placeholder="Set plugin hotkey"
+        placeholder={m.settings_plg_set_hotkey()}
       />
       {/* Read-only on purpose: the plugin + action are fixed by context, so unlike
           the Macros-tab row there is no editable select or remove control here. */}
@@ -76,6 +77,7 @@ function PluginHotkeyBindRow({
 
 function InstalledRow({
   manifest,
+  iconUrlFallback,
   busy,
   onUninstall,
   hotkeys,
@@ -84,6 +86,9 @@ function InstalledRow({
   tryHotkey,
 }: {
   manifest: PluginManifest
+  /** Registry iconUrl, used when the installed manifest omits its own (so the
+   *  installed row shows the same icon as the Browse list instead of an initial). */
+  iconUrlFallback?: string
   busy: boolean
   onUninstall: () => void
   hotkeys: Array<{ action: string; label: string }>
@@ -94,16 +99,18 @@ function InstalledRow({
   return (
     <div className="flex flex-col gap-2 px-3 py-2.5 rounded-[10px] bg-white/[0.04]">
       <div className={`${ROW_GRID} items-center`}>
-        <PluginIcon iconUrl={manifest.iconUrl} name={manifest.name} />
+        <PluginIcon iconUrl={manifest.iconUrl ?? iconUrlFallback} name={manifest.name} />
         <div className="min-w-0">
           <div className="flex items-center gap-x-2.5 flex-wrap leading-tight">
             <span className="text-[13.5px] font-semibold text-text truncate">{manifest.name}</span>
             <span className="font-mono text-[10.5px] text-zinc-500">v{manifest.version}</span>
           </div>
-          <div className="text-[11.5px] text-text-dim mt-0.5 truncate">by {manifest.author}</div>
+          <div className="text-[11.5px] text-text-dim mt-0.5 truncate">
+            {m.settings_plg_by({ author: manifest.author })}
+          </div>
         </div>
         <Button variant="secondary" size="sm" disabled={busy} onClick={onUninstall}>
-          Uninstall
+          {m.settings_plg_uninstall()}
         </Button>
       </div>
       {hotkeys.length > 0 && (
@@ -200,7 +207,7 @@ function BrowseRow({
               {shots.length > 0 && (
                 <span
                   className="inline-flex items-center gap-1 font-mono text-[10.5px] text-zinc-500"
-                  title={`${shots.length} screenshots`}
+                  title={m.settings_plg_screenshots_count({ count: shots.length })}
                 >
                   <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true">
                     <rect x="1.5" y="3" width="13" height="10" rx="1.5" fill="currentColor" opacity="0.22" />
@@ -224,15 +231,15 @@ function BrowseRow({
                 </span>
               )}
             </div>
-            <div className="text-[11.5px] text-text-dim mt-0.5">by {entry.author}</div>
+            <div className="text-[11.5px] text-text-dim mt-0.5">{m.settings_plg_by({ author: entry.author })}</div>
           </div>
           <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
             <Button variant="primary" size="sm" disabled={busy} onClick={onInstall}>
-              {busy ? 'Installing...' : 'Install'}
+              {busy ? m.settings_plg_installing() : m.settings_plg_install()}
             </Button>
             <button
               onClick={onToggle}
-              aria-label={expanded ? 'Collapse' : 'Expand'}
+              aria-label={expanded ? m.common_collapse() : m.common_expand()}
               className={
                 'w-6 h-6 p-0 shrink-0 grid place-items-center rounded bg-transparent transition-colors hover:bg-white/[0.05] ' +
                 (expanded ? 'text-accent' : 'text-zinc-500 hover:text-text-dim')
@@ -293,10 +300,12 @@ function BrowseRow({
                     strokeLinecap="round"
                   />
                 </svg>
-                Repo
+                {m.settings_plg_repo()}
               </a>
             )}
-            <span className="text-zinc-500 font-mono text-[10.5px]">Requires Scalpel {entry.scalpelMinVersion}</span>
+            <span className="text-zinc-500 font-mono text-[10.5px]">
+              {m.settings_plg_requires({ version: entry.scalpelMinVersion })}
+            </span>
           </div>
         </div>
       )}
@@ -356,10 +365,10 @@ export function PluginsSection({ onError, settings, update, tryHotkey }: Props):
     const r = await window.api.pluginInstallFromRegistry(entry)
     setBusyId(null)
     if (!r.ok) {
-      onError(`Install failed: ${r.error}`)
+      onError(m.settings_plg_install_failed({ error: r.error }))
       return
     }
-    onError(`Installed "${entry.name}".`, 'warn')
+    onError(m.settings_plg_install_success({ name: entry.name }), 'warn')
     void refreshAll()
   }
 
@@ -368,10 +377,10 @@ export function PluginsSection({ onError, settings, update, tryHotkey }: Props):
     const r = await window.api.pluginUninstall(pluginId)
     setBusyId(null)
     if (!r.ok) {
-      onError(`Uninstall failed: ${r.error}`)
+      onError(m.settings_plg_uninstall_failed({ error: r.error }))
       return
     }
-    onError(`Uninstalled "${name}".`, 'warn')
+    onError(m.settings_plg_uninstall_success({ name }), 'warn')
     void refreshAll()
   }
 
@@ -385,15 +394,16 @@ export function PluginsSection({ onError, settings, update, tryHotkey }: Props):
   return (
     <div className="flex flex-col gap-4">
       <section className="flex flex-col gap-2">
-        <div className="settings-section-title mt-3">Installed</div>
+        <div className="settings-section-title mt-3">{m.settings_plg_installed_heading()}</div>
         {installed.length === 0 ? (
-          <div className="text-xs text-zinc-500">No plugins installed.</div>
+          <div className="text-xs text-zinc-500">{m.settings_plg_none_installed()}</div>
         ) : (
           <div className="flex flex-col gap-1">
             {installed.map(({ manifest }) => (
               <InstalledRow
                 key={manifest.id}
                 manifest={manifest}
+                iconUrlFallback={registry?.plugins?.find((e) => e.id === manifest.id)?.iconUrl}
                 busy={busyId === manifest.id}
                 onUninstall={() => void uninstall(manifest.id, manifest.name)}
                 hotkeys={registeredHotkeys
@@ -410,17 +420,17 @@ export function PluginsSection({ onError, settings, update, tryHotkey }: Props):
 
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <div className="settings-section-title mt-3">Browse</div>
+          <div className="settings-section-title mt-3">{m.settings_plg_browse()}</div>
           <button onClick={() => void refreshRegistry()} className="text-[11px] text-text-dim hover:text-text">
-            Refresh
+            {m.common_refresh()}
           </button>
         </div>
         {registryError ? (
-          <div className="text-xs text-red-400">Registry unavailable: {registryError}</div>
+          <div className="text-xs text-red-400">{m.settings_plg_registry_unavailable({ error: registryError })}</div>
         ) : !registry ? (
-          <div className="text-xs text-zinc-500">Loading...</div>
+          <div className="text-xs text-zinc-500">{m.common_loading()}</div>
         ) : browseEntries.length === 0 ? (
-          <div className="text-xs text-zinc-500">All registry plugins are already installed.</div>
+          <div className="text-xs text-zinc-500">{m.settings_plg_all_installed()}</div>
         ) : (
           <div className="flex flex-col gap-1">
             {browseEntries.map((entry) => (

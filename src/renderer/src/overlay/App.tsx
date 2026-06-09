@@ -4,6 +4,7 @@ import { PluginTabHost } from '../plugins/PluginTabHost'
 import type { RegisteredTab } from '../plugins/PluginHost'
 import type { AppSettings, RuntimeSettings, OverlayData, PoeItem, PriceInfo } from '../../../shared/types'
 import { isHideableTabKey } from '../../../shared/types'
+import { m } from '../../../shared/paraglide/messages.js'
 import type { ExternalLinkTarget } from '../../../shared/external-link'
 import { externalLinkUrl, ninjaLinkUrl } from '../../../shared/external-link'
 import { getGameFeatures } from '../../../shared/game-features'
@@ -843,6 +844,7 @@ export default function App(): JSX.Element {
                 features={features}
                 hasPriceCheckData={!!priceCheckData}
                 hiddenTabs={new Set((settings?.hiddenTabs ?? []).filter(isHideableTabKey))}
+                hiddenPluginTabIds={new Set(settings?.hiddenPluginTabIds ?? [])}
                 pluginTabs={pluginTabs.map((t) => ({ pluginId: t.pluginId, label: t.label, icon: t.icon }))}
                 onSetView={setView}
                 onClose={close}
@@ -927,10 +929,10 @@ export default function App(): JSX.Element {
                 {view === 'no-filter' && (
                   <Notice
                     icon="⚠"
-                    title="No filter loaded"
-                    body="Select your .filter file to get started."
+                    title={m.overlay_no_filter_title()}
+                    body={m.overlay_no_filter_body()}
                     action={{
-                      label: 'Open Filter Settings',
+                      label: m.overlay_open_filter_settings(),
                       onClick: () => {
                         setSettingsTabRequest({ tab: 'filter', n: Date.now() })
                         setView('setup')
@@ -942,8 +944,8 @@ export default function App(): JSX.Element {
                   <>
                     <Notice
                       icon={<Clipboard size={32} {...IP} />}
-                      title="No item in clipboard"
-                      body={`Hover an item in PoE and press ${prettyHotkey(settings?.hotkey) || 'Ctrl+Shift+F'}.`}
+                      title={m.overlay_no_item_title()}
+                      body={m.overlay_no_item_body({ hotkey: prettyHotkey(settings?.hotkey) || 'Ctrl+Shift+F' })}
                     />
                     <div className="px-6 pb-6">
                       <ItemSearchCombobox />

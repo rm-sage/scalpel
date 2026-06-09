@@ -129,7 +129,7 @@ function matchesCombo(
 }
 
 /** PoE2 binds W/A/S/D to movement, so a hotkey that shares one of those keys
- *  (the defaults are Ctrl+Shift+D and Ctrl+Shift+A) makes the character lurch:
+ *  (the defaults are Ctrl+D and Ctrl+A) makes the character lurch:
  *  globalShortcut doesn't reliably swallow the keydown before it reaches the
  *  game, and the game keeps moving until it sees a keyup. Inject a keyup for the
  *  non-modifier key the instant the hotkey fires so movement stops immediately.

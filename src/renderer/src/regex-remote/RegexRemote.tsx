@@ -18,6 +18,7 @@ const GENERATOR_ORDER: Record<1 | 2, Array<{ key: string; label: string }>> = {
     { key: 'waystones', label: 'Waystones' },
     { key: 'tablet', label: 'Tablet' },
     { key: 'vendor', label: 'Vendor' },
+    { key: 'relic', label: 'Relic' },
     { key: 'custom', label: 'Custom' },
   ],
 }

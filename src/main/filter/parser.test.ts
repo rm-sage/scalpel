@@ -198,4 +198,23 @@ Show
     expect(result.blocks[0].conditions[0].operator).toBe('>=')
     expect(result.blocks[0].conditions[0].values).toEqual(['60'])
   })
+
+  it('records the dominant EOL on the FilterFile', () => {
+    const crlf = parseFilterFile('t.filter', 'Show\r\n\tItemLevel >= 5\r\n')
+    expect(crlf.eol).toBe('\r\n')
+    const lf = parseFilterFile('t.filter', 'Show\n\tItemLevel >= 5\n')
+    expect(lf.eol).toBe('\n')
+  })
+
+  it('strips trailing CR from rawLines', () => {
+    const file = parseFilterFile('t.filter', 'Show\r\n\tItemLevel >= 5\r\n')
+    expect(file.rawLines.some((l) => l.includes('\r'))).toBe(false)
+  })
+
+  it('records bodyEndLine at the last body line, excluding trailing blanks/comments', () => {
+    const content = ['Show', '\tItemLevel >= 5', '\tSetFontSize 40', '', '# next', 'Hide', '\tQuality > 0'].join('\n')
+    const file = parseFilterFile('t.filter', content)
+    expect(file.blocks[0].bodyEndLine).toBe(3)
+    expect(file.blocks[1].bodyEndLine).toBe(7)
+  })
 })

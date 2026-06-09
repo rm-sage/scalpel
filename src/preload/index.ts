@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AuthResult,
   FilterBlock,
+  FilterChange,
   FilterListEntry,
   FilterVersion,
   GameVariant,
@@ -177,6 +178,8 @@ export const api = {
     ipcRenderer.send('diagnostics:renderer-error', payload),
   createBugReport: (): Promise<BugReportResult> => ipcRenderer.invoke('diagnostics:create-report'),
   showBugReport: (reportPath: string): Promise<void> => ipcRenderer.invoke('diagnostics:show-report', reportPath),
+  getDebugLog: (): Promise<string> => ipcRenderer.invoke('diagnostics:get-log'),
+  openLogFolder: (): Promise<void> => ipcRenderer.invoke('diagnostics:open-log-folder'),
   onDevDiagnosticError: (cb: (payload: RendererDiagnosticPayload) => void): (() => void) => {
     const handler = (_: Electron.IpcRendererEvent, payload: RendererDiagnosticPayload): void => cb(payload)
     ipcRenderer.on('diagnostics:dev-error', handler)
@@ -352,6 +355,32 @@ export const api = {
     }
   },
   getRecentLogLines: (count?: number): Promise<string[]> => ipcRenderer.invoke('client-log:recent-lines', count),
+  gameConfigRead: (): Promise<{ content: string; path: string }> => ipcRenderer.invoke('plugins:game-config-read'),
+  gameConfigWrite: (content: string): Promise<{ backupPath: string | null }> =>
+    ipcRenderer.invoke('plugins:game-config-write', content),
+  onGameConfigChange: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.send('plugins:game-config-watch')
+    ipcRenderer.on('plugins:game-config-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('plugins:game-config-changed', handler)
+      ipcRenderer.send('plugins:game-config-unwatch')
+    }
+  },
+  pricesGet: (opts?: {
+    category?: string
+  }): Promise<{ prices: import('../shared/types').PriceEntry[]; updatedAt: number | null }> =>
+    ipcRenderer.invoke('plugins:prices-get', opts),
+  pricesRefresh: (): Promise<void> => ipcRenderer.invoke('plugins:prices-refresh'),
+  onPricesChange: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.send('plugins:prices-watch')
+    ipcRenderer.on('plugins:prices-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('plugins:prices-changed', handler)
+      ipcRenderer.send('plugins:prices-unwatch')
+    }
+  },
   onOverlayDetach: (cb: () => void): (() => void) => {
     const handler = (): void => cb()
     ipcRenderer.on('overlay-detach', handler)
@@ -500,6 +529,83 @@ export const api = {
     league: string
     remainingIds: string[]
   }> => ipcRenderer.invoke('map-regex-trade', params),
+  waystoneRegexTrade: (params: {
+    tier: number
+    avoidTexts: string[]
+    wantTexts: string[]
+    wantMode: 'any' | 'all'
+    wantValues: Record<number, number>
+    avoidValues: Record<number, number>
+    qualifiers: {
+      corrupted: boolean
+      uncorrupted: boolean
+      delirious: boolean
+      anyPack: boolean
+    }
+    quantities: {
+      packSize: number | null
+      monsterEffectiveness: number | null
+      monsterRarity: number | null
+      itemRarity: number | null
+      dropChance: number | null
+    }
+  }): Promise<{
+    total: number
+    listings: Array<{
+      id: string
+      price: { amount: number; currency: string } | null
+      account: string
+      characterName?: string
+      online: boolean
+      instantBuyout: boolean
+      icon?: string
+      indexed?: string
+      itemData?: {
+        name?: string
+        baseType?: string
+        rarity?: string
+        explicitMods?: string[]
+        implicitMods?: string[]
+        ilvl?: number
+        mapProperties?: Array<{ name: string; value: string }>
+      }
+    }>
+    queryId: string
+    league: string
+    remainingIds: string[]
+  }> => ipcRenderer.invoke('waystone-regex-trade', params),
+  tabletRegexTrade: (params: {
+    wantTexts: string[]
+    wantMode: 'any' | 'all'
+    wantValues: Record<number, number>
+    rarity: { normal: boolean; magic: boolean }
+    typeFlags: Record<string, boolean>
+    uses: { enabled: boolean; value: number }
+  }): Promise<{
+    total: number
+    listings: Array<{
+      id: string
+      price: { amount: number; currency: string } | null
+      account: string
+      characterName?: string
+      online: boolean
+      instantBuyout: boolean
+      icon?: string
+      indexed?: string
+      itemData?: {
+        name?: string
+        baseType?: string
+        rarity?: string
+        explicitMods?: string[]
+        implicitMods?: string[]
+        ilvl?: number
+        mapProperties?: Array<{ name: string; value: string }>
+      }
+    }>
+    queryId: string
+    league: string
+    remainingIds: string[]
+  }> => ipcRenderer.invoke('tablet-regex-trade', params),
   fetchMoreListings: (
     queryId: string,
     ids: string[],
@@ -572,6 +678,10 @@ export const api = {
 
   // Online filter sync
   checkForOnlineUpdate: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('check-online-update'),
+  getOnlineSyncStatus: (): Promise<{ hasOnlineSource: boolean }> => ipcRenderer.invoke('online-sync-status'),
+  getFilterResetAvailability: (): Promise<{ canReset: boolean }> => ipcRenderer.invoke('filter-reset-availability'),
+  resetFilterToOnline: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('reset-filter-to-online'),
+  getFilterChanges: (): Promise<FilterChange[]> => ipcRenderer.invoke('get-filter-changes'),
   quickUpdateFilter: (): Promise<{
     ok: boolean
     error?: string
@@ -707,6 +817,12 @@ export const api = {
       entryUrl: string
     }>
   > => ipcRenderer.invoke('plugins:list-installed'),
+  listUnpackedPlugins: (): Promise<
+    Array<{
+      manifest: import('../plugin-sdk/src/types').PluginManifest
+      entryUrl: string
+    }>
+  > => ipcRenderer.invoke('plugins:list-unpacked'),
   getInstalledPlugin: (
     pluginId: string,
   ): Promise<{ manifest: import('../plugin-sdk/src/types').PluginManifest; entryUrl: string } | null> =>
@@ -722,6 +838,11 @@ export const api = {
     ipcRenderer.invoke('plugins:register-hotkey', pluginId, label),
   pluginListRegisteredHotkeys: (): Promise<Array<{ action: string; pluginId: string; label: string }>> =>
     ipcRenderer.invoke('plugins:list-registered-hotkeys'),
+  pluginRegisterTab: (pluginId: string, label: string, icon: string): Promise<void> =>
+    ipcRenderer.invoke('plugins:register-tab', pluginId, label, icon),
+  pluginUnregisterTab: (pluginId: string): Promise<void> => ipcRenderer.invoke('plugins:unregister-tab', pluginId),
+  pluginListRegisteredTabs: (): Promise<Array<{ pluginId: string; label: string; icon: string }>> =>
+    ipcRenderer.invoke('plugins:list-registered-tabs'),
   pluginInstallUnpacked: (): Promise<{ ok: true; id: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke('plugins:install-unpacked'),
   pluginFetchRegistry: (): Promise<
@@ -759,6 +880,11 @@ export const api = {
     const handler = (): void => cb()
     ipcRenderer.on('plugin-hotkeys-changed', handler)
     return () => ipcRenderer.removeListener('plugin-hotkeys-changed', handler)
+  },
+  onPluginTabsChanged: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('plugin-tabs-changed', handler)
+    return () => ipcRenderer.removeListener('plugin-tabs-changed', handler)
   },
   onRegexPresetsChanged: (cb: () => void): (() => void) => {
     const handler = (): void => cb()

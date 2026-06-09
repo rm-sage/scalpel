@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "poe1": {
+    "Mageblood": ["Leftmost # Magic Utility Flask constantly applies its Flask Effect to you"],
+    "Loreweave": ["Your Maximum Resistances are #%"]
+  },
+  "poe2": {
+    "Loreweave": ["Your Maximum Resistances are #%"]
+  }
+}

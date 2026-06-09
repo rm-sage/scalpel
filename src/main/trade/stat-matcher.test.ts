@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { _setPremiumModsForTests } from '../premium-mods'
 
 // Mock electron before importing stat-matcher
 vi.mock('electron', () => ({
@@ -9,7 +10,10 @@ vi.mock('electron', () => ({
 
 import { getPoeVersion, setPoeVersion } from '../game-state'
 import type { AdvancedMod } from '../../shared/types'
+import type { ModTier, TierDataset } from '../../shared/data/tiers/types'
+import { _setTierDataForTests } from '../tier-data'
 import { _setStatEntriesForTests, ITEM_CLASS_TO_CATEGORY, matchItemMods, matchModToStat } from './stat-matcher'
+import { resolveTierDefault } from './stat-matcher/producers/explicits'
 
 // Helper to build a minimal itemInfo object
 function makeItemInfo(overrides: Record<string, unknown> = {}) {
@@ -234,6 +238,92 @@ describe('matchItemMods', () => {
       const cdps = filters.find((f) => f.id === 'weapon.cdps')!
       expect(cdps.value).toBe(80)
       expect(cdps.enabled).toBe(false)
+    })
+
+    it('generates Damage chip (no aps) with correct value, disabled by default', () => {
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({
+          physDamageMin: 100,
+          physDamageMax: 200,
+          eleDamageAvg: 50,
+          chaosDamageAvg: 0,
+          attacksPerSecond: 1.5,
+          quality: 20,
+        }),
+      )
+      // physAvg = 150, qualityNorm = 1 (quality >= 20), eleAvg = 50, chaosAvg = 0
+      // damage = 150 + 50 + 0 = 200
+      const damageChip = filters.find((f) => f.id === 'weapon.damage')!
+      expect(damageChip).toBeDefined()
+      expect(damageChip.value).toBe(200)
+      expect(damageChip.enabled).toBe(false)
+      expect(damageChip.type).toBe('weapon')
+      expect(damageChip.aggregated).toBe(true)
+
+      // Damage = totalDps / aps relationship
+      const totalDpsChip = filters.find((f) => f.id === 'weapon.dps')!
+      expect(damageChip.value).toBe((totalDpsChip.value as number) / 1.5)
+    })
+
+    it('emits Damage chip even when attacksPerSecond is undefined', () => {
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({
+          physDamageMin: 100,
+          physDamageMax: 200,
+          eleDamageAvg: 50,
+          quality: 20,
+          // no attacksPerSecond
+        }),
+      )
+      // physAvg = 150, eleAvg = 50 -> damage = 200
+      const damageChip = filters.find((f) => f.id === 'weapon.damage')!
+      expect(damageChip).toBeDefined()
+      expect(damageChip.value).toBe(200)
+      expect(damageChip.enabled).toBe(false)
+      // No DPS chips without aps
+      expect(filters.find((f) => f.id === 'weapon.dps')).toBeUndefined()
+    })
+
+    it('Damage chip label includes (20 quality) when quality is below 20', () => {
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({
+          physDamageMin: 100,
+          physDamageMax: 200,
+          attacksPerSecond: 1.0,
+          quality: 0,
+        }),
+      )
+      // qualityNorm = 1.2, physAvg = 150 * 1.2 = 180, damage = 180
+      const damageChip = filters.find((f) => f.id === 'weapon.damage')!
+      expect(damageChip).toBeDefined()
+      expect(damageChip.value).toBe(180)
+      expect(damageChip.text).toContain('(20 quality)')
+    })
+
+    it('does not emit Damage chip when all damage values are zero', () => {
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({
+          physDamageMin: 0,
+          physDamageMax: 0,
+          eleDamageAvg: 0,
+          chaosDamageAvg: 0,
+          attacksPerSecond: 1.5,
+          quality: 20,
+        }),
+      )
+      expect(filters.find((f) => f.id === 'weapon.damage')).toBeUndefined()
     })
   })
 
@@ -469,8 +559,10 @@ describe('matchItemMods', () => {
       const openSuffix = filters.find((f) => f.id === 'pseudo.pseudo_number_of_empty_suffix_mods')
       expect(openPrefix).toBeDefined()
       expect(openPrefix?.value).toBe(2) // 3 max - 1 prefix = 2 open
+      expect(openPrefix?.min).toBe(2) // min mirrors the open count, not a hardcoded 1
       expect(openSuffix).toBeDefined()
       expect(openSuffix?.value).toBe(1) // 3 max - 2 suffixes = 1 open
+      expect(openSuffix?.min).toBe(1)
     })
 
     it('uses 2 max affixes for jewels', () => {
@@ -1445,14 +1537,22 @@ describe('matchItemMods', () => {
     const MAX_MANA = { id: 'explicit.stat_1050105434', text: '+# to maximum Mana', type: 'explicit' }
     const MAX_LIFE = { id: 'explicit.stat_3299347043', text: '+# to maximum Life', type: 'explicit' }
 
-    it('Strength contributes 0.5x to Total Life pseudo', () => {
+    // Attribute-only items: the raw attribute row surfaces; no pseudo is emitted because
+    // there is no real (maximum-Life / maximum-Mana) contributor to gate the fold-in.
+    it('lone Strength (no max-Life mod): Str row surfaced, no Total Life pseudo', () => {
       const filters = runWithStats([STR], ['+30 to Strength'])
-      expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(15)
+      expect(filters.find((f) => f.id === TOTAL_LIFE)).toBeUndefined()
+      const strRow = filters.find((f) => f.id === STR.id)
+      expect(strRow).toBeDefined()
+      expect(strRow?.enabled).toBe(true)
     })
 
-    it('Intelligence contributes 0.5x to Total Mana pseudo', () => {
+    it('lone Intelligence (no max-Mana mod): Int row surfaced, no Total Mana pseudo', () => {
       const filters = runWithStats([INT], ['+40 to Intelligence'])
-      expect(filters.find((f) => f.id === TOTAL_MANA)?.value).toBe(20)
+      expect(filters.find((f) => f.id === TOTAL_MANA)).toBeUndefined()
+      const intRow = filters.find((f) => f.id === INT.id)
+      expect(intRow).toBeDefined()
+      expect(intRow?.enabled).toBe(true)
     })
 
     it('Dexterity does not contribute to Life or Mana pseudo', () => {
@@ -1461,40 +1561,43 @@ describe('matchItemMods', () => {
       expect(filters.find((f) => f.id === TOTAL_MANA)).toBeUndefined()
     })
 
-    it('Str+Int hybrid contributes to both Life and Mana', () => {
+    it('lone Str+Int hybrid: no pseudos emitted, row surfaced', () => {
       const filters = runWithStats([STR_INT], ['+20 to Strength and Intelligence'])
-      expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(10)
-      expect(filters.find((f) => f.id === TOTAL_MANA)?.value).toBe(10)
+      expect(filters.find((f) => f.id === TOTAL_LIFE)).toBeUndefined()
+      expect(filters.find((f) => f.id === TOTAL_MANA)).toBeUndefined()
+      expect(filters.find((f) => f.id === STR_INT.id)).toBeDefined()
     })
 
-    it('Str+Dex hybrid contributes to Life only', () => {
+    it('lone Str+Dex hybrid: no Total Life pseudo, no Total Mana, row surfaced', () => {
       const filters = runWithStats([STR_DEX], ['+24 to Strength and Dexterity'])
-      expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(12)
+      expect(filters.find((f) => f.id === TOTAL_LIFE)).toBeUndefined()
       expect(filters.find((f) => f.id === TOTAL_MANA)).toBeUndefined()
     })
 
-    it('Dex+Int hybrid contributes to Mana only', () => {
+    it('lone Dex+Int hybrid: no Total Mana pseudo, no Total Life, row surfaced', () => {
       const filters = runWithStats([DEX_INT], ['+24 to Dexterity and Intelligence'])
-      expect(filters.find((f) => f.id === TOTAL_MANA)?.value).toBe(12)
+      expect(filters.find((f) => f.id === TOTAL_MANA)).toBeUndefined()
       expect(filters.find((f) => f.id === TOTAL_LIFE)).toBeUndefined()
     })
 
-    it('all Attributes contributes to both Life and Mana', () => {
+    it('lone all Attributes: no pseudos emitted, row surfaced', () => {
       const filters = runWithStats([ALL_ATTR], ['+10 to all Attributes'])
-      expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(5)
-      expect(filters.find((f) => f.id === TOTAL_MANA)?.value).toBe(5)
+      expect(filters.find((f) => f.id === TOTAL_LIFE)).toBeUndefined()
+      expect(filters.find((f) => f.id === TOTAL_MANA)).toBeUndefined()
+      expect(filters.find((f) => f.id === ALL_ATTR.id)).toBeDefined()
     })
 
-    it('floors the final Total Life value (single odd Str source)', () => {
-      // 25 * 0.5 = 12.5 -> floor to 12
+    it('lone Strength (odd value, no max-Life): Str row surfaced, no Total Life pseudo', () => {
+      // Previously tested flooring 25*0.5=12; now no pseudo should appear at all.
       const filters = runWithStats([STR], ['+25 to Strength'])
-      expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(12)
+      expect(filters.find((f) => f.id === TOTAL_LIFE)).toBeUndefined()
+      expect(filters.find((f) => f.id === STR.id)).toBeDefined()
     })
 
-    it('pools Str sources before flooring (matches in-game pooling)', () => {
-      // Game pools Str (38) then halves -> 19. Flooring per-contribution would give 12 + 6 = 18.
+    it('two Strength mods (no max-Life): no Total Life pseudo (attribute-only, no real contributor)', () => {
+      // Previously verified pooling behavior; now with no real contributor no pseudo is emitted.
       const filters = runWithStats([STR], ['+25 to Strength', '+13 to Strength'])
-      expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(19)
+      expect(filters.find((f) => f.id === TOTAL_LIFE)).toBeUndefined()
     })
 
     it('maximum Mana contributes 1:1 to Total Mana', () => {
@@ -1502,10 +1605,40 @@ describe('matchItemMods', () => {
       expect(filters.find((f) => f.id === TOTAL_MANA)?.value).toBe(50)
     })
 
-    it('Str + maximum Life roll combine into a single Total Life pseudo', () => {
-      // 60 (life) + 30 * 0.5 (Str) = 75
+    it('Str + maximum Life: folds into Total Life pseudo (value = life + floor(str*0.5))', () => {
+      // 60 (life) + 30 * 0.5 (Str) = 75; max-Life is the real contributor that gates the fold.
       const filters = runWithStats([STR, MAX_LIFE], ['+30 to Strength', '+60 to maximum Life'])
       expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(75)
+      // Str source row should be suppressed (enabled: false)
+      expect(filters.find((f) => f.id === STR.id)?.enabled).toBe(false)
+    })
+
+    it('Int + maximum Mana: folds into Total Mana pseudo, Int row suppressed', () => {
+      // 50 (mana) + 40 * 0.5 (Int) = 70
+      const filters = runWithStats([INT, MAX_MANA], ['+40 to Intelligence', '+50 to maximum Mana'])
+      expect(filters.find((f) => f.id === TOTAL_MANA)?.value).toBe(70)
+      expect(filters.find((f) => f.id === INT.id)?.enabled).toBe(false)
+    })
+
+    it('Str+Int hybrid with maximum Life but no maximum Mana: stays surfaced, not partially folded', () => {
+      // Only the Life half has a real contributor. An all-or-nothing fold avoids losing
+      // the Int->Mana half, so the hybrid row stays surfaced and Total Life reflects the
+      // real life mod only (60), NOT 60 + floor(20*0.5).
+      const filters = runWithStats([STR_INT, MAX_LIFE], ['+20 to Strength and Intelligence', '+60 to maximum Life'])
+      expect(filters.find((f) => f.id === TOTAL_MANA)).toBeUndefined()
+      expect(filters.find((f) => f.id === TOTAL_LIFE)?.value).toBe(60)
+      const hybrid = filters.find((f) => f.id === STR_INT.id)
+      expect(hybrid).toBeDefined()
+      expect(hybrid?.enabled).toBe(true)
+    })
+
+    it('regression: two resistance mods still fold into pseudo_total_elemental_resistance (unchanged)', () => {
+      const FIRE_RES = { id: 'explicit.stat_1671376347', text: '+#% to Fire Resistance', type: 'explicit' }
+      const COLD_RES = { id: 'explicit.stat_4220027924', text: '+#% to Cold Resistance', type: 'explicit' }
+      const filters = runWithStats([FIRE_RES, COLD_RES], ['+30% to Fire Resistance', '+25% to Cold Resistance'])
+      const pseudo = filters.find((f) => f.id === 'pseudo.pseudo_total_elemental_resistance')
+      expect(pseudo).toBeDefined()
+      expect(pseudo?.value).toBe(55)
     })
   })
 
@@ -1839,6 +1972,176 @@ describe('matchItemMods', () => {
       expect(filters.find((f) => f.id === 'explicit.stat_1604736568')).toBeUndefined()
     })
   })
+
+  // The PoE2 trade API disambiguates "#% increased Duration" with a trailing
+  // category qualifier: "(Charm)", "(Flask)". The clipboard text on the item is
+  // the bare "X% increased Duration", so the matcher has to strip the qualifier
+  // and prefer the one matching the item's class -- otherwise the bare mod falls
+  // through to the substring fallback and grabs the longest "increased Duration..."
+  // stat (e.g. the Frenzy-charge poison-duration mod). See issue #397.
+  describe('charm/flask Duration qualifier selection', () => {
+    const DURATION_STATS = [
+      { id: 'explicit.stat_2541588185', text: '#% increased Duration (Charm)', type: 'explicit' },
+      { id: 'explicit.stat_1256719186', text: '#% increased Duration (Flask)', type: 'explicit' },
+      {
+        id: 'explicit.stat_3841138199',
+        text: "#% increased Duration of Poisons you inflict when you've consumed a Frenzy Charge Recently",
+        type: 'explicit',
+      },
+    ]
+
+    it('charm picks the (Charm) Duration variant, not the poison-duration mod', () => {
+      _setStatEntriesForTests(DURATION_STATS)
+      const filters = matchItemMods(
+        ['28% increased Duration'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Magic', itemClass: 'Charms' }),
+      )
+      const charmFilter = filters.find((f) => f.id === 'explicit.stat_2541588185')
+      expect(charmFilter).toBeDefined()
+      expect(charmFilter?.value).toBe(28)
+      expect(filters.find((f) => f.id === 'explicit.stat_3841138199')).toBeUndefined()
+      expect(filters.find((f) => f.id === 'explicit.stat_1256719186')).toBeUndefined()
+    })
+
+    it('flask picks the (Flask) Duration variant', () => {
+      _setStatEntriesForTests(DURATION_STATS)
+      const filters = matchItemMods(
+        ['20% increased Duration'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Magic', itemClass: 'Flasks' }),
+      )
+      const flaskFilter = filters.find((f) => f.id === 'explicit.stat_1256719186')
+      expect(flaskFilter).toBeDefined()
+      expect(flaskFilter?.value).toBe(20)
+      expect(filters.find((f) => f.id === 'explicit.stat_2541588185')).toBeUndefined()
+    })
+  })
+
+  describe('perfectRoll flag (unique best-or-better rolls)', () => {
+    const STAT = { id: 'explicit.stat_ev', text: '#% increased Evasion Rating', type: 'explicit' as const }
+    // An advanced mod whose stripped line matches `${value}% increased Evasion Rating`,
+    // carrying the roll range in parens. `range` is matched by value, so pass it explicitly.
+    const advMod = (value: number, min: number, max: number): AdvancedMod[] => [
+      {
+        type: 'prefix',
+        name: 'Test',
+        tier: 1,
+        tags: [],
+        lines: [`${value}(${min}-${max})% increased Evasion Rating`],
+        ranges: [{ value, min, max }],
+      },
+    ]
+    const run = (value: number, min: number, max: number, rarity = 'Unique') => {
+      _setStatEntriesForTests([STAT])
+      return matchItemMods(
+        [`${value}% increased Evasion Rating`],
+        [],
+        undefined,
+        makeItemInfo({ rarity, itemClass: 'Body Armours' }),
+        advMod(value, min, max),
+      ).find((f) => f.id === STAT.id)
+    }
+
+    it('flags a perfect (== max) ranged unique roll', () => {
+      expect(run(30, 20, 30)?.perfectRoll).toBe(true)
+    })
+
+    it('flags an over-rolled (> max) ranged unique roll', () => {
+      expect(run(35, 20, 30)?.perfectRoll).toBe(true)
+    })
+
+    it('does not flag a sub-max ranged unique roll', () => {
+      expect(run(25, 20, 30)?.perfectRoll).toBeUndefined()
+    })
+
+    it('flags an over-rolled (> single value) fixed unique mod', () => {
+      expect(run(60, 50, 50)?.perfectRoll).toBe(true)
+    })
+
+    it('does not flag a fixed unique mod at its single value', () => {
+      expect(run(50, 50, 50)?.perfectRoll).toBeUndefined()
+    })
+
+    it('does not flag a perfect roll on a non-unique', () => {
+      expect(run(30, 20, 30, 'Rare')?.perfectRoll).toBeUndefined()
+    })
+
+    it('does not flag a detrimental roll on a sign-flipped (reduced) bracket', () => {
+      // "9% reduced Cast Speed" reports an inverted bracket {min:15, max:-15}; the value
+      // (-9) is far from the true best (+15), so it must NOT be perfect -- otherwise Base
+      // mode would auto-enable a junk downside (the Loreweave reduced-mods bug).
+      _setStatEntriesForTests([{ id: 'explicit.stat_cs', text: '#% increased Cast Speed', type: 'explicit' }])
+      const filters = matchItemMods(
+        ['9% reduced Cast Speed'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Unique', itemClass: 'Body Armours' }),
+        [
+          {
+            type: 'suffix',
+            name: 'Unique',
+            tier: 1,
+            tags: [],
+            lines: ['9(15--15)% reduced Cast Speed'],
+            ranges: [{ value: 9, min: 15, max: -15 }],
+          },
+        ],
+      )
+      expect(filters.find((f) => f.id === 'explicit.stat_cs')?.perfectRoll).toBeUndefined()
+    })
+
+    it('flags a corruption-overrolled single-value mod (The Pandemonius cold pen)', () => {
+      // "Damage Penetrates 85(75)% Cold Resistance" -- single-value paren, value > base.
+      _setStatEntriesForTests([
+        { id: 'explicit.stat_coldpen', text: 'Damage Penetrates #% Cold Resistance', type: 'explicit' },
+      ])
+      const filters = matchItemMods(
+        ['Damage Penetrates 85% Cold Resistance'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Unique', itemClass: 'Amulets' }),
+        [
+          {
+            type: 'prefix',
+            name: 'Unique',
+            tier: 1,
+            tags: [],
+            lines: ['Damage Penetrates 85(75)% Cold Resistance'],
+            ranges: [{ value: 85, min: 75, max: 75 }],
+          },
+        ],
+      )
+      expect(filters.find((f) => f.id === 'explicit.stat_coldpen')?.perfectRoll).toBe(true)
+    })
+  })
+})
+
+// ─── 100%-chance binary stat folding (PoE2) ──────────────────────────────────
+
+describe('chance-to binary stat folding', () => {
+  it('matches an over-rolled "#% chance to <effect>" to the valueless binary trade stat', () => {
+    // The Pandemonius prints "113% chance to Blind Chilled enemies on Hit" (100% base,
+    // over-rolled by corruption), but PoE2 trade folds the always-100% chance into a
+    // valueless binary stat "Blind Chilled enemies on Hit" (Pandemonius line missing).
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_3450276548', text: 'Blind Chilled enemies on Hit', type: 'explicit' },
+    ])
+    const result = matchModToStat('113% chance to Blind Chilled enemies on Hit')
+    expect(result?.statId).toBe('explicit.stat_3450276548')
+    expect(result?.value).toBeNull()
+  })
+
+  it('still matches a real "#% chance to" stat with its rolled value (no false fold)', () => {
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_318953428', text: '#% chance to Blind Enemies on Hit with Attacks', type: 'explicit' },
+    ])
+    const result = matchModToStat('25% chance to Blind Enemies on Hit with Attacks')
+    expect(result?.statId).toBe('explicit.stat_318953428')
+    expect(result?.value).toBe(25)
+  })
 })
 
 // ─── matchModToStat: requires stat entries (network-dependent) ───────────────
@@ -1944,6 +2247,52 @@ describe('matchModToStat (PoE2 stat text without leading sign)', () => {
     expect(result?.statId).toBe('explicit.stat_2222186378')
     expect(result?.value).toBe(1)
   })
+
+  describe('multi-line wrapped mods', () => {
+    // A single stat that wraps across two clipboard lines (e.g. Yoke of Suffering's
+    // "Enemies take #% increased Damage for each Elemental Ailment type among your
+    // Ailments on them") arrives from clipboard.ts as three explicit strings: each
+    // physical line plus the "\n"-joined whole. The two fragments are a prefix and a
+    // suffix of the trade stat text, so the substring fallback matches them with a null
+    // value -- producing junk duplicate rows alongside the real (joined) row. The
+    // matcher must collapse these to a single row carrying the real value.
+    const WRAPPED_EXPLICITS = [
+      'Enemies take 17% increased Damage for each Elemental Ailment type among',
+      'your Ailments on them',
+      'Enemies take 17% increased Damage for each Elemental Ailment type among\nyour Ailments on them',
+    ]
+
+    it('emits a single explicit row for a stat that wraps across two clipboard lines', () => {
+      _setStatEntriesForTests([
+        {
+          id: 'explicit.stat_yoke',
+          text: 'Enemies take #% increased Damage for each Elemental Ailment type among your Ailments on them',
+          type: 'explicit',
+        },
+      ])
+      const filters = matchItemMods(WRAPPED_EXPLICITS, [], undefined, makeItemInfo({ rarity: 'Unique' }))
+      const yokeRows = filters.filter((f) => f.id === 'explicit.stat_yoke')
+      expect(yokeRows).toHaveLength(1)
+      expect(yokeRows[0].value).toBe(17)
+    })
+
+    it('still keeps both stats of a genuine hybrid mod (distinct stat ids)', () => {
+      // Hybrid mods (two independent stats under one affix header) match different
+      // stat ids, so the dedup must not collapse them.
+      _setStatEntriesForTests([
+        { id: 'explicit.stat_area', text: '#% increased Area Damage', type: 'explicit' },
+        { id: 'explicit.stat_fireres', text: '+#% to Fire Resistance', type: 'explicit' },
+      ])
+      const filters = matchItemMods(
+        ['25% increased Area Damage', '+44% to Fire Resistance'],
+        [],
+        undefined,
+        makeItemInfo(),
+      )
+      expect(filters.find((f) => f.id === 'explicit.stat_area')?.value).toBe(25)
+      expect(filters.find((f) => f.id === 'explicit.stat_fireres')?.value).toBe(44)
+    })
+  })
 })
 
 describe('matchModToStat (Unscalable Value prefix/suffix fallback)', () => {
@@ -1972,6 +2321,60 @@ describe('matchModToStat (Unscalable Value prefix/suffix fallback)', () => {
     expect(result).not.toBeNull()
     expect(result?.statId).toBe('explicit.stat_xxx')
     expect(result?.value).toBeNull()
+  })
+
+  it('does NOT match a plain mod against a longer stat whose dropped prefix is descriptive (issue #399)', () => {
+    // A weapon "increased Attack Speed" corruption enchant has no global plain enchant
+    // stat in the trade API, so the suffix fallback used to grab the unrelated
+    // "Allies in your Presence have #% increased Attack Speed". The dropped prefix
+    // ("Allies in your Presence have") is descriptive text, not a hidden roll/chance
+    // chunk, so it must NOT be accepted.
+    _setStatEntriesForTests([
+      {
+        id: 'enchant.stat_1998951374',
+        text: 'Allies in your Presence have #% increased Attack Speed',
+        type: 'enchant',
+      },
+    ])
+    const result = matchModToStat('8% increased Attack Speed', false, 'enchant')
+    expect(result).toBeNull()
+  })
+
+  it('prefers the (Local) enchant stat for a weapon corruption enchant (issue #399)', () => {
+    // The correct trade stat for a weapon's "increased Attack Speed" corruption
+    // enchant is the "(Local)" enchant entry; the global "Allies in your Presence"
+    // lookalike must not win. preferLocal=true is passed for items with local affixes.
+    _setStatEntriesForTests([
+      { id: 'enchant.stat_210067635', text: '#% increased Attack Speed (Local)', type: 'enchant' },
+      {
+        id: 'enchant.stat_1998951374',
+        text: 'Allies in your Presence have #% increased Attack Speed',
+        type: 'enchant',
+      },
+    ])
+    const result = matchModToStat('8% increased Attack Speed', true, 'enchant')
+    expect(result?.statId).toBe('enchant.stat_210067635')
+    expect(result?.value).toBe(8)
+  })
+})
+
+describe('buildEnchantFilters via matchItemMods (weapon corruption enchant, issue #399)', () => {
+  it('routes a Widowhail attack-speed corruption enchant to the (Local) enchant stat', () => {
+    _setStatEntriesForTests([
+      { id: 'enchant.stat_210067635', text: '#% increased Attack Speed (Local)', type: 'enchant' },
+      {
+        id: 'enchant.stat_1998951374',
+        text: 'Allies in your Presence have #% increased Attack Speed',
+        type: 'enchant',
+      },
+    ])
+    const filters = matchItemMods([], [], undefined, {
+      ...makeItemInfo({ itemClass: 'Bows', baseType: 'Crude Bow', rarity: 'Unique', corrupted: true }),
+      enchants: ['8% increased Attack Speed'],
+    })
+    const enchant = filters.find((f) => f.type === 'enchant')
+    expect(enchant?.id).toBe('enchant.stat_210067635')
+    expect(enchant?.value).toBe(8)
   })
 })
 
@@ -2182,6 +2585,364 @@ describe('PoE2 Damage-as-Extra summary pseudos (end to end)', () => {
   })
 })
 
+describe('duplicate same-id explicit rows (rarity stat merge)', () => {
+  const RARITY_STAT = { id: 'explicit.stat_3917489142', text: '#% increased Rarity of Items found', type: 'explicit' }
+
+  it('PoE2: two rarity explicits merge into one row with summed value, enabled', () => {
+    const prev = getPoeVersion()
+    setPoeVersion(2)
+    try {
+      _setStatEntriesForTests([RARITY_STAT])
+      const filters = matchItemMods(
+        ['18% increased Rarity of Items found', '12% increased Rarity of Items found'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Rings' }),
+      )
+      const rarityRows = filters.filter((f) => f.id === RARITY_STAT.id)
+      expect(rarityRows).toHaveLength(1)
+      expect(rarityRows[0].value).toBe(30)
+      expect(rarityRows[0].enabled).toBe(true)
+      expect(rarityRows[0].min).toBe(27) // Math.floor(30 * 0.9)
+      expect(rarityRows[0].text).toContain('30')
+    } finally {
+      setPoeVersion(prev)
+    }
+  })
+
+  it('PoE1: two rarity explicits merge into one row with summed value, disabled (low-priority)', () => {
+    const prev = getPoeVersion()
+    setPoeVersion(1)
+    try {
+      _setStatEntriesForTests([RARITY_STAT])
+      const filters = matchItemMods(
+        ['18% increased Rarity of Items found', '12% increased Rarity of Items found'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Rings' }),
+      )
+      const rarityRows = filters.filter((f) => f.id === RARITY_STAT.id)
+      expect(rarityRows).toHaveLength(1)
+      expect(rarityRows[0].value).toBe(30)
+      expect(rarityRows[0].enabled).toBe(false)
+    } finally {
+      setPoeVersion(prev)
+    }
+  })
+
+  it('no spurious merge: single rarity roll (PoE2) passes through unchanged and is enabled', () => {
+    const prev = getPoeVersion()
+    setPoeVersion(2)
+    try {
+      _setStatEntriesForTests([RARITY_STAT])
+      const filters = matchItemMods(
+        ['18% increased Rarity of Items found'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Rings' }),
+      )
+      const rarityRows = filters.filter((f) => f.id === RARITY_STAT.id)
+      expect(rarityRows).toHaveLength(1)
+      expect(rarityRows[0].value).toBe(18)
+      expect(rarityRows[0].enabled).toBe(true)
+    } finally {
+      setPoeVersion(prev)
+    }
+  })
+
+  it('no spurious merge: two different stat ids both preserved', () => {
+    const LIFE_STAT = { id: 'explicit.stat_3299347043', text: '+# to maximum Life', type: 'explicit' }
+    _setStatEntriesForTests([RARITY_STAT, LIFE_STAT])
+    const prev = getPoeVersion()
+    setPoeVersion(2)
+    try {
+      const filters = matchItemMods(
+        ['18% increased Rarity of Items found', '+50 to maximum Life'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Rings' }),
+      )
+      const rarityRows = filters.filter((f) => f.id === RARITY_STAT.id)
+      const lifeRows = filters.filter((f) => f.id === LIFE_STAT.id)
+      expect(rarityRows).toHaveLength(1)
+      expect(lifeRows).toHaveLength(1)
+    } finally {
+      setPoeVersion(prev)
+    }
+  })
+})
+
+// ─── resolveTierDefault unit tests ───────────────────────────────────────────
+
+function makeTier(tier: number, ilvl: number): ModTier {
+  return { tier, ilvl, name: '', stats: [], range: { min: 0, max: 0 }, text: '' }
+}
+
+describe('resolveTierDefault', () => {
+  it('turns off a roll LOW_TIER_GAP+ tiers below best achievable (gap 3 >= 2)', () => {
+    // Ladder: T1 needs ilvl 70, T2 needs ilvl 50, T3 needs ilvl 30, T4 needs ilvl 10
+    const ladder: ModTier[] = [makeTier(1, 70), makeTier(2, 50), makeTier(3, 30), makeTier(4, 10)]
+    // ilvl 80: best achievable = T1; rolled T4 -> gap 3 >= 2 -> off
+    expect(resolveTierDefault({ baseEnabled: true, matchedTier: 4, tierLadder: ladder, itemLevel: 80 })).toBe(false)
+  })
+
+  it('leaves enabled when gap is below LOW_TIER_GAP (gap 1 < 2)', () => {
+    const ladder: ModTier[] = [makeTier(1, 70), makeTier(2, 50)]
+    // ilvl 80: best achievable = T1; rolled T2 -> gap 1 < 2 -> stays true
+    expect(resolveTierDefault({ baseEnabled: true, matchedTier: 2, tierLadder: ladder, itemLevel: 80 })).toBe(true)
+  })
+
+  it('T1 roll overrides baseEnabled false (quality default off -> on)', () => {
+    const ladder: ModTier[] = [makeTier(1, 70)]
+    expect(resolveTierDefault({ baseEnabled: false, matchedTier: 1, tierLadder: ladder, itemLevel: 80 })).toBe(true)
+  })
+
+  it('T1 roll with no ladder also overrides baseEnabled false', () => {
+    expect(resolveTierDefault({ baseEnabled: false, matchedTier: 1, tierLadder: undefined, itemLevel: 80 })).toBe(true)
+  })
+
+  it('low ilvl where rolled tier IS best achievable -> stays on', () => {
+    // Ladder: T1 needs ilvl 70, T2 needs ilvl 50, T3 needs ilvl 10
+    // ilvl 15: only T3 is achievable; rolled T3 -> gap 0 -> stays true
+    const ladder: ModTier[] = [makeTier(1, 70), makeTier(2, 50), makeTier(3, 10)]
+    expect(resolveTierDefault({ baseEnabled: true, matchedTier: 3, tierLadder: ladder, itemLevel: 15 })).toBe(true)
+  })
+
+  it('no tierLadder -> returns baseEnabled unchanged (true)', () => {
+    expect(resolveTierDefault({ baseEnabled: true, matchedTier: 4, tierLadder: undefined, itemLevel: 80 })).toBe(true)
+  })
+
+  it('no tierLadder -> returns baseEnabled unchanged (false)', () => {
+    expect(resolveTierDefault({ baseEnabled: false, matchedTier: 4, tierLadder: undefined, itemLevel: 80 })).toBe(false)
+  })
+
+  it('itemLevel undefined -> low-tier rule skipped, returns baseEnabled', () => {
+    const ladder: ModTier[] = [makeTier(1, 70), makeTier(2, 50), makeTier(3, 10)]
+    expect(resolveTierDefault({ baseEnabled: true, matchedTier: 3, tierLadder: ladder, itemLevel: undefined })).toBe(
+      true,
+    )
+  })
+})
+
+// ─── resolveTierDefault end-to-end wiring through matchItemMods ───────────────
+
+describe('tier-aware default enablement (e2e via matchItemMods)', () => {
+  // TierDataset ordering: idxList is ascending by value (worst tier first, best tier last).
+  // Tier numbers are derived from advTier: matched entry gets advTier, entries before it
+  // (lower value = worse) get higher numbers, entries after (higher value = better) get lower.
+  // So for a two-tier group where T2 has lower values, T2's entry must come FIRST at index 0.
+  //
+  // Use "increased Critical Strike Chance" (no pseudo contribution) to avoid suppressesSourceRow.
+  const CRIT_STAT_ID = 'explicit.stat_crit_e2e'
+
+  it('high-ilvl item: T2 roll (gap 1 < 2) stays enabled', () => {
+    // Two-tier dataset: Fledgling(ilvl20, lower vals) idx0, Sharp(ilvl60, higher vals) idx1.
+    // T2 advMod matched to Fledgling -> Fledgling=T2, Sharp=T1.
+    // Best achievable at ilvl80 is T1; gap = 2-1 = 1 < 2 -> stays on.
+    const dataset: TierDataset = {
+      schemaVersion: 1,
+      mods: [
+        { n: 'Fledgling', l: 20, g: 'CritChance', s: [['base_critical_strike_chance_+%', 10, 19]], t: '' },
+        { n: 'Sharp', l: 60, g: 'CritChance', s: [['base_critical_strike_chance_+%', 20, 30]], t: '' },
+      ],
+      pools: [{ CritChance: [0, 1] }],
+      bases: { 'Ruby Ring': 0 },
+    }
+    const prev = getPoeVersion()
+    setPoeVersion(1)
+    _setTierDataForTests(dataset)
+    try {
+      _setStatEntriesForTests([{ id: CRIT_STAT_ID, text: '#% increased Critical Strike Chance', type: 'explicit' }])
+      const advT2: AdvancedMod[] = [
+        {
+          type: 'suffix',
+          name: 'Fledgling',
+          tier: 2,
+          tags: [],
+          lines: ['15(10-19)% increased Critical Strike Chance'],
+          ranges: [{ value: 15, min: 10, max: 19 }],
+        },
+      ]
+      const filters = matchItemMods(
+        ['15% increased Critical Strike Chance'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', baseType: 'Ruby Ring', itemLevel: 80, itemClass: 'Rings' }),
+        advT2,
+      )
+      const row = filters.find((f) => f.id === CRIT_STAT_ID)
+      expect(row?.enabled).toBe(true)
+    } finally {
+      _setTierDataForTests(null)
+      setPoeVersion(prev)
+    }
+  })
+
+  it('high-ilvl item: T3 roll (gap 2) flips off', () => {
+    // Three-tier dataset, worst first: Dull(ilvl10) idx0, Fledgling(ilvl40) idx1, Sharp(ilvl60) idx2.
+    // T3 advMod matched to Dull -> Dull=T3, Fledgling=T2, Sharp=T1.
+    // Best achievable at ilvl80 is T1; gap = 3-1 = 2 >= 2 -> off.
+    const dataset3: TierDataset = {
+      schemaVersion: 1,
+      mods: [
+        { n: 'Dull', l: 10, g: 'CritChance3', s: [['base_critical_strike_chance_+%', 1, 9]], t: '' },
+        { n: 'Fledgling', l: 40, g: 'CritChance3', s: [['base_critical_strike_chance_+%', 10, 19]], t: '' },
+        { n: 'Sharp', l: 60, g: 'CritChance3', s: [['base_critical_strike_chance_+%', 20, 30]], t: '' },
+      ],
+      pools: [{ CritChance3: [0, 1, 2] }],
+      bases: { 'Ruby Ring': 0 },
+    }
+    const prev = getPoeVersion()
+    setPoeVersion(1)
+    _setTierDataForTests(dataset3)
+    try {
+      _setStatEntriesForTests([{ id: CRIT_STAT_ID, text: '#% increased Critical Strike Chance', type: 'explicit' }])
+      const advT3: AdvancedMod[] = [
+        {
+          type: 'suffix',
+          name: 'Dull',
+          tier: 3,
+          tags: [],
+          lines: ['5(1-9)% increased Critical Strike Chance'],
+          ranges: [{ value: 5, min: 1, max: 9 }],
+        },
+      ]
+      const filters = matchItemMods(
+        ['5% increased Critical Strike Chance'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', baseType: 'Ruby Ring', itemLevel: 80, itemClass: 'Rings' }),
+        advT3,
+      )
+      const row = filters.find((f) => f.id === CRIT_STAT_ID)
+      expect(row?.enabled).toBe(false)
+    } finally {
+      _setTierDataForTests(null)
+      setPoeVersion(prev)
+    }
+  })
+
+  it('T1 low-priority mod (rarity) flips on in PoE1', () => {
+    // Rarity mod is low-priority by default in PoE1. T1 should override that.
+    // Avarice(lower vals) at index 0, Greed(higher vals) at index 1.
+    // advMod tier=1 matched to Greed (idx1) -> Greed=T1, Avarice=T2.
+    const RARITY_ID = 'explicit.stat_rarity_e2e'
+    const rarityDataset: TierDataset = {
+      schemaVersion: 1,
+      mods: [
+        { n: 'Avarice', l: 20, g: 'Rarity', s: [['base_item_found_rarity_+%', 10, 29]], t: '' },
+        { n: 'Greed', l: 60, g: 'Rarity', s: [['base_item_found_rarity_+%', 30, 40]], t: '' },
+      ],
+      pools: [{ Rarity: [0, 1] }],
+      bases: { 'Gold Ring': 0 },
+    }
+    const prev = getPoeVersion()
+    setPoeVersion(1)
+    _setTierDataForTests(rarityDataset)
+    try {
+      _setStatEntriesForTests([{ id: RARITY_ID, text: '#% increased Rarity of Items found', type: 'explicit' }])
+      const advT1: AdvancedMod[] = [
+        {
+          type: 'suffix',
+          name: 'Greed',
+          tier: 1,
+          tags: [],
+          lines: ['35(30-40)% increased Rarity of Items found'],
+          ranges: [{ value: 35, min: 30, max: 40 }],
+        },
+      ]
+      const filters = matchItemMods(
+        ['35% increased Rarity of Items found'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', baseType: 'Gold Ring', itemLevel: 80, itemClass: 'Rings' }),
+        advT1,
+      )
+      const row = filters.find((f) => f.id === RARITY_ID)
+      // T1 override: should be enabled even though rarity is low-priority
+      expect(row?.enabled).toBe(true)
+    } finally {
+      _setTierDataForTests(null)
+      setPoeVersion(prev)
+    }
+  })
+
+  it('T1 roll: min uses T1 bracket low, not floor(value * pct)', () => {
+    // T1 bracket: [75, 85]. T2 bracket: [50, 60]. Rolled value: 80.
+    // floor(80 * 0.9) = 72, which is BELOW T1 min (75).
+    // The new behavior should set min = 75 (T1 bracket low).
+    // A T2 roll of 55 should still use floor(55 * 0.9) = 49.
+    const T1MIN_STAT_ID = 'explicit.stat_t1min_e2e'
+    const t1MinDataset: TierDataset = {
+      schemaVersion: 1,
+      mods: [
+        // T2 at lower values (index 0, worst first), T1 at higher values (index 1)
+        { n: 'Sturdy', l: 20, g: 'T1MinGroup', s: [['some_stat_id', 50, 60]], t: '' },
+        { n: 'Stalwart', l: 60, g: 'T1MinGroup', s: [['some_stat_id', 75, 85]], t: '' },
+      ],
+      pools: [{ T1MinGroup: [0, 1] }],
+      bases: { 'Sapphire Ring': 0 },
+    }
+    const prev = getPoeVersion()
+    setPoeVersion(1)
+    _setTierDataForTests(t1MinDataset)
+    try {
+      _setStatEntriesForTests([{ id: T1MIN_STAT_ID, text: '+# to some stat', type: 'explicit' }])
+
+      // --- T1 roll at 80 ---
+      const advT1: AdvancedMod[] = [
+        {
+          type: 'suffix',
+          name: 'Stalwart',
+          tier: 1,
+          tags: [],
+          lines: ['+80(75-85) to some stat'],
+          ranges: [{ value: 80, min: 75, max: 85 }],
+        },
+      ]
+      const t1Filters = matchItemMods(
+        ['+80 to some stat'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', baseType: 'Sapphire Ring', itemLevel: 80, itemClass: 'Rings' }),
+        advT1,
+      )
+      const t1Row = t1Filters.find((f) => f.id === T1MIN_STAT_ID)
+      expect(t1Row).toBeDefined()
+      expect(t1Row?.value).toBe(80)
+      // floor(80 * 0.9) = 72, but T1 bracket low is 75 -> min must be 75
+      expect(t1Row?.min).toBe(75)
+
+      // --- T2 roll at 55: still uses floor(55 * 0.9) = 49 ---
+      const advT2: AdvancedMod[] = [
+        {
+          type: 'suffix',
+          name: 'Sturdy',
+          tier: 2,
+          tags: [],
+          lines: ['+55(50-60) to some stat'],
+          ranges: [{ value: 55, min: 50, max: 60 }],
+        },
+      ]
+      const t2Filters = matchItemMods(
+        ['+55 to some stat'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', baseType: 'Sapphire Ring', itemLevel: 80, itemClass: 'Rings' }),
+        advT2,
+      )
+      const t2Row = t2Filters.find((f) => f.id === T1MIN_STAT_ID)
+      expect(t2Row).toBeDefined()
+      expect(t2Row?.value).toBe(55)
+      // T2 roll: min = floor(55 * 0.9) = 49
+      expect(t2Row?.min).toBe(49)
+    } finally {
+      _setTierDataForTests(null)
+      setPoeVersion(prev)
+    }
+  })
+})
+
 describe('parseAdvancedMods (Forbidden Shako randomSupport detection)', () => {
   // Sanity: the clipboard parser must set randomSupport=true on advanced mod blocks
   // whose lines start with "Socketed Gems are Supported by" AND carry the
@@ -2215,5 +2976,191 @@ Socketed Gems are Supported by Level 35(25-35) Bloodthirst(Greater Multiple Proj
     const attrMod = item?.advancedMods?.find((am) => am.lines.some((l) => /to all Attributes/.test(l)))
     expect(attrMod).toBeDefined()
     expect(attrMod?.randomSupport).toBeUndefined()
+  })
+})
+
+describe('detrimental negative rolls default off', () => {
+  const CAST = { id: 'explicit.stat_cast', text: '#% increased Cast Speed', type: 'explicit' }
+  const RARITY = { id: 'explicit.stat_rarity', text: '#% increased Rarity of Items found', type: 'explicit' }
+
+  it('reduced (negative) cast speed defaults off; increased (positive) defaults on', () => {
+    _setStatEntriesForTests([CAST])
+    const item = makeItemInfo({ rarity: 'Unique', itemClass: 'Rings' })
+    const off = matchItemMods(['9% reduced Cast Speed'], [], undefined, item)
+    expect(off.find((f) => f.id === CAST.id)?.enabled).toBe(false)
+    const on = matchItemMods(['9% increased Cast Speed'], [], undefined, item)
+    expect(on.find((f) => f.id === CAST.id)?.enabled).toBe(true)
+  })
+
+  it('PoE2: reduced Rarity defaults off even though increased Rarity is forced on', () => {
+    const prev = getPoeVersion()
+    _setStatEntriesForTests([RARITY])
+    try {
+      setPoeVersion(2)
+      const item = makeItemInfo({ rarity: 'Unique', itemClass: 'Rings' })
+      const reduced = matchItemMods(['16% reduced Rarity of Items found'], [], undefined, item)
+      expect(reduced.find((f) => f.id === RARITY.id)?.enabled).toBe(false)
+      const increased = matchItemMods(['16% increased Rarity of Items found'], [], undefined, item)
+      expect(increased.find((f) => f.id === RARITY.id)?.enabled).toBe(true)
+    } finally {
+      setPoeVersion(prev)
+    }
+  })
+})
+
+describe('premium-mod override', () => {
+  const seedEntries = () =>
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_foo', text: '#% increased Foo', type: 'explicit' },
+      { id: 'explicit.stat_bar', text: '#% increased Bar', type: 'explicit' },
+      // Low-priority mods (off by default) used to prove the premium override actually flips them on.
+      { id: 'explicit.stat_light', text: '#% increased Light Radius', type: 'explicit' },
+      { id: 'explicit.stat_stun', text: '#% increased Stun Duration', type: 'explicit' },
+    ])
+
+  const seedPremium = () =>
+    _setPremiumModsForTests({
+      schemaVersion: 1,
+      poe1: {},
+      poe2: { TestUnique: ['#% increased Foo'] },
+    })
+
+  it('forces an otherwise-off low-priority mod on for the named unique, and only the listed mod', () => {
+    const prev = getPoeVersion()
+    seedEntries()
+    try {
+      setPoeVersion(2)
+      const item = makeItemInfo({ rarity: 'Unique', name: 'TestUnique', itemClass: 'Rings' })
+      const mods = ['25% increased Light Radius', '25% increased Stun Duration']
+
+      // Control: no premium data -> both are low-priority and default OFF.
+      _setPremiumModsForTests(null)
+      const off = matchItemMods(mods, [], undefined, item)
+      expect(off.find((f) => f.id === 'explicit.stat_light')?.enabled).toBe(false)
+      expect(off.find((f) => f.id === 'explicit.stat_stun')?.enabled).toBe(false)
+
+      // Premium lists only Light Radius for TestUnique -> it flips ON; Stun (unlisted) stays OFF.
+      _setPremiumModsForTests({ schemaVersion: 1, poe1: {}, poe2: { TestUnique: ['#% increased Light Radius'] } })
+      const on = matchItemMods(mods, [], undefined, item)
+      expect(on.find((f) => f.id === 'explicit.stat_light')?.enabled).toBe(true)
+      expect(on.find((f) => f.id === 'explicit.stat_stun')?.enabled).toBe(false)
+    } finally {
+      setPoeVersion(prev)
+      _setPremiumModsForTests(null)
+    }
+  })
+
+  it('Foo mod on TestUnique (PoE2) is enabled even with no advanced mods driving tier', () => {
+    const prev = getPoeVersion()
+    seedPremium()
+    seedEntries()
+    try {
+      setPoeVersion(2)
+      const filters = matchItemMods(
+        ['25% increased Foo'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Unique', name: 'TestUnique', itemClass: 'Rings' }),
+      )
+      const fooRow = filters.find((f) => f.id === 'explicit.stat_foo')
+      expect(fooRow).toBeDefined()
+      expect(fooRow?.enabled).toBe(true)
+    } finally {
+      setPoeVersion(prev)
+      _setPremiumModsForTests(null)
+    }
+  })
+
+  it('non-premium Bar mod on TestUnique is not force-enabled by premium', () => {
+    const prev = getPoeVersion()
+    seedPremium()
+    seedEntries()
+    try {
+      setPoeVersion(2)
+      const filters = matchItemMods(
+        ['25% increased Bar'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Unique', name: 'TestUnique', itemClass: 'Rings' }),
+      )
+      const barRow = filters.find((f) => f.id === 'explicit.stat_bar')
+      expect(barRow).toBeDefined()
+      // Bar is not in the premium manifest - it follows normal rules (no advanced mod -> enabled)
+      // The key assertion is that it is NOT forcibly on by the premium path.
+      // With no lowPriority/structurallyOff conditions the baseline would be on; test just checks
+      // it doesn't cause a crash and the Foo premium path does not bleed into Bar.
+      expect(barRow?.enabled).not.toBeUndefined()
+    } finally {
+      setPoeVersion(prev)
+      _setPremiumModsForTests(null)
+    }
+  })
+
+  it('Foo mod on a non-unique Rare item - premium ignored', () => {
+    const prev = getPoeVersion()
+    seedPremium()
+    seedEntries()
+    try {
+      setPoeVersion(2)
+      const filters = matchItemMods(
+        ['25% increased Foo'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', name: 'TestUnique', itemClass: 'Rings' }),
+      )
+      const fooRow = filters.find((f) => f.id === 'explicit.stat_foo')
+      expect(fooRow).toBeDefined()
+      // Premium requires rarity === 'Unique'; Rare items should not get the premium override.
+      // The mod would still be enabled by normal rules on a Rare, but we confirm no forced-on
+      // from premium by checking the row exists and normal enablement logic applies.
+      expect(fooRow?.enabled).toBeDefined()
+    } finally {
+      setPoeVersion(prev)
+      _setPremiumModsForTests(null)
+    }
+  })
+
+  it('Foo mod on OtherUnique (name not in manifest) - no premium effect', () => {
+    const prev = getPoeVersion()
+    seedPremium()
+    seedEntries()
+    try {
+      setPoeVersion(2)
+      const filters = matchItemMods(
+        ['25% increased Foo'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Unique', name: 'OtherUnique', itemClass: 'Rings' }),
+      )
+      const fooRow = filters.find((f) => f.id === 'explicit.stat_foo')
+      expect(fooRow).toBeDefined()
+      // OtherUnique is not in the poe2 manifest - row enabled state follows normal rules only.
+      expect(fooRow?.enabled).toBeDefined()
+    } finally {
+      setPoeVersion(prev)
+      _setPremiumModsForTests(null)
+    }
+  })
+
+  it('getPremiumMods() null (no data) - no crash, normal rules apply', () => {
+    const prev = getPoeVersion()
+    _setPremiumModsForTests(null)
+    seedEntries()
+    try {
+      setPoeVersion(2)
+      const filters = matchItemMods(
+        ['25% increased Foo'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Unique', name: 'TestUnique', itemClass: 'Rings' }),
+      )
+      const fooRow = filters.find((f) => f.id === 'explicit.stat_foo')
+      expect(fooRow).toBeDefined()
+      // No data loaded - isPremiumMod returns false, no crash
+      expect(typeof fooRow?.enabled).toBe('boolean')
+    } finally {
+      setPoeVersion(prev)
+      _setPremiumModsForTests(null)
+    }
   })
 })

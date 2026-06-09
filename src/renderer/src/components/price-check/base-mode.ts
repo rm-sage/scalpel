@@ -32,6 +32,15 @@ export function shouldIncludeImplicitsInBase(rarity: string, corrupted: boolean)
   return rarity !== 'Unique' || corrupted
 }
 
+/** A unique explicit rolled at or above its best possible value -- perfect, or over-rolled
+ *  (Vaal/corruption) above the listed max or single value. The producer flags these via
+ *  `perfectRoll` (it owns the authoritative roll range). Base mode auto-enables them so the
+ *  default search prices the best-roll copy (issue #378). Like foulborn, they count as part
+ *  of the base signature, so the Base-state detector excludes them. */
+export function isPerfectUniqueRoll(f: StatFilter, rarity: string): boolean {
+  return rarity === 'Unique' && !!f.perfectRoll
+}
+
 /**
  * Transforms a filter list to the "Base" search state:
  *   - basetype enabled
@@ -40,6 +49,7 @@ export function shouldIncludeImplicitsInBase(rarity: string, corrupted: boolean)
  *     ilvl just over-constrains the search and filters out valid listings
  *   - implicits/enchants enabled only if useful (non-unique or corrupted unique)
  *   - foulborn mods enabled on uniques
+ *   - perfect-or-over-rolled unique explicits enabled, pinned to their exact roll (issue #378)
  *   - socket/misc/timeless/fractured/currency/heist left unchanged
  *   - learned chips (set by the adaptive-defaults engine) preserved as-is
  *   - everything else disabled (explicit, pseudo, defence, weapon, etc)
@@ -67,6 +77,14 @@ export function applyBaseModeToFilters(
     // (incl. beneficial-negative max) are already set by the producer, so only flip enabled.
     if (opts.keepExplicits && f.type === 'explicit') return { ...f, enabled: true }
     if (isUnique && f.foulborn) return { ...f, enabled: true }
+    // Uniques: a mod at or above its best possible roll (perfect, or over-rolled by
+    // Vaal/corruption) is what makes this copy worth more, so enable it by default pinned
+    // to that exact roll -- the search then finds equally-good-or-better copies. A learned
+    // chip already returned above, so this defers to the user's own decision (issue #378).
+    if (isPerfectUniqueRoll(f, rarity)) return { ...f, enabled: true, min: f.value, max: null }
+    // Premium mods (curated per-unique chase mods) are part of the base signature -- keep
+    // them ticked through Base mode, otherwise the override computed in main is clobbered.
+    if (f.premium) return { ...f, enabled: true }
     if (
       f.type === 'socket' ||
       f.type === 'misc' ||

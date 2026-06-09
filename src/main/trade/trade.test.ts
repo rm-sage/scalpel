@@ -88,8 +88,11 @@ vi.mock('./stat-matcher', async (orig) => {
 
 import {
   buildGemTypeField,
+  buildRegexStatGroups,
   isBulkExchangeItem,
   searchTrade,
+  searchTabletsByRegex,
+  searchWaystonesByRegex,
   searchNeedsLogin,
   stripTradeTokens,
   _resetRateLimitsForTests,
@@ -490,6 +493,64 @@ describe('searchTrade filter-group dispatch', () => {
     expect(miscFilters).toBeDefined()
     expect(miscFilters.filters.unidentified_tier).toEqual({ min: 2, max: 4 })
   })
+
+  it('PoE1 enabled weapon.damage filter lands under weapon_filters.damage', async () => {
+    setPoeVersion(1)
+    const sword = {
+      name: '',
+      baseType: 'Jewelled Foil',
+      itemClass: 'Thrusting One Hand Swords',
+      rarity: 'Rare',
+    }
+    const damageFilter: StatFilter[] = [
+      {
+        id: 'weapon.damage',
+        text: 'Damage: 200',
+        type: 'weapon',
+        enabled: true,
+        value: 200,
+        min: 180,
+        max: null,
+        aggregated: true,
+      },
+    ]
+    await searchTrade('Mirage', sword, damageFilter, { tradeStatus: 'any', tradePriceOption: 'chaos_divine' })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    expect(body.query.filters.weapon_filters).toBeDefined()
+    expect(body.query.filters.weapon_filters.filters.damage).toEqual({ min: 180 })
+  })
+
+  it('PoE2 enabled weapon.damage filter lands under equipment_filters.damage', async () => {
+    setPoeVersion(2)
+    const quarterstaff = {
+      name: '',
+      baseType: 'Slicing Quarterstaff',
+      itemClass: 'Quarterstaves',
+      rarity: 'Rare',
+    }
+    const damageFilter: StatFilter[] = [
+      {
+        id: 'weapon.damage',
+        text: 'Damage: 200',
+        type: 'weapon',
+        enabled: true,
+        value: 200,
+        min: 180,
+        max: null,
+        aggregated: true,
+      },
+    ]
+    await searchTrade('Fate of the Vaal', quarterstaff, damageFilter, {
+      tradeStatus: 'any',
+      tradePriceOption: 'exalted_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    expect(body.query.filters.equipment_filters).toBeDefined()
+    expect(body.query.filters.equipment_filters.filters.damage).toEqual({ min: 180 })
+    expect(body.query.filters.weapon_filters).toBeUndefined()
+  })
 })
 
 describe('searchTrade pseudo emission', () => {
@@ -720,5 +781,411 @@ describe('isBulkExchangeItem (PoE2 slug-gated routing)', () => {
     // Panther Idol is class-eligible (Idols) but isn't on the exchange / has no
     // slug -- it should fall through to regular search (AngeBanner still shows).
     expect(isBulkExchangeItem('Idols', 'Panther Idol', 'Panther Idol')).toBe(false)
+  })
+})
+
+describe('buildRegexStatGroups', () => {
+  beforeEach(() => {
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_avoid_one', text: 'Players cannot Regenerate Life', type: 'explicit' },
+      { id: 'explicit.stat_want_one', text: 'Area contains # additional packs', type: 'explicit' },
+    ])
+  })
+
+  it('avoid text produces a single not group with the resolved filter', () => {
+    const groups = buildRegexStatGroups(['Players cannot Regenerate Life'], [], 'any')
+    expect(groups).toHaveLength(1)
+    expect(groups[0].type).toBe('not')
+    expect(groups[0].filters).toEqual([{ id: 'explicit.stat_avoid_one', value: {} }])
+    expect(groups[0].value).toBeUndefined()
+  })
+
+  it('want text with wantMode any produces a count group with value { min: 1 }', () => {
+    const groups = buildRegexStatGroups([], ['Area contains # additional packs'], 'any')
+    expect(groups).toHaveLength(1)
+    expect(groups[0].type).toBe('count')
+    expect(groups[0].filters).toEqual([{ id: 'explicit.stat_want_one', value: {} }])
+    expect(groups[0].value).toEqual({ min: 1 })
+  })
+
+  it('want text with wantMode all produces an and group with no value field', () => {
+    const groups = buildRegexStatGroups([], ['Area contains # additional packs'], 'all')
+    expect(groups).toHaveLength(1)
+    expect(groups[0].type).toBe('and')
+    expect(groups[0].filters).toEqual([{ id: 'explicit.stat_want_one', value: {} }])
+    expect(groups[0].value).toBeUndefined()
+  })
+
+  it('unresolved text is dropped and produces no groups', () => {
+    const groups = buildRegexStatGroups(['This mod text does not exist anywhere'], [], 'any')
+    expect(groups).toEqual([])
+  })
+
+  it('modTextOverrides maps a poe.re text to the correct trade API stat', () => {
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_grasping_vine', text: 'Monsters inflict # Grasping Vine on Hit', type: 'explicit' },
+    ])
+    const groups = buildRegexStatGroups(['Monsters inflict # Grasping Vines on Hit'], [], 'any', {
+      'Monsters inflict # Grasping Vines on Hit': 'Monsters inflict # Grasping Vine on Hit',
+    })
+    expect(groups).toHaveLength(1)
+    expect(groups[0].type).toBe('not')
+    expect(groups[0].filters[0].id).toBe('explicit.stat_grasping_vine')
+  })
+
+  it('custom resolveText replaces the default matchModToStat-based resolver', () => {
+    // Seeding a stat that would match by default, but the custom resolver returns a
+    // completely different id -- verifies the override replaces, not augments.
+    _setStatEntriesForTests([{ id: 'explicit.stat_default', text: 'Players cannot Regenerate Life', type: 'explicit' }])
+    const customResolver = (_text: string) => 'explicit.stat_custom_id'
+    const groups = buildRegexStatGroups([], ['Players cannot Regenerate Life'], 'any', {}, customResolver)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].type).toBe('count')
+    expect(groups[0].filters[0].id).toBe('explicit.stat_custom_id')
+  })
+})
+
+describe('searchWaystonesByRegex', () => {
+  beforeEach(() => {
+    capturedRequests.length = 0
+    _resetRateLimitsForTests()
+    setPoeVersion(2)
+  })
+
+  it('routes to map.waystone with tier map_filter and corrupted misc_filter', async () => {
+    await searchWaystonesByRegex(
+      'Standard',
+      14,
+      [],
+      [],
+      'any',
+      {},
+      {},
+      {
+        corrupted: true,
+        uncorrupted: false,
+        delirious: false,
+        anyPack: false,
+      },
+      { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    expect(req).toBeDefined()
+    const body = parseCapturedBody(req)
+    expect(body.query.filters.type_filters.filters.category).toEqual({ option: 'map.waystone' })
+    expect((body.query.filters as any).map_filters.filters.map_tier).toEqual({ min: 14, max: 14 })
+    expect((body.query.filters as any).misc_filters.filters.corrupted).toEqual({ option: 'true' })
+  })
+
+  it('matches the exact waystone stat, not a tablet-scoped fuzzy match', async () => {
+    // Regression: "#% increased Magic Monsters" must resolve to the plain waystone stat,
+    // not the breach/tablet "Breaches in your Maps spawn #% increased Magic Monsters".
+    // The raw-first resolver matches the placeholder form exactly; strip-first would
+    // fuzzy-match the longer scoped stat.
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_mm', text: '#% increased Magic Monsters', type: 'explicit' },
+      { id: 'explicit.stat_breach', text: 'Breaches in your Maps spawn #% increased Magic Monsters', type: 'explicit' },
+    ])
+    await searchWaystonesByRegex(
+      'Standard',
+      14,
+      [],
+      ['#% increased Magic Monsters|Area has patches of Ignited Ground'],
+      'any',
+      {},
+      {},
+      {
+        corrupted: false,
+        uncorrupted: false,
+        delirious: false,
+        anyPack: false,
+      },
+      { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const countGroup = body.query.stats.find((g: { type: string }) => g.type === 'count') as
+      | { filters: Array<{ id: string }> }
+      | undefined
+    expect(countGroup?.filters).toEqual([{ id: 'explicit.stat_mm', value: {} }])
+  })
+
+  it('omits misc_filters entirely when neither corrupted nor uncorrupted is set', async () => {
+    await searchWaystonesByRegex(
+      'Standard',
+      10,
+      [],
+      [],
+      'any',
+      {},
+      {},
+      {
+        corrupted: false,
+        uncorrupted: false,
+        delirious: false,
+        anyPack: false,
+      },
+      { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    expect(req).toBeDefined()
+    const body = parseCapturedBody(req)
+    expect((body.query.filters as any).misc_filters).toBeUndefined()
+  })
+
+  it('sets corrupted option to false when uncorrupted only', async () => {
+    await searchWaystonesByRegex(
+      'Standard',
+      5,
+      [],
+      [],
+      'any',
+      {},
+      {},
+      {
+        corrupted: false,
+        uncorrupted: true,
+        delirious: false,
+        anyPack: false,
+      },
+      { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    expect(req).toBeDefined()
+    const body = parseCapturedBody(req)
+    expect((body.query.filters as any).misc_filters.filters.corrupted).toEqual({ option: 'false' })
+  })
+
+  it('does NOT send Quantity & yield thresholds to trade (disabled for now)', async () => {
+    await searchWaystonesByRegex(
+      'Standard',
+      14,
+      [],
+      [],
+      'any',
+      {},
+      {},
+      { corrupted: false, uncorrupted: false, delirious: false, anyPack: false },
+      { packSize: 50, monsterEffectiveness: 30, monsterRarity: 25, itemRarity: 40, dropChance: 200 },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const mapFilters = (parseCapturedBody(req).query.filters as any).map_filters.filters
+    // Only tier is sent; quantity map_filters are commented out in searchWaystonesByRegex.
+    expect(mapFilters).toEqual({ map_tier: { min: 14, max: 14 } })
+  })
+
+  it('empty texts produce the empty and stats group fallback', async () => {
+    await searchWaystonesByRegex(
+      'Standard',
+      14,
+      [],
+      [],
+      'any',
+      {},
+      {},
+      {
+        corrupted: false,
+        uncorrupted: false,
+        delirious: false,
+        anyPack: false,
+      },
+      { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    expect(body.query.stats).toEqual([{ type: 'and', filters: [] }])
+  })
+
+  it('any-mode folds delirious into the want count group (matches regex OR semantics)', async () => {
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_dmg', text: '#% increased Monster Damage', type: 'explicit' },
+      { id: 'explicit.stat_delir', text: 'Players in Area are Delirious', type: 'explicit' },
+    ])
+    await searchWaystonesByRegex(
+      'Standard',
+      14,
+      [],
+      ['#% increased Monster Damage'],
+      'any',
+      {},
+      {},
+      { corrupted: false, uncorrupted: false, delirious: true, anyPack: false },
+      { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const body = parseCapturedBody(capturedRequests.find((r) => r.url.includes('/search/')))
+    const countGroup = body.query.stats.find((g: { type: string }) => g.type === 'count') as
+      | { filters: Array<{ id: string }> }
+      | undefined
+    // Delirious rides in the count group (optional, part of the any-set), not a separate required group.
+    expect(countGroup?.filters.map((f) => f.id).sort()).toEqual(['explicit.stat_delir', 'explicit.stat_dmg'])
+    expect(body.query.stats.some((g: { type: string }) => g.type === 'and' && (g as any).filters.length > 0)).toBe(
+      false,
+    )
+  })
+
+  it('all-mode keeps delirious as a separate required and group', async () => {
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_dmg', text: '#% increased Monster Damage', type: 'explicit' },
+      { id: 'explicit.stat_delir', text: 'Players in Area are Delirious', type: 'explicit' },
+    ])
+    await searchWaystonesByRegex(
+      'Standard',
+      14,
+      [],
+      ['#% increased Monster Damage'],
+      'all',
+      {},
+      {},
+      { corrupted: false, uncorrupted: false, delirious: true, anyPack: false },
+      { packSize: null, monsterEffectiveness: null, monsterRarity: null, itemRarity: null, dropChance: null },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const body = parseCapturedBody(capturedRequests.find((r) => r.url.includes('/search/')))
+    // In all-mode delirious is a required term: its own `and` group holding just the delir stat.
+    expect(
+      body.query.stats.some(
+        (g: { type: string; filters: Array<{ id: string }> }) =>
+          g.type === 'and' && g.filters.length === 1 && g.filters[0].id === 'explicit.stat_delir',
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('searchTabletsByRegex', () => {
+  beforeEach(() => {
+    capturedRequests.length = 0
+    _resetRateLimitsForTests()
+    setPoeVersion(2)
+  })
+
+  it('routes to map.tablet with magic rarity, want count group, no not group', async () => {
+    // "#% increased pack size in map" is a real key in tablet-mods.json;
+    // normalizeTabletModKey("20% increased Pack Size in Map") -> "#% increased pack size in map"
+    // which maps to "explicit.stat_2017682521".
+    await searchTabletsByRegex(
+      'Standard',
+      ['20% increased Pack Size in Map'],
+      'any',
+      {},
+      { normal: false, magic: true },
+      {},
+      { enabled: false, value: 1 },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    expect(req).toBeDefined()
+    const body = parseCapturedBody(req)
+    expect(body.query.filters.type_filters.filters.category).toEqual({ option: 'map.tablet' })
+    expect(body.query.filters.type_filters.filters.rarity).toEqual({ option: 'magic' })
+    const countGroup = body.query.stats.find((g: { type: string }) => g.type === 'count')
+    expect(countGroup).toBeDefined()
+    expect((countGroup as any).value).toEqual({ min: 1 })
+    expect(body.query.stats.every((g: { type: string }) => g.type !== 'not')).toBe(true)
+  })
+
+  it('resolves a mod that only matches after stripping " in Map" scoping', async () => {
+    // A mod absent from tablet-mods.json whose live stat text lacks the " in Map"
+    // scoping the tablet clipboard carries. The raw text must miss; the strip fallback
+    // (stripTabletMapScoping, placeholders kept) must resolve it to the seeded stat.
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_womb', text: '#% increased Quantity of Wombgifts found', type: 'explicit' },
+    ])
+    await searchTabletsByRegex(
+      'Standard',
+      ['#% increased Quantity of Wombgifts found in Map'],
+      'any',
+      {},
+      { normal: false, magic: false },
+      {},
+      { enabled: false, value: 1 },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const countGroup = body.query.stats.find((g: { type: string }) => g.type === 'count') as
+      | { filters: Array<{ id: string }> }
+      | undefined
+    expect(countGroup?.filters).toEqual([{ id: 'explicit.stat_womb', value: {} }])
+  })
+
+  it('single type flag sets query.type to the base name', async () => {
+    await searchTabletsByRegex(
+      'Standard',
+      [],
+      'any',
+      {},
+      { normal: false, magic: true },
+      { breach: true },
+      { enabled: false, value: 1 },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    expect(body.query.type).toBe('Breach Tablet')
+  })
+
+  it('multiple type flags leave query.type unset', async () => {
+    await searchTabletsByRegex(
+      'Standard',
+      [],
+      'any',
+      {},
+      { normal: false, magic: true },
+      { breach: true, delirium: true },
+      { enabled: false, value: 1 },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    expect(body.query.type).toBeUndefined()
+  })
+
+  it('no rarity flag omits rarity from type_filters', async () => {
+    await searchTabletsByRegex(
+      'Standard',
+      [],
+      'any',
+      {},
+      { normal: false, magic: false },
+      {},
+      { enabled: false, value: 1 },
+      'any',
+      'exalted_divine',
+      true,
+    )
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    expect(body.query.filters.type_filters.filters.rarity).toBeUndefined()
   })
 })

@@ -1,4 +1,5 @@
 import { app, net } from 'electron'
+import tabletModMap from '../../shared/data/trade/tablet-mods.json'
 import { TRANSFIGURED_GEM_DISC } from '../../shared/data/trade/transfigured-gems'
 import { getTradeUrls } from '../../shared/endpoints'
 import { isClusterJewel, isSkillGem } from '../../shared/poe-item'
@@ -6,6 +7,7 @@ import { getPoeVersion } from '../game-state'
 import { getOverlayWindow } from '../overlay'
 import { harvestIcons } from './icon-cache'
 import { adjustRateLimits, RateLimiter } from './rate-limiter'
+import { normalizeTabletModKey, stripTabletMapScoping } from './stat-matcher/producers/tablets'
 
 /** Forward any newly-harvested name->icon pairs to the overlay so it can merge
  *  them into the in-session iconMap. Without this the renderer would only pick
@@ -25,7 +27,13 @@ function broadcastTradePenalty(untilEpochMs: number): void {
 }
 
 // Re-export stat-matcher functions so existing importers don't need to change
-export { ensureStatsLoaded, ITEM_CLASS_TO_CATEGORY, matchItemMods, matchModToStat } from './stat-matcher'
+export {
+  _setStatEntriesForTests,
+  ensureStatsLoaded,
+  ITEM_CLASS_TO_CATEGORY,
+  matchItemMods,
+  matchModToStat,
+} from './stat-matcher'
 
 // ─── Version-specific trade dialect ──────────────────────────────────────────
 //
@@ -186,6 +194,13 @@ export interface StatFilter {
   displayValue?: string
   timelessLeaders?: string[] // all leader stat IDs for timeless count group
   foulborn?: boolean
+  /** True when a unique mod rolled at or above its best possible value (perfect, or
+   *  over-rolled by Vaal/corruption above the listed max / single value). Drives the
+   *  price-check default-enable for uniques (issue #378). */
+  perfectRoll?: boolean
+  /** True when this mod is a curated "premium" mod for the item's unique name (premium-mods
+   *  manifest). Force-enabled by default and preserved through Base mode like foulborn/perfectRoll. */
+  premium?: boolean
   modTier?: number // mod tier if known (from advanced mod data)
   modRange?: { min: number; max: number } // possible roll range for this mod
   /** Resolved tier ladder for scrubbable affixes (single-stat or trade-averaged,
@@ -631,6 +646,7 @@ export async function searchTrade(
       'weapon.dps': 'dps',
       'weapon.aps': 'aps',
       'weapon.crit': 'crit',
+      'weapon.damage': 'damage',
     }
     for (const f of weaponDpsFilters) {
       const key = idMap[f.id]
@@ -1425,6 +1441,78 @@ async function fetchAndMapListings(ids: string[], queryId: string): Promise<Trad
 
 // ─── Map Regex Trade Search ─────────────────────────────────────────────────
 
+// poe.re text -> trade API text overrides for mods with different wording
+const MAP_MOD_TEXT_OVERRIDES: Record<string, string> = {
+  'Monsters inflict # Grasping Vines on Hit': 'Monsters inflict # Grasping Vine on Hit',
+  'Players are targeted by a Meteor when they use a Flask':
+    'Players have #% chance to be targeted by a Meteor when they use a Flask',
+  'Rare Monsters have Volatile Cores': 'Rare Monsters have #% chance to have a Volatile Core',
+}
+
+/** Convert want/avoid mod texts to trade-API stat groups.
+ *  Compound mods use | separators and are tried part by part.
+ *  Unresolvable texts are silently dropped.
+ *  The optional `resolveText` param replaces the default matchModToStat-based
+ *  resolver; when omitted, behavior is identical to before. */
+export function buildRegexStatGroups(
+  avoidTexts: string[],
+  wantTexts: string[],
+  wantMode: 'any' | 'all',
+  modTextOverrides: Record<string, string> = {},
+  resolveText?: (text: string) => string | null,
+): Array<{
+  type: string
+  filters: Array<{ id: string; value: Record<string, unknown> }>
+  value?: Record<string, unknown>
+}> {
+  const defaultResolver = (text: string): string | null => {
+    const parts = text.split('|')
+    for (const part of parts) {
+      const p = part.trim()
+      const overridden = modTextOverrides[p]
+      if (overridden) {
+        const result = matchModToStat(overridden, false, 'explicit')
+        if (result) return result.statId
+      }
+      const cleaned = p.replace(/#%?/g, '').trim()
+      const result = matchModToStat(cleaned, false, 'explicit') ?? matchModToStat(p, false, 'explicit')
+      if (result) return result.statId
+    }
+    return null
+  }
+  const resolver = resolveText ?? defaultResolver
+
+  const avoidFilters = avoidTexts.flatMap((t) => {
+    const statId = resolver(t)
+    return statId ? [{ id: statId, value: {} }] : []
+  })
+
+  const wantFilters = wantTexts.flatMap((t) => {
+    const statId = resolver(t)
+    return statId ? [{ id: statId, value: {} }] : []
+  })
+
+  const statGroups: Array<{
+    type: string
+    filters: Array<{ id: string; value: Record<string, unknown> }>
+    value?: Record<string, unknown>
+  }> = []
+
+  if (avoidFilters.length > 0) {
+    statGroups.push({ type: 'not', filters: avoidFilters })
+  }
+
+  if (wantFilters.length > 0) {
+    if (wantMode === 'all') {
+      statGroups.push({ type: 'and', filters: wantFilters })
+    } else {
+      statGroups.push({ type: 'count', filters: wantFilters, value: { min: 1 } })
+    }
+  }
+
+  return statGroups
+}
+
 export async function searchMapsByRegex(
   league: string,
   tier: number,
@@ -1442,61 +1530,7 @@ export async function searchMapsByRegex(
   await _ensureStatsLoaded()
   const dialect = TRADE_DIALECTS[getPoeVersion()]
 
-  // poe.re text -> trade API text overrides for mods with different wording
-  const modTextOverrides: Record<string, string> = {
-    'Monsters inflict # Grasping Vines on Hit': 'Monsters inflict # Grasping Vine on Hit',
-    'Players are targeted by a Meteor when they use a Flask':
-      'Players have #% chance to be targeted by a Meteor when they use a Flask',
-    'Rare Monsters have Volatile Cores': 'Rare Monsters have #% chance to have a Volatile Core',
-  }
-
-  // Match mod texts to trade stat IDs
-  // Compound mods use | separators - try each part individually
-  const matchMod = (text: string) => {
-    const parts = text.split('|')
-    for (const part of parts) {
-      const p = part.trim()
-      const overridden = modTextOverrides[p]
-      if (overridden) {
-        const result = matchModToStat(overridden, false, 'explicit')
-        if (result) return result
-      }
-      const cleaned = p.replace(/#%?/g, '').trim()
-      const result = matchModToStat(cleaned, false, 'explicit') ?? matchModToStat(p, false, 'explicit')
-      if (result) return result
-    }
-    return null
-  }
-
-  const avoidFilters = avoidTexts.flatMap((t) => {
-    const match = matchMod(t)
-    return match?.statId ? [{ id: match.statId, value: {} }] : []
-  })
-
-  const wantFilters = wantTexts.flatMap((t) => {
-    const match = matchMod(t)
-    return match?.statId ? [{ id: match.statId, value: {} }] : []
-  })
-
-  const statGroups: Array<{
-    type: string
-    filters: Array<{ id: string; value: Record<string, unknown> }>
-    value?: Record<string, unknown>
-  }> = []
-
-  // Avoid mods -> "not" group
-  if (avoidFilters.length > 0) {
-    statGroups.push({ type: 'not', filters: avoidFilters })
-  }
-
-  // Want mods -> "and" or "count" group
-  if (wantFilters.length > 0) {
-    if (wantMode === 'all') {
-      statGroups.push({ type: 'and', filters: wantFilters })
-    } else {
-      statGroups.push({ type: 'count', filters: wantFilters, value: { min: 1 } })
-    }
-  }
+  const statGroups = buildRegexStatGroups(avoidTexts, wantTexts, wantMode, MAP_MOD_TEXT_OVERRIDES)
 
   // Qualifier filters as map stat requirements
   const mapFilterObj: Record<string, unknown> = {
@@ -1585,4 +1619,234 @@ export async function fetchMoreListings(
   const batch = ids.slice(0, 10)
   const listings = await fetchAndMapListings(batch, queryId)
   return { listings, remainingIds: ids.slice(10) }
+}
+
+// ─── Waystone Regex Trade Search ────────────────────────────────────────────
+
+/** Waystone mod text -> trade stat id. Tries the RAW placeholder-preserving text
+ *  first, then the number-stripped form as a fallback. Order matters: stripping the
+ *  `#%` placeholder lets matchModToStat fuzzy-match a longer wrong stat -- e.g.
+ *  "increased Magic Monsters" resolves to the breach/tablet "Breaches in your Maps
+ *  spawn #% increased Magic Monsters" instead of the exact waystone "#% increased
+ *  Magic Monsters". The raw text matches the exact stat. Waystone mod texts carry
+ *  `#`/`#%` placeholders (not literal rolls), so the raw form matches directly; the
+ *  default maps resolver keeps strip-first because map texts can carry literal numbers. */
+function resolveWaystoneText(text: string): string | null {
+  for (const part of text.split('|')) {
+    const p = part.trim()
+    const r = matchModToStat(p, false, 'explicit') ?? matchModToStat(p.replace(/#%?/g, '').trim(), false, 'explicit')
+    if (r?.statId) return r.statId
+  }
+  return null
+}
+
+export async function searchWaystonesByRegex(
+  league: string,
+  tier: number,
+  avoidTexts: string[],
+  wantTexts: string[],
+  wantMode: 'any' | 'all',
+  wantValues: Record<number, number>,
+  avoidValues: Record<number, number>,
+  qualifiers: {
+    corrupted: boolean
+    uncorrupted: boolean
+    delirious: boolean
+    anyPack: boolean
+  },
+  quantities: {
+    packSize: number | null
+    monsterEffectiveness: number | null
+    monsterRarity: number | null
+    itemRarity: number | null
+    dropChance: number | null
+  },
+  tradeStatus: string,
+  tradePriceOption: string,
+  collapseListings = true,
+): Promise<TradeResult> {
+  // Per-mod magnitude thresholds are NOT sent to the trade search: buildRegexStatGroups
+  // emits value:{} (stat presence only), so the buy search matches any roll even though
+  // the generated regex encodes the >= threshold. Wiring min values is a follow-up.
+  void wantValues
+  void avoidValues
+  await _ensureStatsLoaded()
+  const dialect = TRADE_DIALECTS[getPoeVersion()]
+  const statGroups = buildRegexStatGroups(avoidTexts, wantTexts, wantMode, {}, resolveWaystoneText)
+
+  // Best-effort delirious/anyPack qualifiers, matched via matchModToStat (the stat DB
+  // strips the numeric roll, so the placeholder-free text is what we match against).
+  const special: Array<{ id: string; value: Record<string, unknown> }> = []
+  for (const text of [
+    qualifiers.delirious ? 'Players in Area are Delirious' : null,
+    qualifiers.anyPack ? 'Area contains additional packs of Monsters' : null,
+  ]) {
+    if (!text) continue
+    const m = matchModToStat(text, false, 'explicit')
+    if (m?.statId) special.push({ id: m.statId, value: {} })
+  }
+  // Match the regex's grouping so trade and regex agree: in "any" mode the regex
+  // OR-joins delir/al-pac into the good group, so fold them into the want `count`
+  // group (optional, part of the any-set) rather than a separate required `and`
+  // group. In "all" mode the regex makes each a required term, so a separate `and`
+  // group is correct.
+  if (special.length > 0) {
+    const countGroup = wantMode === 'any' ? statGroups.find((g) => g.type === 'count') : undefined
+    if (countGroup) countGroup.filters.push(...special)
+    else if (wantMode === 'any') statGroups.push({ type: 'count', filters: special, value: { min: 1 } })
+    else statGroups.push({ type: 'and', filters: special })
+  }
+
+  const miscQuery: Record<string, unknown> = {}
+  if (qualifiers.corrupted && !qualifiers.uncorrupted) miscQuery.corrupted = { option: 'true' }
+  if (qualifiers.uncorrupted && !qualifiers.corrupted) miscQuery.corrupted = { option: 'false' }
+
+  const mapFilters: Record<string, unknown> = { map_tier: { min: tier, max: tier } }
+  // Quantity & yield -> map_filters is DISABLED for now (not behaving on the trade
+  // side yet); the fields still drive the regex output. Re-enable by uncommenting:
+  //   const quantityFilterKeys: Array<[keyof typeof quantities, string]> = [
+  //     ['packSize', 'map_packsize'],
+  //     ['itemRarity', 'map_iir'],
+  //     ['dropChance', 'map_bonus'],
+  //   ]
+  //   for (const [key, filterId] of quantityFilterKeys) {
+  //     const v = quantities[key]
+  //     if (v && v > 0) mapFilters[filterId] = { min: v }
+  //   }
+  void quantities
+
+  const query: Record<string, unknown> = {
+    status: { option: tradeStatus },
+    stats: statGroups.length > 0 ? statGroups : [{ type: 'and', filters: [] }],
+    filters: {
+      type_filters: { disabled: false, filters: { category: { option: 'map.waystone' } } },
+      map_filters: { disabled: false, filters: mapFilters },
+      ...(Object.keys(miscQuery).length > 0 ? { misc_filters: { disabled: false, filters: miscQuery } } : {}),
+      trade_filters: {
+        disabled: false,
+        filters: {
+          ...(tradePriceOption === dialect.priceDivinePair
+            ? { price: { min: null, max: null, option: tradePriceOption } }
+            : {}),
+          ...(collapseListings ? { collapse: { option: 'true' } } : {}),
+        },
+      },
+    },
+  }
+
+  const searchResult = (await fetchJson(getTradeUrls(getPoeVersion()).search(league), {
+    method: 'POST',
+    body: JSON.stringify({ query, sort: { price: 'asc' } }),
+  })) as TradeSearchResult
+
+  if (!searchResult.result || searchResult.result.length === 0) {
+    return { total: searchResult.total ?? 0, listings: [], queryId: searchResult.id ?? '', remainingIds: [] }
+  }
+
+  const listings = await fetchAndMapListings(searchResult.result.slice(0, 10), searchResult.id)
+  return {
+    total: searchResult.total ?? 0,
+    listings,
+    queryId: searchResult.id ?? '',
+    remainingIds: searchResult.result.slice(10),
+  }
+}
+
+// ─── Tablet Regex Trade Search ──────────────────────────────────────────────
+
+const TABLET_MOD_LOOKUP = tabletModMap as Record<string, string>
+
+const TABLET_TYPE_BASE_NAMES: Record<string, string> = {
+  breach: 'Breach Tablet',
+  delirium: 'Delirium Tablet',
+  expedition: 'Expedition Tablet',
+  ritual: 'Ritual Tablet',
+  overseer: 'Overseer Tablet',
+  irradiated: 'Irradiated Tablet',
+}
+
+/** Tablet text -> trade stat id. tablet-mods.json first (handles the "...in Map"
+ *  clipboard phrasing for mods present in that table), then raw matchModToStat, then a
+ *  fallback that strips the map-scoping phrasing and retries - this catches mods newer
+ *  than the tablet-mods.json snapshot whose only difference from the live stat text is
+ *  the " in Map" scoping (e.g. Wombgift / Rare Breach Monster / Vruun lines). */
+function resolveTabletText(text: string): string | null {
+  for (const part of text.split('|')) {
+    const p = part.trim()
+    const mapped = TABLET_MOD_LOOKUP[normalizeTabletModKey(p)]
+    if (mapped) return mapped
+    const cleaned = p.replace(/#%?/g, '').trim()
+    const r = matchModToStat(cleaned, false, 'explicit') ?? matchModToStat(p, false, 'explicit')
+    if (r?.statId) return r.statId
+    const stripped = stripTabletMapScoping(p)
+    if (stripped !== p) {
+      const sr = matchModToStat(stripped, false, 'explicit')
+      if (sr?.statId) return sr.statId
+    }
+  }
+  return null
+}
+
+export async function searchTabletsByRegex(
+  league: string,
+  wantTexts: string[],
+  wantMode: 'any' | 'all',
+  wantValues: Record<number, number>,
+  rarity: { normal: boolean; magic: boolean },
+  typeFlags: Record<string, boolean>,
+  uses: { enabled: boolean; value: number },
+  tradeStatus: string,
+  tradePriceOption: string,
+  collapseListings = true,
+): Promise<TradeResult> {
+  void wantValues
+  void uses
+  await _ensureStatsLoaded()
+  const dialect = TRADE_DIALECTS[getPoeVersion()]
+  const statGroups = buildRegexStatGroups([], wantTexts, wantMode, {}, resolveTabletText)
+
+  const typeFilterFilters: Record<string, unknown> = { category: { option: 'map.tablet' } }
+  if (rarity.magic && !rarity.normal) typeFilterFilters.rarity = { option: 'magic' }
+  if (rarity.normal && !rarity.magic) typeFilterFilters.rarity = { option: 'normal' }
+
+  // Single selected type flag narrows base type; multiple/none stays category-wide.
+  const selectedTypes = Object.entries(typeFlags)
+    .filter(([, v]) => v)
+    .map(([k]) => k)
+  const baseTypeName = selectedTypes.length === 1 ? TABLET_TYPE_BASE_NAMES[selectedTypes[0]] : undefined
+
+  const query: Record<string, unknown> = {
+    status: { option: tradeStatus },
+    ...(baseTypeName ? { type: baseTypeName } : {}),
+    stats: statGroups.length > 0 ? statGroups : [{ type: 'and', filters: [] }],
+    filters: {
+      type_filters: { disabled: false, filters: typeFilterFilters },
+      trade_filters: {
+        disabled: false,
+        filters: {
+          ...(tradePriceOption === dialect.priceDivinePair
+            ? { price: { min: null, max: null, option: tradePriceOption } }
+            : {}),
+          ...(collapseListings ? { collapse: { option: 'true' } } : {}),
+        },
+      },
+    },
+  }
+
+  const searchResult = (await fetchJson(getTradeUrls(getPoeVersion()).search(league), {
+    method: 'POST',
+    body: JSON.stringify({ query, sort: { price: 'asc' } }),
+  })) as TradeSearchResult
+
+  if (!searchResult.result || searchResult.result.length === 0) {
+    return { total: searchResult.total ?? 0, listings: [], queryId: searchResult.id ?? '', remainingIds: [] }
+  }
+
+  const listings = await fetchAndMapListings(searchResult.result.slice(0, 10), searchResult.id)
+  return {
+    total: searchResult.total ?? 0,
+    listings,
+    queryId: searchResult.id ?? '',
+    remainingIds: searchResult.result.slice(10),
+  }
 }

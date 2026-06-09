@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 
@@ -84,4 +84,29 @@ export function hasBaseline(filterName: string): boolean {
   const dir = getBaselinesDir()
   const hash = nameHash(filterName)
   return existsSync(join(dir, `${hash}.baseline`))
+}
+
+/** Find a baseline by the local copy's path (name-independent). Scans the meta
+ *  files for one whose localPath matches and returns its content + meta. */
+export function getBaselineByLocalPath(localPath: string): { content: string; meta: BaselineMeta } | null {
+  const dir = getBaselinesDir()
+  let files: string[]
+  try {
+    files = readdirSync(dir)
+  } catch {
+    return null
+  }
+  for (const f of files) {
+    if (!f.endsWith('.meta.json')) continue
+    try {
+      const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as BaselineMeta
+      if (meta.localPath !== localPath) continue
+      const baselinePath = join(dir, f.replace(/\.meta\.json$/, '.baseline'))
+      if (!existsSync(baselinePath)) continue
+      return { content: readFileSync(baselinePath, 'utf-8'), meta }
+    } catch {
+      /* skip unreadable meta */
+    }
+  }
+  return null
 }

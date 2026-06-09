@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { scrubAccumulate, snapToStep } from './scrub-math'
+import { placeholderRangeMidpoint, scrubAccumulate, snapToStep } from './scrub-math'
 
 describe('scrubAccumulate', () => {
   it('scrubs tiny integer stats slowly so a +1/2/3 range is not crossed in a few pixels', () => {
@@ -29,5 +29,19 @@ describe('snapToStep', () => {
   })
   it('rounds to the nearest step for integer steps', () => {
     expect(snapToStep(63.7, 1, 0)).toBe(64)
+  })
+})
+
+describe('placeholderRangeMidpoint', () => {
+  it('returns the midpoint of an integer range', () => {
+    expect(placeholderRangeMidpoint('20-40')).toBe(30)
+  })
+  it('returns the midpoint of a decimal range', () => {
+    expect(placeholderRangeMidpoint('1-1.5')).toBe(1.25)
+  })
+  it('returns null for a non-range placeholder', () => {
+    expect(placeholderRangeMidpoint('0')).toBeNull()
+    expect(placeholderRangeMidpoint('--')).toBeNull()
+    expect(placeholderRangeMidpoint('16')).toBeNull()
   })
 })

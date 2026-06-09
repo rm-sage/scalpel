@@ -14,6 +14,7 @@ import { ErrorBanner } from './ErrorBanner'
 import { createTryHotkey } from './settings/hotkey-collisions'
 import { usePoeVersion } from '../shared/poe-version-context'
 import { ProfileManagerTab } from '../features/profiles/ProfileManagerTab'
+import { m } from '../../../shared/paraglide/messages.js'
 
 interface Props {
   settings: RuntimeSettings
@@ -48,17 +49,18 @@ const TAB_KEYS = [
   'developer',
 ] as const
 type TabKey = (typeof TAB_KEYS)[number]
-const TAB_LABELS: Record<TabKey, string> = {
-  general: 'General',
-  view: 'View',
-  macros: 'Macros',
-  cheatsheets: 'Sheets',
-  filter: 'Filter',
-  pricecheck: 'Trade',
-  profiles: 'Profiles',
-  plugins: 'Plugins',
-  faq: 'FAQ',
-  developer: 'Developer',
+// Message functions (not literals) so labels re-resolve when the locale changes.
+const TAB_LABELS: Record<TabKey, () => string> = {
+  general: m.settings_tab_general,
+  view: m.settings_tab_view,
+  macros: m.settings_tab_macros,
+  cheatsheets: m.settings_tab_cheatsheets,
+  filter: m.settings_tab_filter,
+  pricecheck: m.settings_tab_pricecheck,
+  profiles: m.settings_tab_profiles,
+  plugins: m.settings_tab_plugins,
+  faq: m.settings_tab_faq,
+  developer: m.settings_tab_developer,
 }
 
 export function SettingsPanel({
@@ -139,13 +141,18 @@ export function SettingsPanel({
             className="section-title"
             style={!isOverlay ? { color: 'var(--accent)', fontSize: 16, fontWeight: 700 } : undefined}
           >
-            Settings
+            {m.settings_title()}
           </h2>
-          <span className="text-[9px] text-accent opacity-60">Beta {__APP_VERSION__}</span>
+          <span className="text-[9px] text-accent opacity-60">
+            {m.settings_beta_version({ version: __APP_VERSION__ })}
+          </span>
         </div>
         <div className="flex flex-wrap gap-[6px]">
           {(TAB_KEYS as readonly TabKey[])
-            .filter((t) => t !== 'developer' || settings.developerMode)
+            // Developer tab is always reachable in the app window so the toggle
+            // can be flipped without hand-editing settings JSON; in the overlay
+            // it stays hidden until developerMode is on, to keep the in-game UI lean.
+            .filter((t) => t !== 'developer' || settings.developerMode || !isOverlay)
             .filter((t) => t !== 'profiles' || !isOverlay)
             .map((t) => (
               <button
@@ -153,7 +160,7 @@ export function SettingsPanel({
                 onClick={() => setTab(t)}
                 className={`text-[11px] px-3 py-1.5 ${tab === t ? 'bg-accent text-bg-solid' : 'text-text-dim'}`}
               >
-                {TAB_LABELS[t]}
+                {TAB_LABELS[t]()}
               </button>
             ))}
         </div>

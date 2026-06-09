@@ -1,55 +1,59 @@
 import { writeFileSync } from 'node:fs'
 import type { FilterBlock, FilterFile } from '../../shared/types'
 import { NUMERIC_CONDITION_TYPES } from './condition-types'
+import { validateBlock } from './validate'
 
-/** Serialize a single FilterBlock back to .filter text */
-function serializeBlock(block: FilterBlock): string {
+/** Detect the indentation style used in a file (tab or spaces). */
+export function detectIndent(rawLines: string[]): string {
+  for (const line of rawLines) {
+    if (line.startsWith('\t')) return '\t'
+    const match = line.match(/^( {2,})/)
+    if (match) return match[1]
+  }
+  return '\t'
+}
+
+/** Serialize a single FilterBlock back to .filter text lines. */
+export function serializeBlock(block: FilterBlock, indent = '\t'): string[] {
   const lines: string[] = []
 
   if (block.leadingComment) {
-    lines.push(block.leadingComment)
+    lines.push(...block.leadingComment.split('\n'))
   }
 
   const commentSuffix = block.inlineComment ? ` # ${block.inlineComment}` : ''
   lines.push(block.visibility + commentSuffix)
 
   for (const cond of block.conditions) {
-    const { type, operator, values } = cond
-
-    const emitOperator = NUMERIC_CONDITION_TYPES.has(type) || cond.explicitOperator
-    const valStr = values.map((v) => quoteIfNeeded(v)).join(' ')
-
+    const emitOperator =
+      cond.explicitOperator === true || (cond.explicitOperator === undefined && NUMERIC_CONDITION_TYPES.has(cond.type))
+    const valStr = cond.values.map((v) => quoteIfNeeded(v)).join(' ')
     if (emitOperator) {
-      lines.push(`    ${type} ${operator} ${valStr}`)
+      lines.push(`${indent}${cond.type} ${cond.operator} ${valStr}`)
     } else {
-      lines.push(`    ${type} ${valStr}`)
+      lines.push(`${indent}${cond.type} ${valStr}`)
     }
   }
 
   for (const action of block.actions) {
-    // Skip actions with empty values (e.g. PlayEffect set to "None")
     if (action.values.length === 0) continue
     const isCustomSound = action.type === 'CustomAlertSound' || action.type === 'CustomAlertSoundOptional'
-    const valStr = action.values
-      .map((v, i) => {
-        // CustomAlertSound filepath (first value) must always be quoted
-        if (isCustomSound && i === 0) return `"${v}"`
-        return quoteIfNeeded(v)
-      })
-      .join(' ')
-    lines.push(`    ${action.type}${valStr ? ` ${valStr}` : ''}`)
+    const valStr = action.values.map((v, i) => (isCustomSound && i === 0 ? `"${v}"` : quoteIfNeeded(v))).join(' ')
+    lines.push(`${indent}${action.type}${valStr ? ` ${valStr}` : ''}`)
   }
 
   if (block.continue) {
-    lines.push('    Continue')
+    lines.push(`${indent}Continue`)
   }
 
-  return lines.join('\n')
+  return lines
 }
 
 function quoteIfNeeded(value: string): string {
-  // Quote if contains spaces or is empty
-  if (value.includes(' ') || value === '') {
+  // Quote if it contains a space, is empty, or contains '#' (an unquoted '#' would
+  // be parsed as the start of a comment on re-read, truncating the value and
+  // breaking the round-trip; the parser respects quotes).
+  if (value.includes(' ') || value === '' || value.includes('#')) {
     return `"${value}"`
   }
   return value
@@ -61,27 +65,27 @@ function quoteIfNeeded(value: string): string {
  */
 export function writeBlockEdit(filterFile: FilterFile, blockIndex: number, updatedBlock: FilterBlock): void {
   const block = filterFile.blocks[blockIndex]
-  const serialized = serializeBlock(updatedBlock)
-  const newBlockLines = serialized.split('\n')
+  const eol = filterFile.eol ?? '\n'
+  const indent = detectIndent(filterFile.rawLines)
+  const newBlockLines = serializeBlock(updatedBlock, indent)
 
-  // Replace lines in rawLines
   const newLines = [...filterFile.rawLines]
+  const leadingLines = block.leadingComment ? block.leadingComment.split('\n').length : 0
+  const headerStart = block.lineStart - 1 - leadingLines
+  const bodyEnd = block.bodyEndLine ?? block.lineEnd
 
-  // Account for leading comment if it changed
-  const startLine = block.leadingComment
-    ? block.lineStart - block.leadingComment.split('\n').length - 1
-    : block.lineStart - 1
+  newLines.splice(headerStart, bodyEnd - headerStart, ...newBlockLines)
 
-  newLines.splice(startLine, block.lineEnd - startLine, ...newBlockLines)
+  writeFileSync(filterFile.path, newLines.join(eol), 'utf-8')
 
-  writeFileSync(filterFile.path, newLines.join('\n'), 'utf-8')
-
-  // Update in-memory state
+  // Update in-memory state.
   filterFile.rawLines = newLines
+  const newLeading = updatedBlock.leadingComment ? updatedBlock.leadingComment.split('\n').length : 0
   filterFile.blocks[blockIndex] = {
     ...updatedBlock,
-    lineStart: startLine + 1,
-    lineEnd: startLine + newBlockLines.length,
+    lineStart: headerStart + newLeading + 1,
+    lineEnd: headerStart + newBlockLines.length,
+    bodyEndLine: headerStart + newBlockLines.length,
   }
 }
 
@@ -113,7 +117,7 @@ export function moveBaseTypeBetweenTiers(
     addBaseTypeToRawLines(lines, toBlock, baseType)
   }
 
-  writeFileSync(filterFile.path, lines.join('\n'), 'utf-8')
+  writeFileSync(filterFile.path, lines.join(filterFile.eol ?? '\n'), 'utf-8')
   filterFile.rawLines = lines
 }
 
@@ -263,7 +267,7 @@ function updateThresholds(
     }
   }
 
-  writeFileSync(filterFile.path, lines.join('\n'), 'utf-8')
+  writeFileSync(filterFile.path, lines.join(filterFile.eol ?? '\n'), 'utf-8')
 }
 
 export function updateStackThresholds(filterFile: FilterFile, oldBoundary: number, newBoundary: number): void {
@@ -278,61 +282,94 @@ export function updateStrandThresholds(filterFile: FilterFile, oldBoundary: numb
   updateThresholds(filterFile, 'MemoryStrands', oldBoundary, newBoundary, 0)
 }
 
-/** Write the entire filter file (used after multiple edits). */
-export function writeFullFilter(filterFile: FilterFile): void {
-  const sections: string[] = []
-  let lastEnd = 0
-
-  for (const block of filterFile.blocks) {
-    // Preserve any raw content between blocks
-    const gapStart = lastEnd
-    const blockStart = block.lineStart - 1
-
-    if (blockStart > gapStart) {
-      sections.push(filterFile.rawLines.slice(gapStart, blockStart).join('\n'))
-    }
-
-    sections.push(serializeBlock(block))
-    lastEnd = block.lineEnd
-  }
-
-  // Trailing content after last block
-  if (lastEnd < filterFile.rawLines.length) {
-    sections.push(filterFile.rawLines.slice(lastEnd).join('\n'))
-  }
-
-  writeFileSync(filterFile.path, sections.join('\n'), 'utf-8')
-}
-
 /**
- * Write a filter file, only re-serializing blocks in modifiedBlocks.
- * Unmodified blocks keep their original raw lines, avoiding serializer round-trip bugs.
+ * Render a filter, re-serializing only the blocks in `modifiedBlocks` and passing
+ * everything else through as raw lines. Pure (no I/O).
+ *
+ * Ownership model: each block owns its header + body only
+ * (`rawLines[headerStart .. bodyEnd)`). Content between one block's body and the
+ * next block's header is a gap, always emitted raw - this preserves blank lines
+ * and section comments. Line endings and indent follow the source file.
+ *
+ * Each modified block is validated after serialization; if it would be invalid,
+ * its raw upstream lines are used instead (dropping that one edit) and its index
+ * is reported in `fallbackBlocks`.
  */
-export function writeFilterSelective(filterFile: FilterFile, modifiedBlocks: Set<number>): void {
-  const sections: string[] = []
-  let lastEnd = 0
+export function renderFilterSelective(
+  filterFile: FilterFile,
+  modifiedBlocks: Set<number>,
+  removedBlocks: Set<number> = new Set(),
+): { content: string; fallbackBlocks: number[] } {
+  const eol = filterFile.eol ?? '\n'
+  const indent = detectIndent(filterFile.rawLines)
+  const out: string[] = []
+  const fallbackBlocks: number[] = []
+  let prevBodyEnd = 0
 
   for (let i = 0; i < filterFile.blocks.length; i++) {
     const block = filterFile.blocks[i]
-    const gapStart = lastEnd
     const blockStart = block.lineStart - 1
+    const leadingLines = block.leadingComment ? block.leadingComment.split('\n').length : 0
+    const headerStart = blockStart - leadingLines
+    // bodyEndLine is 1-based and inclusive, which equals the 0-based exclusive
+    // slice end of the body. The lineEnd fallback is only hit for hand-built
+    // blocks (parseFilterFile always sets bodyEndLine); it over-extends into the
+    // gap, so it is a degraded path, not the intended one.
+    const bodyEnd = block.bodyEndLine ?? block.lineEnd
 
-    if (blockStart > gapStart) {
-      sections.push(filterFile.rawLines.slice(gapStart, blockStart).join('\n'))
+    // Gap before the block (blank lines, standalone comments, section headers).
+    // Emitted even for a removed block so file-level preamble / separators are
+    // preserved; only the block's own header + body is dropped on removal.
+    if (headerStart > prevBodyEnd) {
+      out.push(...filterFile.rawLines.slice(prevBodyEnd, headerStart))
     }
 
-    if (modifiedBlocks.has(i)) {
-      sections.push(serializeBlock(block))
+    if (removedBlocks.has(i)) {
+      // Drop the block entirely (its header + body). Used when an edit/repair
+      // leaves a block with no conditions, which would otherwise serialize to a
+      // condition-less catch-all that matches every item.
+      prevBodyEnd = bodyEnd
+      continue
+    }
+
+    if (modifiedBlocks.has(i) && validateBlock(block).length === 0) {
+      out.push(...serializeBlock(block, indent))
     } else {
-      // Use original raw lines - preserves exact formatting
-      sections.push(filterFile.rawLines.slice(blockStart, block.lineEnd).join('\n'))
+      if (modifiedBlocks.has(i)) fallbackBlocks.push(i)
+      out.push(...filterFile.rawLines.slice(headerStart, bodyEnd))
     }
-    lastEnd = block.lineEnd
+
+    prevBodyEnd = bodyEnd
   }
 
-  if (lastEnd < filterFile.rawLines.length) {
-    sections.push(filterFile.rawLines.slice(lastEnd).join('\n'))
+  // Trailing content after the last block.
+  if (prevBodyEnd < filterFile.rawLines.length) {
+    out.push(...filterFile.rawLines.slice(prevBodyEnd))
   }
 
-  writeFileSync(filterFile.path, sections.join('\n'), 'utf-8')
+  return { content: out.join(eol), fallbackBlocks }
+}
+
+/** Write the entire filter file (re-serializing every block). */
+export function writeFullFilter(filterFile: FilterFile): void {
+  const all = new Set(filterFile.blocks.map((_, i) => i))
+  const { content, fallbackBlocks } = renderFilterSelective(filterFile, all)
+  if (fallbackBlocks.length > 0 && process.env.SCALPEL_DEBUG_LOG) {
+    console.warn('[writer] writeFullFilter kept raw lines for invalid blocks:', fallbackBlocks)
+  }
+  writeFileSync(filterFile.path, content, 'utf-8')
+}
+
+/**
+ * Write a filter file, re-serializing only `modifiedBlocks` (validated, with
+ * per-block raw fallback). Returns the indices that fell back to raw.
+ */
+export function writeFilterSelective(
+  filterFile: FilterFile,
+  modifiedBlocks: Set<number>,
+  removedBlocks: Set<number> = new Set(),
+): { fallbackBlocks: number[] } {
+  const { content, fallbackBlocks } = renderFilterSelective(filterFile, modifiedBlocks, removedBlocks)
+  writeFileSync(filterFile.path, content, 'utf-8')
+  return { fallbackBlocks }
 }

@@ -19,6 +19,18 @@ export type PluginContextFactoryDeps = {
     delete: (key: string) => Promise<void>
     keys: () => Promise<string[]>
   }
+  gameConfig: {
+    read: () => Promise<{ content: string; path: string }>
+    write: (content: string) => Promise<{ backupPath: string | null }>
+    onChange: (handler: () => void) => () => void
+  }
+  prices: {
+    getPrices: (opts?: {
+      category?: string
+    }) => Promise<{ prices: import('../../../shared/types').PriceEntry[]; updatedAt: number | null }>
+    refresh: () => Promise<void>
+    onChange: (handler: () => void) => () => void
+  }
   registerTab: (
     pluginId: string,
     opts: {

@@ -4,7 +4,10 @@ import { App } from './App'
 import '../styles.css'
 import { bootstrapTheme } from '../shared/apply-theme'
 import { DiagnosticErrorBoundary, installRendererDiagnostics } from '../shared/diagnostics'
+import { bootstrapLocale, bootstrapLocaleSync, LocaleProvider } from '../shared/locale'
 
+bootstrapLocaleSync()
+void bootstrapLocale()
 void bootstrapTheme()
 installRendererDiagnostics('plugin-overlay')
 
@@ -35,7 +38,9 @@ const root = document.getElementById('root')!
 createRoot(root).render(
   <StrictMode>
     <DiagnosticErrorBoundary source="plugin-overlay">
-      <Root />
+      <LocaleProvider>
+        <Root />
+      </LocaleProvider>
     </DiagnosticErrorBoundary>
   </StrictMode>,
 )
