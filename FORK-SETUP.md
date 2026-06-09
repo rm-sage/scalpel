@@ -40,17 +40,18 @@ swaps `app.asar` in place. So the fork self-updates from **its own** GitHub rele
 
 ### Version scheme
 
-Fork version = **`<full upstream version>-rmsage.<N>`**, e.g. upstream `0.9.13-rc5`
-becomes `0.9.13-rc5-rmsage.1`. The script `scripts/set-fork-version.js` derives it.
+Fork version = **`<major.minor.patch>-rmsage.<N>`**, e.g. upstream `0.9.13-rc5`
+becomes `0.9.13-rmsage.1`. The script `scripts/set-fork-version.js` derives it.
 
-- The upstream version is kept **verbatim, including any `-rcN`/`-beta`**. This is
-  deliberate: `release.yml` flags a release as a GitHub *prerelease* when the tag
-  contains `rc`/`beta`, and the updater's stable channel only sees non-prereleases.
-  Keeping the suffix makes the fork's stable/beta channels mirror upstream's — an
-  upstream RC ships as a fork prerelease (beta channel), an upstream stable ships as a
-  fork release (stable channel).
-- `N` increments per fork build of the **same** upstream baseline and resets to `1`
-  when the baseline changes; it's derived from existing `v<base>-rmsage.*` tags.
+- The upstream prerelease tag (`-rcN`/`-beta`) is **stripped**. This is deliberate:
+  `release.yml` flags a GitHub *prerelease* only when the tag contains `rc`/`beta`,
+  and the updater's stable channel + in-app Download button resolve via
+  `/releases/latest`, which **ignores prereleases**. Stripping keeps every fork build
+  a full (non-prerelease) release, so the stable channel always picks it up — even
+  when the fork is built from an upstream RC.
+- `N` increments per fork build of the **same** `X.Y.Z` (multiple RCs of 0.9.13 all
+  map to `0.9.13-rmsage.1`, `.2`, …) and resets to `1` when `X.Y.Z` changes; it's
+  derived from existing `v<base>-rmsage.*` tags.
 - No `+build` metadata: `app.getVersion()` strips it (breaking the updater's
   string-equality check) and `+` breaks the `dist/v${version}/` path glob.
 

@@ -1,6 +1,6 @@
 export const CHANGELOG: { version: string; notes: string[] }[] = [
   {
-    version: '0.9.13-rc5-rmsage.1',
+    version: '0.9.13-rmsage.1',
     notes: [
       'Added an Open Craft of Exile hotkey: bind it in Settings → Macros to open the hovered item, pre-imported, in the Craft of Exile crafting simulator.',
     ],

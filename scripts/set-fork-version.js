@@ -4,16 +4,16 @@
 // so the fork version always tracks the exact upstream version it was built from
 // while staying unique per fork build.
 //
-// Scheme: `<full upstream version>-rmsage.<N>`
-//   - The upstream version is kept VERBATIM, including any `-rcN` / `-beta`
-//     prerelease tag. This is deliberate: release.yml marks a release as a
-//     GitHub prerelease when the tag contains `rc`/`beta`, and the updater's
-//     stable channel only sees non-prereleases. Keeping the suffix makes the
-//     fork's stable/beta channels mirror upstream's automatically -- an upstream
-//     RC produces a fork prerelease, an upstream stable produces a fork release.
-//   - N increments per fork build of the SAME upstream baseline and resets to 1
-//     when the baseline changes. It is derived from existing `v<base>-rmsage.*`
-//     git tags so a rerun never collides with an already-published build.
+// Scheme: `<major.minor.patch>-rmsage.<N>`
+//   - The upstream prerelease tag (e.g. `-rc5`/`-beta`) is intentionally STRIPPED
+//     so the fork version is always a clean `X.Y.Z-rmsage.N`. This is deliberate:
+//     release.yml flags a GitHub prerelease only when the tag contains `rc`/`beta`,
+//     and the updater's stable channel + in-app Download button resolve via
+//     /releases/latest, which ignores prereleases. Stripping keeps every fork build
+//     a full (non-prerelease) release so the stable channel always picks it up.
+//   - N increments per fork build of the SAME baseline (multiple RCs of 0.9.13 all
+//     map to 0.9.13-rmsage.1, .2, ...) and resets to 1 when X.Y.Z changes. It is
+//     derived from existing `v<base>-rmsage.*` tags so a rerun never collides.
 //   - No `+build` metadata: Electron's app.getVersion() strips it (which would
 //     break the updater's string-equality check) and `+` breaks the
 //     dist/v${version}/ path glob release.yml depends on.
@@ -46,13 +46,21 @@ function highestExistingN(base, tagList) {
   return max
 }
 
-/** Pure: the next fork version for an upstream baseline given the existing max N. */
-function computeForkVersion(upstreamVersion, existingMaxN) {
-  const base = String(upstreamVersion).trim().replace(/^v/, '')
-  if (!/^\d+\.\d+\.\d+/.test(base)) {
+/** Bare `major.minor.patch`, stripping any upstream prerelease/build suffix. */
+function baseVersion(upstreamVersion) {
+  const m = String(upstreamVersion)
+    .trim()
+    .replace(/^v/, '')
+    .match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!m) {
     throw new Error(`Refusing to derive a fork version from a non-semver upstream value: "${upstreamVersion}"`)
   }
-  return `${base}-${FORK_TAG}.${existingMaxN + 1}`
+  return `${m[1]}.${m[2]}.${m[3]}`
+}
+
+/** Pure: the next fork version for an upstream baseline given the existing max N. */
+function computeForkVersion(upstreamVersion, existingMaxN) {
+  return `${baseVersion(upstreamVersion)}-${FORK_TAG}.${existingMaxN + 1}`
 }
 
 /** Replace only the first (top-level) `"version": "..."` in a JSON file's text,
@@ -87,7 +95,7 @@ function readUpstreamVersion() {
 
 function main() {
   const upstream = readUpstreamVersion()
-  const base = String(upstream).trim().replace(/^v/, '')
+  const base = baseVersion(upstream)
   const next = computeForkVersion(upstream, highestExistingN(base, gitTags()))
   setTopLevelVersion('package.json', next)
   // Keep the lockfile's root version aligned when present; harmless if it drifts
@@ -102,4 +110,4 @@ function main() {
 
 if (require.main === module) main()
 
-module.exports = { computeForkVersion, highestExistingN, escapeRe }
+module.exports = { baseVersion, computeForkVersion, highestExistingN, escapeRe }
