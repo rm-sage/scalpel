@@ -1,5 +1,10 @@
+import { isEndgameFilterIndexed } from '../../endgame-filter-support'
 import type { AdvancedMod } from '../../../../shared/types'
 import type { StatFilter } from '../../trade'
+
+/** "Fuzz floor" applied to a map/waystone property when searching: accept
+ *  listings down to 90% of the item's value so near-identical rolls match. */
+const MAP_MIN = (v: number): number => Math.floor(v * 0.9)
 
 type MapItemInfo = {
   itemClass?: string
@@ -20,18 +25,44 @@ type MapItemInfo = {
   mapRareMonsters?: number
 }
 
+/** The PoE2 trade2 "Endgame Filters" group, in display order. Whether GGG actually
+ *  indexes each key for search is NOT encoded here -- it changes league to league and
+ *  is sourced from the remote-overridable allowlist (isEndgameFilterIndexed), so a
+ *  chip can be re-enabled without an app release. As of 2026-06 (live-probed on Runes
+ *  of Aldur) only map_tier and map_revives return results; the rest come back empty.
+ *  `map_experience` has no clipboard field yet, so it is omitted rather than listed
+ *  with a dangling `field`. */
+interface WaystoneEndgameFilter {
+  field: keyof MapItemInfo
+  id: string
+  label: string
+  enabledByDefault?: boolean
+  exact?: boolean
+}
+
+const WAYSTONE_ENDGAME_FILTERS: readonly WaystoneEndgameFilter[] = [
+  { field: 'mapTier', id: 'map.map_tier', label: 'Tier', enabledByDefault: true, exact: true },
+  { field: 'mapPackSize', id: 'map.map_packsize', label: 'Pack Size' },
+  { field: 'mapQuantity', id: 'map.map_iiq', label: 'Quantity' },
+  { field: 'mapRarity', id: 'map.map_iir', label: 'Rarity' },
+  { field: 'mapRevives', id: 'map.map_revives', label: 'Revives' },
+  { field: 'mapDropChance', id: 'map.map_bonus', label: 'Drop Chance' },
+  { field: 'mapGold', id: 'map.map_gold', label: 'Gold' },
+  { field: 'mapMagicMonsters', id: 'map.map_magic_monsters', label: 'Magic Monsters' },
+  { field: 'mapRareMonsters', id: 'map.map_rare_monsters', label: 'Rare Monsters' },
+]
+
 // Map property chips (Item Quantity, Rarity, Pack Size, More X) and 8-mod corrupted maps
 export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?: AdvancedMod[]): StatFilter[] {
   const out: StatFilter[] = []
 
   if (itemInfo && itemInfo.itemClass === 'Maps' && itemInfo.rarity === 'Rare') {
-    const mapMin = (v: number) => Math.floor(v * 0.9)
     if (itemInfo.mapQuantity)
       out.push({
         id: 'map.map_iiq',
         text: `Quantity: +${itemInfo.mapQuantity}%`,
         value: itemInfo.mapQuantity,
-        min: mapMin(itemInfo.mapQuantity),
+        min: MAP_MIN(itemInfo.mapQuantity),
         max: null,
         enabled: true,
         type: 'map',
@@ -41,7 +72,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'map.map_iir',
         text: `Rarity: +${itemInfo.mapRarity}%`,
         value: itemInfo.mapRarity,
-        min: mapMin(itemInfo.mapRarity),
+        min: MAP_MIN(itemInfo.mapRarity),
         max: null,
         enabled: false,
         type: 'map',
@@ -51,7 +82,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'map.map_packsize',
         text: `Pack Size: +${itemInfo.mapPackSize}%`,
         value: itemInfo.mapPackSize,
-        min: mapMin(itemInfo.mapPackSize),
+        min: MAP_MIN(itemInfo.mapPackSize),
         max: null,
         enabled: true,
         type: 'map',
@@ -62,7 +93,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_scarab_drops',
         text: `More Scarabs: +${itemInfo.mapMoreScarabs}%`,
         value: itemInfo.mapMoreScarabs,
-        min: mapMin(itemInfo.mapMoreScarabs),
+        min: MAP_MIN(itemInfo.mapMoreScarabs),
         max: null,
         enabled: true,
         type: 'map',
@@ -72,7 +103,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_currency_drops',
         text: `More Currency: +${itemInfo.mapMoreCurrency}%`,
         value: itemInfo.mapMoreCurrency,
-        min: mapMin(itemInfo.mapMoreCurrency),
+        min: MAP_MIN(itemInfo.mapMoreCurrency),
         max: null,
         enabled: true,
         type: 'map',
@@ -82,7 +113,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_map_drops',
         text: `More Maps: +${itemInfo.mapMoreMaps}%`,
         value: itemInfo.mapMoreMaps,
-        min: mapMin(itemInfo.mapMoreMaps),
+        min: MAP_MIN(itemInfo.mapMoreMaps),
         max: null,
         enabled: true,
         type: 'map',
@@ -92,7 +123,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_card_drops',
         text: `More Div Cards: +${itemInfo.mapMoreDivCards}%`,
         value: itemInfo.mapMoreDivCards,
-        min: mapMin(itemInfo.mapMoreDivCards),
+        min: MAP_MIN(itemInfo.mapMoreDivCards),
         max: null,
         enabled: true,
         type: 'map',
@@ -110,36 +141,30 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
       })
   }
 
-  // PoE2 waystones: surface the property block as map_filter chips. Trade2 keys:
-  // map_tier, map_iir, map_iiq, map_packsize, map_revives, map_bonus (drop chance),
-  // map_gold, map_magic_monsters, map_rare_monsters. The random per-waystone
-  // monster affixes still flow through the normal explicit matcher. Tier defaults
-  // on (the dominant price axis); the rest are opt-in so the search isn't
-  // over-constrained. No rarity gate: tier is a base property present on white and
-  // magic waystones too; rarity/packsize/etc. just come from affixes (so the
-  // per-property guards below naturally skip them on lower rarities).
+  // PoE2 waystones: surface the property block as map_filter chips, one per entry
+  // in WAYSTONE_ENDGAME_FILTERS. We only emit a chip whose trade2 key GGG actually
+  // indexes -- isEndgameFilterIndexed consults the remote-overridable allowlist, so
+  // an unindexed key is suppressed (a search using it comes back empty) until a push
+  // to main re-enables it (re-probe first; see scripts/local/cloak/probe-waystone-
+  // filters.mjs). The per-waystone monster affixes still flow through the normal
+  // explicit matcher. No rarity gate: tier is a base property present on white/magic
+  // waystones too, and the per-property value guard skips affix-only chips on lower
+  // rarities.
   if (itemInfo && itemInfo.itemClass === 'Waystones') {
-    const wsMin = (v: number) => Math.floor(v * 0.9)
-    const pushChip = (id: string, label: string, value: number, enabled: boolean, exact = false) =>
+    for (const f of WAYSTONE_ENDGAME_FILTERS) {
+      if (!isEndgameFilterIndexed(f.id)) continue // unindexed on trade2 -- hidden until GGG supports it
+      const value = itemInfo[f.field]
+      if (typeof value !== 'number' || value === 0) continue
       out.push({
-        id,
-        text: `${label}: ${value}`,
+        id: f.id,
+        text: `${f.label}: ${value}`,
         value,
-        min: exact ? value : wsMin(value),
-        max: exact ? value : null,
-        enabled,
+        min: f.exact ? value : MAP_MIN(value),
+        max: f.exact ? value : null,
+        enabled: f.enabledByDefault ?? false,
         type: 'map',
       })
-    if (itemInfo.mapTier) pushChip('map.map_tier', 'Tier', itemInfo.mapTier, true, true)
-    if (itemInfo.mapRarity) pushChip('map.map_iir', 'Rarity', itemInfo.mapRarity, false)
-    if (itemInfo.mapQuantity) pushChip('map.map_iiq', 'Quantity', itemInfo.mapQuantity, false)
-    if (itemInfo.mapPackSize) pushChip('map.map_packsize', 'Pack Size', itemInfo.mapPackSize, false)
-    if (itemInfo.mapRevives) pushChip('map.map_revives', 'Revives', itemInfo.mapRevives, false)
-    if (itemInfo.mapDropChance) pushChip('map.map_bonus', 'Drop Chance', itemInfo.mapDropChance, false)
-    if (itemInfo.mapGold) pushChip('map.map_gold', 'Gold', itemInfo.mapGold, false)
-    if (itemInfo.mapMagicMonsters)
-      pushChip('map.map_magic_monsters', 'Magic Monsters', itemInfo.mapMagicMonsters, false)
-    if (itemInfo.mapRareMonsters) pushChip('map.map_rare_monsters', 'Rare Monsters', itemInfo.mapRareMonsters, false)
+    }
   }
 
   // 8-mod corrupted maps (4 prefix + 4 suffix)

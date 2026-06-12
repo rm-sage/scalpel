@@ -3,7 +3,7 @@ import { unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-const MOCK_USER_DATA = vi.hoisted(() => `${process.env.TEMP ?? process.cwd()}/scalpel-baselines-${Date.now()}`)
+const MOCK_USER_DATA = vi.hoisted(() => `${require('node:os').tmpdir()}/scalpel-baselines-${Date.now()}`)
 vi.mock('electron', () => ({ app: { getPath: vi.fn(() => MOCK_USER_DATA) } }))
 
 import { getBaselineByLocalPath, saveBaseline } from './baselines'

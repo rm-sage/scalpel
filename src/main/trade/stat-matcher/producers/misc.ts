@@ -63,10 +63,13 @@ export function buildMiscFilters(
       type: 'misc',
       ...(isForbiddenTome ? { chipState: 'max' as const } : {}),
     })
-  } else if (itemInfo.isSynthetic) {
+  } else if (itemInfo.isSynthetic && itemInfo.rarity !== 'Currency') {
     // Synthetic items have a placeholder ilvl that's meaningless. Render as an
     // editable row pre-set to 83 (typical T16 map level) so users price-checking
     // for dust can lift the ilvl floor without first having to enable a chip.
+    // Currency-rarity synthetics (sister-overlay currency/fragments/etc.) are
+    // skipped: an ilvl filter matches no currency listing, so it broke their
+    // trade search outright (#418).
     // Type 'gem' (instead of 'misc') routes the filter through StatFilterRow
     // rendering -- 'misc' goes through FilterChip -- while still landing in the
     // misc-filter group on the API side (trade.ts dispatches by id).

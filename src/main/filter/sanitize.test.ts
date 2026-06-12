@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const MOCK_USER_DATA = vi.hoisted(() => `${process.env.TEMP ?? process.cwd()}/scalpel-sanitize-${Date.now()}`)
+const MOCK_USER_DATA = vi.hoisted(() => `${require('node:os').tmpdir()}/scalpel-sanitize-${Date.now()}`)
 vi.mock('electron', () => ({ app: { getPath: vi.fn(() => MOCK_USER_DATA) } }))
 
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'

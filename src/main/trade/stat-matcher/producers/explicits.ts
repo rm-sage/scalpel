@@ -6,6 +6,7 @@ import { isClusterJewel } from '../../../../shared/poe-item'
 import type { ModTier } from '../../../../shared/data/tiers/types'
 import type { StatFilter } from '../../trade'
 import { findAdvMod } from '../adv-mods'
+import { computeValueBounds } from '../bounds'
 import { isDefenseMod, isLocalMod, isLowPriority } from '../classification'
 import type { MatchContext } from '../context'
 import { matchModToStat } from '../mod-matcher'
@@ -239,11 +240,24 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
         const advMod = findAdvMod(advancedMods, cleaned, 'explicit', rawCleaned)
         if (advMod) {
           const range = advMod.ranges.find((r) => r.value === matched.value || r.value === -(matched.value ?? 0))
+          // When the mod matched only via sign inversion (clipboard "fewer N" / "reduced N"
+          // against the trade API's positive "additional" / "increased" stat, value negated
+          // to -N), the advanced-mod range is still in clipboard space (positive) while
+          // matched.value is negative. Flip the range into the matched value's sign space so
+          // every downstream consumer (modRange display + tint, unique min-floor) agrees on
+          // sign -- otherwise the negative roll reads as outside its own range and tints red
+          // (Constricting Command "fewer enemies Surrounded"). A symmetric bracket that
+          // already straddles zero is unaffected (the flip is a normalization no-op).
+          const inverted =
+            range != null && matched.value != null && range.value === -matched.value && range.value !== matched.value
+          const signedRange = inverted ? { min: -range!.min, max: -range!.max } : range
           // "reduced" mods report a sign-flipped bracket ({min:20, max:-20}); normalize so
           // min<=max before any consumer reads it (matchedRange -> modRange display+tint, the
           // unique min-floor below, perfectRoll). advModRanges keeps the raw orientation for
           // tier-ladder matching against RePoE's stored ranges.
-          const normRange = range ? { min: Math.min(range.min, range.max), max: Math.max(range.min, range.max) } : null
+          const normRange = signedRange
+            ? { min: Math.min(signedRange.min, signedRange.max), max: Math.max(signedRange.min, signedRange.max) }
+            : null
           if (normRange && normRange.min === normRange.max) isFixedValue = true
           if (!range && advMod.ranges.length === 0) isFixedValue = true
           if (advMod.tier > 0) matchedTier = advMod.tier
@@ -259,19 +273,12 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
         }
       }
       // For negative values: "reduced" mods use min (trade API expects min for beneficial reduction),
-      // while truly negative mods (e.g. "-50% to Lightning Resistance") use max.
+      // while truly negative mods (e.g. "-50% to Lightning Resistance") use max. Some keywords mark
+      // the negative as beneficial (more negative = better, use max). Shared with buildTabletFilters.
       const isNegative = matched.value != null && matched.value < 0
-      // Negative mods: default to "bad" (less negative = better, use min).
-      // Some keywords indicate the negative is beneficial (more negative = better, use max).
       const isBeneficialNegative = isNegative && BENEFICIAL_NEGATIVE_KEYWORDS.some((p) => p.test(mod))
-      let minValue =
-        matched.value != null && (!isNegative || !isBeneficialNegative)
-          ? isFixedValue
-            ? matched.value
-            : isNegative
-              ? Math.ceil(matched.value * (2 - pct)) // -30 at 90% -> -33 (more negative = wider search)
-              : Math.floor(matched.value * pct)
-          : null
+      const bounds = computeValueBounds({ value: matched.value, pct, isBeneficialNegative, isFixedValue })
+      let minValue = bounds.min
       // For uniques, don't default below the mod's minimum possible roll unless the item's actual
       // value is already below it (e.g. from Volatile Vaal Orb)
       if (
@@ -284,7 +291,7 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
       ) {
         minValue = matchedRange.min
       }
-      const maxValue = isBeneficialNegative && matched.value != null ? matched.value : null
+      const maxValue = bounds.max
 
       // Skip for cluster jewels -- their mods grant passives, not item stats
       // Skip "X per Y" mods -- they're conditional and shouldn't inflate pseudo totals
@@ -392,6 +399,7 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
         modRange: matchedRange,
         tierLadder,
         tierQualityMult: advModMult,
+        fixedRoll: isFixedValue || undefined,
       })
       // Defer attribute contributions (Str -> Life, Int -> Mana) until post-loop so we
       // can check whether their target pseudo has a real contributor on this item.

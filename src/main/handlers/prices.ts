@@ -418,8 +418,29 @@ export function register(store: Store<AppSettings>): void {
       // For uniques, resolve the base type if the ref didn't carry one. Non-uniques use
       // name == baseType (currency, fragments, div cards, gems).
       const baseType = isUnique && !ref.baseType ? resolveUniqueBase(ref.name) : (ref.baseType ?? ref.name)
-      const itemClass = findItemClassInFilter(baseType)
-      const rarity: PoeItem['rarity'] = isUnique ? 'Unique' : ref.category === 'gem' ? 'Gem' : 'Normal'
+
+      // Every PoE2 related 'base' ref is a stackable currency-like (orbs, shards,
+      // fragments, omens, splinters, catalysts, reliquary keys) -- the in-game clipboard
+      // prints these as "Rarity: Currency". Building them as Rarity: Normal made the price
+      // panel treat them as craftable gear and stamp a synthetic ilvl:83 filter that no
+      // currency listing can match, so the search returned nothing (#418).
+      const isCurrency = !isUnique && ref.category === 'base' && getPoeVersion() === 2
+
+      // Currency's class is supplied by the clipboard for real items; here we have only a
+      // name. The loaded filter can list a currency base under an unrelated class (e.g. a
+      // block that lumps it into "Incubators"), and any class in the bulk router's
+      // regular-trade set silently forces a gear-style search. So leave currency classless:
+      // items with an exchange slug bulk-search by name, the rest fall through to a regular
+      // search by exact base type. Non-currency synthetics keep the filter class.
+      const itemClass = isCurrency ? '' : findItemClassInFilter(baseType)
+
+      const rarity: PoeItem['rarity'] = isUnique
+        ? 'Unique'
+        : ref.category === 'gem'
+          ? 'Gem'
+          : isCurrency
+            ? 'Currency'
+            : 'Normal'
       // Gems default to 20/20 (the standard trade baseline). Item-level is nulled for all
       // paths so the stat-matcher omits the ilvl chip (we don't know the actual ilvl here).
       const gemDefaults =

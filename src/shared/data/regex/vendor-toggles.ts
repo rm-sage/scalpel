@@ -322,3 +322,85 @@ export function qualifiersToVendorSettings(q: Record<string, number>): VendorSet
   s.characterLevel = { min: q['characterLevel.min'] ?? 0, max: q['characterLevel.max'] ?? 0 }
   return s
 }
+
+export interface VendorGroupsState {
+  groups: VendorSettings[]
+  selectedGroupId: number
+}
+
+export const DEFAULT_VENDOR_GROUPS_STATE: VendorGroupsState = {
+  groups: [structuredClone(DEFAULT_VENDOR_SETTINGS)],
+  selectedGroupId: 0,
+}
+
+/** Count active conditions in a group: every checked toggle across all tabs plus
+ *  one for each non-zero level range. Drives the group-pill count badge and the
+ *  "empty" gate. */
+export function vendorGroupConditionCount(group: VendorSettings): number {
+  let n = 0
+  for (const tab of VENDOR_TABS) {
+    for (const section of tab.sections) {
+      for (const tg of section.toggles) {
+        if ((group[tg.group] as Record<string, boolean>)[tg.field]) n++
+      }
+    }
+  }
+  if (group.itemLevel.min !== 0 || group.itemLevel.max !== 0) n++
+  if (group.characterLevel.min !== 0 || group.characterLevel.max !== 0) n++
+  return n
+}
+
+/** True when the state is a single group with nothing selected. Keeps the grouping
+ *  UI hidden until the user ticks their first condition. */
+export function isVendorGroupsEmpty(state: VendorGroupsState): boolean {
+  return state.groups.length === 1 && vendorGroupConditionCount(state.groups[0]) === 0
+}
+
+/** Flatten a grouped state into RegexPreset.qualifiers: a `groupCount` plus each
+ *  group's per-field keys prefixed `g${i}.`. selectedGroupId is ephemeral and not
+ *  serialized. */
+export function vendorGroupsToQualifiers(state: VendorGroupsState): Record<string, number> {
+  const q: Record<string, number> = { groupCount: state.groups.length }
+  state.groups.forEach((group, i) => {
+    const sub = vendorSettingsToQualifiers(group)
+    for (const k of Object.keys(sub)) q[`g${i}.${k}`] = sub[k]
+  })
+  return q
+}
+
+/** Inverse of vendorGroupsToQualifiers. Back-compat: a qualifiers map with no
+ *  `groupCount` (old single-group vendor presets) is read as one legacy group.
+ *  Always returns selectedGroupId 0. */
+export function qualifiersToVendorGroups(q: Record<string, number>): VendorGroupsState {
+  const count = q.groupCount
+  if (!count || count < 1) {
+    return { groups: [qualifiersToVendorSettings(q)], selectedGroupId: 0 }
+  }
+  const groups: VendorSettings[] = []
+  for (let i = 0; i < count; i++) {
+    const prefix = `g${i}.`
+    const sub: Record<string, number> = {}
+    for (const k of Object.keys(q)) {
+      if (k.startsWith(prefix)) sub[k.slice(prefix.length)] = q[k]
+    }
+    groups.push(qualifiersToVendorSettings(sub))
+  }
+  return { groups, selectedGroupId: 0 }
+}
+
+/** One-time localStorage migration: if the new grouped key is absent but the legacy
+ *  single-settings key exists, wrap the legacy value as one group. Idempotent via the
+ *  groups-key presence check (no module flag, so it stays unit-testable). Malformed
+ *  legacy JSON is ignored, falling through to the caller's default. */
+export function ensureVendorGroupsMigrated(legacyKey: string, groupsKey: string): void {
+  try {
+    if (localStorage.getItem(groupsKey) != null) return
+    const legacy = localStorage.getItem(legacyKey)
+    if (legacy == null) return
+    const parsed = JSON.parse(legacy) as VendorSettings
+    const state: VendorGroupsState = { groups: [parsed], selectedGroupId: 0 }
+    localStorage.setItem(groupsKey, JSON.stringify(state))
+  } catch {
+    // ignore malformed legacy data
+  }
+}

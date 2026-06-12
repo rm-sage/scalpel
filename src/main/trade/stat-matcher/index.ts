@@ -5,10 +5,12 @@ import { deriveContext } from './context'
 import { ITEM_CLASS_TO_CATEGORY } from './item-classes'
 import { buildAtzoatlFilters } from './producers/atzoatl'
 import { buildBaseTypeFilter } from './producers/base-type'
+import { buildRuneBaseFilter } from './producers/rune-base'
 import { buildDefenseFilters } from './producers/defenses'
 import { buildEnchantFilters } from './producers/enchants'
 import { processExplicits } from './producers/explicits'
 import { buildGemFilters } from './producers/gems'
+import { buildGrantsSkillFilters } from './producers/grants-skill'
 import { buildHeistFilters } from './producers/heist'
 import { buildImbueFilters } from './producers/imbues'
 import { processImplicits } from './producers/implicits'
@@ -24,6 +26,8 @@ import { buildTabletFilters } from './producers/tablets'
 import { buildTimelessFilters } from './producers/timeless'
 import { buildUltimatumFilters } from './producers/ultimatum'
 import { buildWeaponDpsFilters } from './producers/weapon-dps'
+import { applyUniqueOverrides } from './producers/apply-overrides'
+import { resolveUniqueOverride } from './producers/overrides'
 import { _resetPremiumMatchCacheForTests } from './producers/premium'
 import { _resetPseudoMap, ensurePseudoMapBuilt } from './pseudo'
 import type { StatEntry } from './stats-cache'
@@ -84,6 +88,9 @@ export function matchItemMods(
   // Base type chip
   const baseTypeFilters = buildBaseTypeFilter(itemInfo)
 
+  // Rune-base chip (Runeforged / Runemastered toggle)
+  const runeBaseFilters = buildRuneBaseFilter(itemInfo)
+
   // Gem level, transfigured, and gem-quality chips
   const gemFilters = buildGemFilters(itemInfo)
 
@@ -113,6 +120,9 @@ export function matchItemMods(
   // Must come AFTER the explicit loop populates explicitsFilters (fractured-chip dependency).
   const miscFilters = buildMiscFilters(itemInfo, advancedMods, explicitsFilters)
 
+  // Granted-skill chips (PoE2 uniques/corrupted items granting skills innately)
+  const grantsSkillFilters = buildGrantsSkillFilters(itemInfo)
+
   const combined: StatFilter[] = [
     ...weaponFilters,
     ...defenseFilters,
@@ -122,6 +132,9 @@ export function matchItemMods(
     ...enchantFilters,
     ...mapFilters,
     ...socketFilters,
+    // Rune chip sits before the base-name chip so they read left-to-right as
+    // "Runeforged" + "<base>" (the composed type the search sends).
+    ...runeBaseFilters,
     ...baseTypeFilters,
     ...gemFilters,
     ...heistFilters,
@@ -130,11 +143,19 @@ export function matchItemMods(
     ...logbookFilters,
     ...atzoatlFilters,
     ...miscFilters,
+    ...grantsSkillFilters,
     ...implicitsFilters,
     ...explicitsFilters,
     ...relicFilters,
     ...tabletFilters,
   ]
 
-  return postProcessInscribedUltimatum(combined, itemInfo)
+  let assembled = postProcessInscribedUltimatum(combined, itemInfo)
+
+  const resolved = resolveUniqueOverride(itemInfo)
+  if (resolved) {
+    assembled = applyUniqueOverrides(assembled, resolved, { pct: ctx.pct, corrupted: itemInfo?.corrupted ?? false })
+  }
+
+  return assembled
 }

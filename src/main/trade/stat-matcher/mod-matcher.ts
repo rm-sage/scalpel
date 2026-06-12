@@ -33,7 +33,7 @@ const INDEXABLE_SUPPORT_RE = /^[a-z]+\.indexable_support_\d+/
 export function matchModToStat(
   modText: string,
   preferLocal = false,
-  modType: 'explicit' | 'crafted' | 'implicit' | 'enchant' | 'imbued' | 'sanctum' = 'explicit',
+  modType: 'explicit' | 'crafted' | 'implicit' | 'enchant' | 'imbued' | 'sanctum' | 'skill' = 'explicit',
   preferIndexableSupport = false,
   preferQualifier: string | null = null,
 ): { statId: string; value: number | null; option?: number; aggregated?: boolean } | null {
@@ -59,7 +59,7 @@ const TRAILING_QUALIFIER_RE = /\s*\(([^)]+)\)\s*$/
 function _matchModToStat(
   modText: string,
   preferLocal = false,
-  modType: 'explicit' | 'crafted' | 'implicit' | 'enchant' | 'imbued' | 'sanctum' = 'explicit',
+  modType: 'explicit' | 'crafted' | 'implicit' | 'enchant' | 'imbued' | 'sanctum' | 'skill' = 'explicit',
   preferIndexableSupport = false,
   preferQualifier: string | null = null,
 ): { statId: string; value: number | null; option?: number; aggregated?: boolean } | null {
@@ -69,6 +69,10 @@ function _matchModToStat(
   const isNegativeMod = /-\d/.test(modText)
   const isReducedMod = /\breduced\b/i.test(modText)
   const isLessMod = /\bless\b/i.test(modText)
+  // "fewer" is the negative inverse of the trade API's "additional" stat (e.g.
+  // "Require # fewer enemies to be Surrounded"): matched via the fewer->additional
+  // variant, the value needs negating just like reduced/less.
+  const isFewerMod = /\bfewer\b/i.test(modText)
   // Detect if we flipped increased->reduced or more->less (value needs negation)
   const isFlippedToNegative = /\bincreased\b/i.test(modText) || /\bmore\b/i.test(modText)
 
@@ -132,6 +136,10 @@ function _matchModToStat(
         // but only negate if the matched stat text doesn't already contain "reduced"/"less"
         const statHasReduced = /\breduced\b/i.test(entry.text) || /\bless\b/i.test(entry.text)
         if ((isReducedMod || isLessMod) && !statHasReduced && value != null && value > 0) value = -value
+        // "fewer" matched against an "additional" stat -> negate (the clipboard's
+        // fewer N is the trade API's -N). Skip if the stat itself says "fewer".
+        const statHasFewer = /\bfewer\b/i.test(entry.text)
+        if (isFewerMod && !statHasFewer && value != null && value > 0) value = -value
         // "increased" matched as "reduced" (or "more" as "less") -- negate
         if (variantFlipped && value != null && value > 0) value = -value
         // For option-based stats (like "Map contains #'s Citadel"), resolve the option ID

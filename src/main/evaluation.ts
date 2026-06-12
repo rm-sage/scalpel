@@ -3,6 +3,7 @@ import { OverlayController } from 'electron-overlay-window'
 import type Store from 'electron-store'
 import { craftOfExileUrl } from '../shared/external-link'
 import { isTownOrHideout } from '../shared/is-town-or-hideout'
+import { IPC_CHANNELS } from '../shared/contracts/ipc'
 import type {
   AppSettings,
   FilterFile,
@@ -27,11 +28,11 @@ import { detectFocusedPoeVersion, detectOpenPoeVersions } from './game-detector'
 import { getPoeVersion } from './game-state'
 import { requestGameSwitch } from './game-switch'
 import { sendCtrlCToPoE } from './hotkeys'
-import { focusGameWindow, getOverlayWindow, isTypingInOverlay, showOverlay } from './overlay'
+import { focusGameWindow, getOverlayAttachedVersion, getOverlayWindow, isTypingInOverlay, showOverlay } from './overlay'
 import { readItemFromClipboard } from './trade/clipboard'
 import {
   getUniquesByBase,
-  lookupBestUniquePrice,
+  lookupItemPrice,
   lookupPrice,
   lookupPriceForItem,
   lookupUniquePriceForBase,
@@ -212,10 +213,7 @@ export function evaluateAndSend(item: PoeItem): void {
 export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>): Promise<void> {
   const league = getProfileBackedSetting(store, 'league')
   await refreshPrices(league)
-  const priceInfo =
-    item.rarity === 'Unique'
-      ? (lookupBestUniquePrice(item.baseType) ?? lookupPriceForItem(item))
-      : lookupPriceForItem(item)
+  const priceInfo = lookupItemPrice(item)
 
   // For unidentified uniques, find all possible uniques for this base type
   const unidCandidates: Array<{ name: string; chaosValue: number }> = []
@@ -278,6 +276,7 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
       mapRareMonsters: item.mapRareMonsters,
       enchants: item.enchants,
       imbues: item.imbues,
+      grantedSkills: item.grantedSkills,
       memoryStrands: item.memoryStrands,
       physDamageMin: item.physDamageMin,
       physDamageMax: item.physDamageMax,
@@ -312,7 +311,7 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
 
   const divinePrice = lookupPrice('Divine Orb', 'Divine Orb')
   const chaosPerDivine = divinePrice?.chaosValue ?? 0
-  getOverlayWindow()?.webContents.send('price-check', {
+  getOverlayWindow()?.webContents.send(IPC_CHANNELS.OVERLAY.PRICE_CHECK_EVENT, {
     item,
     priceInfo,
     statFilters,
@@ -417,7 +416,13 @@ async function ensureCorrectGameForHotkey(store: Store<AppSettings>): Promise<bo
 
   const v = await detectFocusedPoeVersion()
   if (v) {
-    if (v === getPoeVersion()) return true
+    // Relaunch when the focused game differs from the in-memory version OR from
+    // the version the overlay actually attached to at startup. The attach check
+    // is a backstop for onboarding exits that bypass finish-onboarding (e.g. the
+    // titlebar X): in-memory may already be PoE2 (so the version check passes)
+    // while the overlay is still bound to PoE1, so results never surface until a
+    // relaunch rebinds the native tracker.
+    if (v === getPoeVersion() && v === getOverlayAttachedVersion()) return true
     requestGameSwitch(store, v).catch((err) => console.error('[game-switch]', err))
     return false
   }
@@ -491,7 +496,7 @@ export function createHotkeyHandler(store: Store<AppSettings>, isElevated: () =>
 /** Switch the overlay into price-check view and populate it with `item`. Shared by the
  *  clipboard hotkey path and UI-triggered lookups (e.g. clicking a sister overlay row). */
 export async function runPriceCheck(item: PoeItem, store: Store<AppSettings>): Promise<void> {
-  getOverlayWindow()?.webContents.send('price-check-open')
+  getOverlayWindow()?.webContents.send(IPC_CHANNELS.OVERLAY.PRICE_CHECK_OPEN_EVENT)
   await preloadPriceCheck(item, store)
   showOverlay()
   if (getCurrentFilter()) evaluateAndSend(item)

@@ -1,6 +1,6 @@
 import type { OverlayAnchor } from '../shared/types'
 import { forwardLogLinesTo, onZoneChanged, sendCurrentZoneTo } from './client-log'
-import { registerSecondaryOverlay, type SecondaryOverlay } from './windowing'
+import { registerSecondaryOverlay, type OverlaySpec, type SecondaryOverlay } from './windowing'
 
 export interface PluginOverlayOptions {
   title: string
@@ -40,10 +40,22 @@ function ensureZoneFanout(): void {
   })
 }
 
-export function registerPluginOverlay(pluginId: string, opts: PluginOverlayOptions): SecondaryOverlay {
+/** Shared tail: map-check, register, store, wire zone fanout + log forwarding.
+ *  Both public register functions delegate here with their specific spec. */
+function registerPluginOverlayInternal(pluginId: string, spec: OverlaySpec): SecondaryOverlay {
   const existing = overlays.get(pluginId)
   if (existing) return existing
-  const overlay = registerSecondaryOverlay({
+  const overlay = registerSecondaryOverlay(spec)
+  overlays.set(pluginId, overlay)
+  ensureZoneFanout()
+  // Log lines forward through a plain array (no EventEmitter listener limit),
+  // so a per-plugin getter is fine. Lazy getter is safe before the window exists.
+  forwardLogLinesTo(() => overlays.get(pluginId)?.getWindow() ?? null)
+  return overlay
+}
+
+export function registerPluginOverlay(pluginId: string, opts: PluginOverlayOptions): SecondaryOverlay {
+  return registerPluginOverlayInternal(pluginId, {
     id: `plugin-overlay:${pluginId}`,
     htmlEntry: 'plugin-overlay.html',
     defaultAnchor: () => defaultAnchorFor(opts),
@@ -54,12 +66,39 @@ export function registerPluginOverlay(pluginId: string, opts: PluginOverlayOptio
       sendCurrentZoneTo(win)
     },
   })
-  overlays.set(pluginId, overlay)
-  ensureZoneFanout()
-  // Log lines forward through a plain array (no EventEmitter listener limit),
-  // so a per-plugin getter is fine. Lazy getter is safe before the window exists.
-  forwardLogLinesTo(() => overlays.get(pluginId)?.getWindow() ?? null)
-  return overlay
+}
+
+/** Full game window. Annotation overlays span the whole game so the plugin can
+ *  position elements anywhere in game CSS coordinates. */
+function fullGameAnchor(): OverlayAnchor {
+  return { fracX: 0, fracY: 0, fracW: 1, fracH: 1 }
+}
+
+/** Register a plugin's annotation overlay: a transparent, click-through window
+ *  spanning the full game window. The plugin draws absolutely-positioned
+ *  elements (e.g. value labels next to a menu). Reuses the same overlays-map key
+ *  as registerPluginOverlay, so open/close/dispose work unchanged. */
+export function registerPluginAnnotationOverlay(pluginId: string): SecondaryOverlay {
+  return registerPluginOverlayInternal(pluginId, {
+    id: `plugin-overlay:${pluginId}`,
+    htmlEntry: 'plugin-annotation-overlay.html',
+    defaultAnchor: fullGameAnchor,
+    onFirstShow: (win) => {
+      win.webContents.send('plugin-overlay:init', pluginId)
+      sendCurrentZoneTo(win)
+      // The window must be click-through. installOpacityHideShow forces
+      // setIgnoreMouseEvents(false) on every show, so set it now (the first show
+      // already happened) and re-apply on each subsequent show, mirroring the
+      // whiteboard's play-mode hook. forward:true still delivers mouse-move to
+      // any plugin element that re-enables pointer-events.
+      win.setIgnoreMouseEvents(true, { forward: true })
+      win.on('show', () => {
+        setImmediate(() => {
+          if (!win.isDestroyed()) win.setIgnoreMouseEvents(true, { forward: true })
+        })
+      })
+    },
+  })
 }
 
 export function getPluginOverlay(pluginId: string): SecondaryOverlay | null {

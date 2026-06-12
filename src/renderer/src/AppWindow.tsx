@@ -153,6 +153,17 @@ export function AppWindow(): JSX.Element {
     goTo(next)
   }
 
+  // Both Done-screen buttons funnel through finish-onboarding so the
+  // relaunch-on-game-mismatch check (and the completion-flag writes) happen no
+  // matter which exit the user picks. `after` runs only when we're not relaunching
+  // -- a mismatch relaunch tears the window down before it could matter.
+  const completeOnboarding = async (after: () => void): Promise<void> => {
+    setRevisitingOnboarding(false)
+    const result = await window.api.finishOnboarding()
+    if ('restarting' in result) return
+    after()
+  }
+
   return (
     <div className="w-screen h-screen bg-bg-solid flex flex-col overflow-hidden">
       {gameSwitchTarget !== null && (
@@ -318,12 +329,15 @@ export function AppWindow(): JSX.Element {
           {step === 'done' && (
             <SlideIn stepKey="done" direction={direction}>
               <DoneStep
-                onFinish={() => {
-                  window.api.setSetting('onboardingCompleted', true)
-                  window.api.setSetting('onboardingStep', '')
-                  setRevisitingOnboarding(false)
-                  goTo('settings')
-                }}
+                onOpenSettings={() => void completeOnboarding(() => goTo('settings'))}
+                onCloseWindow={() =>
+                  void completeOnboarding(() => {
+                    // Leave the view on settings before hiding so reopening from
+                    // the tray doesn't strand the user on the onboarding "done" page.
+                    goTo('settings')
+                    window.close()
+                  })
+                }
               />
             </SlideIn>
           )}

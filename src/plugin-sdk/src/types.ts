@@ -17,7 +17,12 @@ export interface PluginManifest {
   iconUrl?: string
 }
 
-export type PluginActivate = (ctx: ScalpelPluginContext) => void | Promise<void>
+/** Optional cleanup returned from activate(); the host calls it when the plugin
+ *  is unloaded (uninstall or in-place update) so subscriptions/timers can be
+ *  torn down. Mirrors RegisterTabOptions.render's cleanup-fn convention. */
+export type PluginTeardown = () => void
+
+export type PluginActivate = (ctx: ScalpelPluginContext) => PluginTeardown | void | Promise<PluginTeardown | void>
 
 export interface RegisterTabOptions {
   /** Shown as the title-bar tooltip and in any "manage plugins" UI. */
@@ -54,6 +59,15 @@ export interface RegisterOverlayOptions {
   hotkeyLabel?: string
   /** Initial window size in CSS px. Falls back to a Scalpel default if absent. */
   defaultSize?: { width: number; height: number }
+  /**
+   * Overlay surface kind. 'window' (default) is the chrome'd, draggable,
+   * snap-anchored window. 'annotation' is a borderless, transparent,
+   * click-through surface locked to the full game window: `render`'s container
+   * is sized to the game window in CSS px and the plugin absolutely-positions
+   * its own elements (e.g. value labels next to a menu). In annotation mode
+   * `defaultSize` is ignored (the surface always spans the game window).
+   */
+  mode?: 'window' | 'annotation'
 }
 
 export interface PluginStorage {
@@ -83,6 +97,27 @@ export interface GameConfigApi {
    * `write`. Returns an unsubscribe function.
    */
   onChange(handler: () => void): () => void
+}
+
+export interface GameRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface GameCapture {
+  /** RGBA, row-major, length === width * height * 4. Drop into `new ImageData(...)`. */
+  pixels: Uint8ClampedArray
+  /** Captured-frame dimensions in frame px (downscaled from physical on tall windows). */
+  width: number
+  height: number
+  /** Top-left of the captured frame in game CSS px. {x:0,y:0} for a full-window capture. */
+  origin: { x: number; y: number }
+  /** Full game window size in CSS px. An annotation overlay spans exactly this. */
+  gameSize: { width: number; height: number }
+  /** Captured frame px per game CSS px. Place a label: cssX = origin.x + boxFramePx.x / scale. */
+  scale: number
 }
 
 export interface PricesApi {
@@ -167,6 +202,16 @@ export interface ScalpelPluginContext {
    * recognisable PoE item.
    */
   copyAndEvaluateItem(): Promise<PoeItem | null>
+
+  /**
+   * Capture the focused game window as raw RGBA pixels for the plugin to OCR or
+   * pixel-inspect itself. Resolves to null when PoE is not focused (the capture
+   * is scoped to the game window and never grabs the rest of the desktop). Pass
+   * `region` (game CSS px) to capture and return only a sub-rectangle; omit it
+   * for the whole window. One-shot - call it when you need a frame (e.g. from
+   * your registered hotkey while the target menu is open).
+   */
+  captureGameWindow(region?: GameRect): Promise<GameCapture | null>
 
   /**
    * Switch the overlay to this plugin's tab. No-op if the tab isn't

@@ -10,6 +10,7 @@ export type DiagnosticSource =
   | 'renderer'
   | 'plugin'
   | 'plugin-overlay'
+  | 'plugin-annotation-overlay'
   | 'regex-remote'
 
 export interface SerializedDiagnosticError {

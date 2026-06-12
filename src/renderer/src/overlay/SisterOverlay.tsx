@@ -30,6 +30,8 @@ type PriceMap = Record<string, { chaosValue: number; divineValue?: number } | nu
 interface SisterOverlayProps {
   /** Triggering item's display name (PoeItem.name). */
   itemName: string
+  /** Running game version - selects the PoE1 vs PoE2 related-items dataset. */
+  poeVersion: 1 | 2
   league: string
   chaosPerDivine?: number
   /** Absolute px offsets inside the overlay canvas. */
@@ -47,16 +49,28 @@ interface SisterOverlayProps {
 }
 
 export const SisterOverlay = forwardRef<HTMLDivElement, SisterOverlayProps>(function SisterOverlay(
-  { itemName, league, chaosPerDivine, left, top, width, dragOffset, scale, scaleOrigin, maxHeight }: SisterOverlayProps,
+  {
+    itemName,
+    poeVersion,
+    league,
+    chaosPerDivine,
+    left,
+    top,
+    width,
+    dragOffset,
+    scale,
+    scaleOrigin,
+    maxHeight,
+  }: SisterOverlayProps,
   ref,
 ): JSX.Element | null {
   // Keep the displayed entry up as long as the user is drilling into items from the
   // current sister list (those clicks price-check items that may have no entry of their
   // own). If the new itemName isn't in the current entry's list AND has no entry itself,
   // the user hotkeyed something unrelated -- close the sister.
-  const [entry, setEntry] = useState<ReturnType<typeof findRelated>>(() => findRelated(itemName))
+  const [entry, setEntry] = useState<ReturnType<typeof findRelated>>(() => findRelated(itemName, poeVersion))
   useEffect(() => {
-    const next = findRelated(itemName)
+    const next = findRelated(itemName, poeVersion)
     if (next) {
       setEntry(next)
       return
@@ -66,7 +80,7 @@ export const SisterOverlay = forwardRef<HTMLDivElement, SisterOverlayProps>(func
       const inList = prev.query.some((q) => q.name === itemName) || prev.items.some((i) => i.name === itemName)
       return inList ? prev : null
     })
-  }, [itemName])
+  }, [itemName, poeVersion])
 
   const [prices, setPrices] = useState<PriceMap>({})
 

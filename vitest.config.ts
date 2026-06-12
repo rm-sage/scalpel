@@ -5,12 +5,13 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.mjs'],
     exclude: ['node_modules', 'out', 'dist'],
     passWithNoTests: true,
     environmentMatchGlobs: [
       ['src/renderer/**/*.test.tsx', 'jsdom'],
       ['src/**/*.test.ts', 'node'],
+      ['scripts/**/*.test.mjs', 'node'],
     ],
     setupFiles: ['src/renderer/test-setup.ts'],
   },

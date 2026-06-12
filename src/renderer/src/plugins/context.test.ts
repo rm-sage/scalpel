@@ -21,6 +21,7 @@ const baseDeps = () => ({
   registerHotkey: vi.fn(),
   openTab: vi.fn(),
   copyAndEvaluateItem: vi.fn(async () => null),
+  captureGameWindow: vi.fn(async () => null),
   registerOverlay: vi.fn(),
   openOverlay: vi.fn(),
   closeOverlay: vi.fn(),
@@ -199,5 +200,15 @@ describe('createPluginContext openTab + copyAndEvaluateItem', () => {
     const ctx = createPluginContext(deps)
     await ctx.copyAndEvaluateItem()
     expect(deps.copyAndEvaluateItem).toHaveBeenCalled()
+  })
+})
+
+describe('createPluginContext captureGameWindow', () => {
+  it('forwards captureGameWindow to the dep', async () => {
+    const captureGameWindow = vi.fn().mockResolvedValue(null)
+    const ctx = createPluginContext({ ...baseDeps(), captureGameWindow })
+    const region = { x: 1, y: 2, width: 3, height: 4 }
+    await ctx.captureGameWindow(region)
+    expect(captureGameWindow).toHaveBeenCalledWith(region)
   })
 })

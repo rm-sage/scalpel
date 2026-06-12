@@ -1,49 +1,44 @@
 name: Release
-
 on:
   push:
     tags:
       - 'v*'
-
+  workflow_dispatch:
+    inputs:
+      publish_git_aur:
+        description: "Publish scalpel-poe-git to AUR"
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: write
-
 jobs:
   release-win:
+    if: ${{ github.event_name == 'push' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install Python setuptools (needed by node-gyp)
         run: pip install setuptools
-
       - name: Install dependencies
         run: npm ci
-
       - name: Lint
         run: npm run lint
-
       - name: Test
         run: npm run test
-
       - name: Build
         run: npm run build
-
       - name: Pack ASAR
         run: node scripts/pack-asar.js
-
       - name: Build installer (no publish - we handle that separately)
         run: npx electron-builder --win --x64 --publish never
-
       - name: Extract version
         id: version
         shell: bash
-        run: echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
-
+        run: echo "version=$(node -p 'require("./package.json").version')" >>$GITHUB_OUTPUT
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -54,16 +49,15 @@ jobs:
             dist/v${{ steps.version.outputs.version }}/app.asar.unpacked.zip
             dist/v${{ steps.version.outputs.version }}/manifest.json
             dist/Scalpel-Setup.exe
-
   release-linux:
+    if: ${{ github.event_name == 'push' }}
+    needs: release-win
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install Linux native build deps
         # uiohook-napi and electron-overlay-window's X11 backends link against
         # the X11/xcb dev headers. libfuse2 is the AppImage Type 2 runtime
@@ -74,26 +68,20 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libxcb1-dev libxtst-dev libxss-dev libxkbfile-dev \
-            libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev libxkbcommon-dev libfuse2
-
+              libxcb1-dev libxtst-dev libxss-dev libxkbfile-dev \
+              libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+              libxcursor-dev libxi-dev libxkbcommon-dev libfuse2
       - name: Install dependencies
         run: npm ci
-
       - name: Test
         run: npm run test
-
       - name: Build
         run: npm run build
-
       - name: Build AppImage
         run: npx electron-builder --linux AppImage --x64 --publish never
-
       - name: Extract version
         id: version
-        run: echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
-
+        run: echo "version=$(node -p 'require("./package.json").version')" >>$GITHUB_OUTPUT
       - name: Append AppImage to GitHub Release
         # The Windows job creates the release with notes; this appends the
         # AppImage artifact. softprops/action-gh-release upserts on tag.
@@ -103,3 +91,73 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, '-exp') }}
           files: |
             dist/Scalpel.AppImage
+  publish-aur:
+    needs: release-linux
+    if: ${{ github.event_name == 'push' && !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') && !contains(github.ref_name, '-exp') }}
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install packaging tools
+        run: |
+          pacman -Syu --noconfirm --needed \
+              base-devel \
+              curl \
+              git \
+              pacman-contrib \
+              sudo
+          useradd --create-home builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers.d/builder
+          chmod 0440 /etc/sudoers.d/builder
+      - uses: actions/checkout@v4
+      - name: Update AUR package metadata
+        run: |
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          VERSION="${GITHUB_REF_NAME#v}" sudo --preserve-env=GITHUB_WORKSPACE,VERSION -u builder \
+              bash -lc 'cd "$GITHUB_WORKSPACE" && scripts/update-aur-packages.sh --version "$VERSION"'
+      - name: Publish scalpel-poe-bin to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        with:
+          pkgname: scalpel-poe-bin
+          pkgbuild: packaging/aur/scalpel-poe-bin/PKGBUILD
+          assets: |
+            packaging/aur/scalpel-poe-bin/.SRCINFO
+            packaging/aur/scalpel-poe-bin/scalpel-poe.sh
+            packaging/aur/scalpel-poe-bin/scalpel-poe.desktop
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "chore: update scalpel-poe-bin to ${{ github.ref_name }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+      - name: Publish scalpel-poe to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        with:
+          pkgname: scalpel-poe
+          pkgbuild: packaging/aur/scalpel-poe/PKGBUILD
+          assets: |
+            packaging/aur/scalpel-poe/.SRCINFO
+            packaging/aur/scalpel-poe/scalpel-poe.sh
+            packaging/aur/scalpel-poe/scalpel-poe.desktop
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "chore: update scalpel-poe to ${{ github.ref_name }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+  publish-aur-git:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_git_aur }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish scalpel-poe-git to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        with:
+          pkgname: scalpel-poe-git
+          pkgbuild: packaging/aur/scalpel-poe-git/PKGBUILD
+          assets: |
+            packaging/aur/scalpel-poe-git/.SRCINFO
+            packaging/aur/scalpel-poe-git/scalpel-poe.sh
+            packaging/aur/scalpel-poe-git/scalpel-poe.desktop
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "chore: publish scalpel-poe-git"
+          ssh_keyscan_types: rsa,ecdsa,ed25519

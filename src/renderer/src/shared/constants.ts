@@ -39,6 +39,19 @@ export function initIconMap(version: 1 | 2): void {
   replaceMap(iconMap, ICONS_BY_VERSION[version])
 }
 
+/** The running game's PoE version, cached once the renderer learns it via IPC.
+ *  Lets version-agnostic callers (e.g. the plugin SDK's findRelated, which keeps
+ *  a single-arg signature for plugin authors) resolve the active game without
+ *  threading the arg. Defaults to 1 until initPoeVersion runs. The app relaunches
+ *  on game switch, so this is set once per process. */
+let currentPoeVersion: 1 | 2 = 1
+export function initPoeVersion(version: 1 | 2): void {
+  currentPoeVersion = version
+}
+export function getCurrentPoeVersion(): 1 | 2 {
+  return currentPoeVersion
+}
+
 /** Merge runtime-harvested icons (from main's icon-cache) into the shared
  *  iconMap. Called after initIconMap so bundled entries win -- cache entries
  *  only fill keys we didn't ship icons for. */

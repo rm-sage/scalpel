@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const registered: Array<{ id: string; htmlEntry: string }> = []
+const registeredSpecs: Array<{ id: string; htmlEntry: string; defaultAnchor: () => unknown }> = []
 const fakeOverlay = {
   show: vi.fn(),
   hide: vi.fn(),
@@ -14,8 +15,9 @@ const fakeOverlay = {
 }
 
 vi.mock('./windowing', () => ({
-  registerSecondaryOverlay: (spec: { id: string; htmlEntry: string }) => {
+  registerSecondaryOverlay: (spec: { id: string; htmlEntry: string; defaultAnchor: () => unknown }) => {
     registered.push({ id: spec.id, htmlEntry: spec.htmlEntry })
+    registeredSpecs.push(spec)
     return fakeOverlay
   },
 }))
@@ -25,12 +27,19 @@ vi.mock('./client-log', () => ({
   sendCurrentZoneTo: vi.fn(),
 }))
 
-import { _resetForTests, getPluginOverlay, registerPluginOverlay, togglePluginOverlay } from './plugin-overlay'
+import {
+  _resetForTests,
+  getPluginOverlay,
+  registerPluginAnnotationOverlay,
+  registerPluginOverlay,
+  togglePluginOverlay,
+} from './plugin-overlay'
 
 describe('plugin-overlay registry', () => {
   beforeEach(() => {
     _resetForTests()
     registered.length = 0
+    registeredSpecs.length = 0
     vi.clearAllMocks()
   })
 
@@ -59,5 +68,12 @@ describe('plugin-overlay registry', () => {
     registerPluginOverlay('demo4', { title: 'Demo4' })
     expect(getPluginOverlay('demo4')).toBe(fakeOverlay)
     expect(getPluginOverlay('nope')).toBeNull()
+  })
+
+  it('registers an annotation overlay with a full-game anchor and the annotation html entry', () => {
+    registerPluginAnnotationOverlay('anno-demo')
+    const spec = registeredSpecs.at(-1)
+    expect(spec?.htmlEntry).toBe('plugin-annotation-overlay.html')
+    expect(spec?.defaultAnchor()).toEqual({ fracX: 0, fracY: 0, fracW: 1, fracH: 1 })
   })
 })

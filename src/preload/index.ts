@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { IPC_CHANNELS } from '../shared/contracts/ipc'
 import type { BugReportResult, RendererDiagnosticPayload } from '../shared/diagnostics'
 import type { ExternalLinkTarget } from '../shared/external-link'
 import type {
@@ -28,6 +29,8 @@ export const api = {
   getSettings: (): Promise<RuntimeSettings> => ipcRenderer.invoke('get-settings'),
   setSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void> =>
     ipcRenderer.invoke('set-setting', key, value),
+  finishOnboarding: (): Promise<{ ok: true; restarting?: true; devRestartRequired?: true }> =>
+    ipcRenderer.invoke('finish-onboarding'),
   setProfileSettingForGame: (
     variant: GameVariant,
     key: ProfileSettingKey,
@@ -393,8 +396,8 @@ export const api = {
   },
   onPriceCheckOpen: (cb: () => void): (() => void) => {
     const handler = (): void => cb()
-    ipcRenderer.on('price-check-open', handler)
-    return () => ipcRenderer.removeListener('price-check-open', handler)
+    ipcRenderer.on(IPC_CHANNELS.OVERLAY.PRICE_CHECK_OPEN_EVENT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.OVERLAY.PRICE_CHECK_OPEN_EVENT, handler)
   },
   onFilterHotkeyOpen: (cb: () => void): (() => void) => {
     const handler = (): void => cb()
@@ -431,8 +434,8 @@ export const api = {
     }) => void,
   ): (() => void) => {
     const handler = (_: Electron.IpcRendererEvent, data: Parameters<typeof cb>[0]): void => cb(data)
-    ipcRenderer.on('price-check', handler)
-    return () => ipcRenderer.removeListener('price-check', handler)
+    ipcRenderer.on(IPC_CHANNELS.OVERLAY.PRICE_CHECK_EVENT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.OVERLAY.PRICE_CHECK_EVENT, handler)
   },
   tradeSearch: (
     item: {
@@ -852,6 +855,10 @@ export const api = {
     entry: import('../shared/plugin-registry-types').RegistryEntry,
   ): Promise<{ ok: true; id: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke('plugins:install-from-registry', entry),
+  pluginUpdateFromRegistry: (
+    entry: import('../shared/plugin-registry-types').RegistryEntry,
+  ): Promise<{ ok: true; id: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('plugins:update-from-registry', entry),
   pluginUninstall: (pluginId: string): Promise<{ ok: true } | { ok: false; error: string }> =>
     ipcRenderer.invoke('plugins:uninstall', pluginId),
   pluginUnregisterHotkey: (pluginId: string): Promise<void> =>
@@ -870,6 +877,16 @@ export const api = {
     ): void => handler(entry)
     ipcRenderer.on('plugin-installed', listener)
     return () => ipcRenderer.off('plugin-installed', listener)
+  },
+  onPluginUpdated: (
+    handler: (entry: { manifest: import('../plugin-sdk/src/types').PluginManifest; entryUrl: string }) => void,
+  ): (() => void) => {
+    const listener = (
+      _: Electron.IpcRendererEvent,
+      entry: { manifest: import('../plugin-sdk/src/types').PluginManifest; entryUrl: string },
+    ): void => handler(entry)
+    ipcRenderer.on('plugin-updated', listener)
+    return () => ipcRenderer.off('plugin-updated', listener)
   },
   onPluginUninstalled: (handler: (pluginId: string) => void): (() => void) => {
     const listener = (_: Electron.IpcRendererEvent, pluginId: string): void => handler(pluginId)
@@ -901,10 +918,19 @@ export const api = {
   pluginShowOverlay: (): Promise<void> => ipcRenderer.invoke('plugins:show-overlay'),
   pluginRegisterOverlay: (
     pluginId: string,
-    opts: { title: string; hotkeyLabel?: string; defaultSize?: { width: number; height: number } },
+    opts: {
+      title: string
+      hotkeyLabel?: string
+      defaultSize?: { width: number; height: number }
+      mode?: 'window' | 'annotation'
+    },
   ): Promise<void> => ipcRenderer.invoke('plugins:register-overlay', pluginId, opts),
   pluginOpenOverlay: (pluginId: string): Promise<void> => ipcRenderer.invoke('plugins:open-overlay', pluginId),
   pluginCloseOverlay: (pluginId: string): Promise<void> => ipcRenderer.invoke('plugins:close-overlay', pluginId),
+  pluginCaptureGameWindow: (
+    region?: import('../plugin-sdk/src/types').GameRect,
+  ): Promise<import('../plugin-sdk/src/types').GameCapture | null> =>
+    ipcRenderer.invoke('plugins:capture-game-window', region),
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -1,46 +1,5 @@
-import { StrictMode, useEffect, useState } from 'react'
-import { createRoot } from 'react-dom/client'
-import { App } from './App'
 import '../styles.css'
-import { bootstrapTheme } from '../shared/apply-theme'
-import { DiagnosticErrorBoundary, installRendererDiagnostics } from '../shared/diagnostics'
-import { bootstrapLocale, bootstrapLocaleSync, LocaleProvider } from '../shared/locale'
+import { mountPluginOverlayRoot } from '../plugins/plugin-overlay-root'
+import { App } from './App'
 
-bootstrapLocaleSync()
-void bootstrapLocale()
-void bootstrapTheme()
-installRendererDiagnostics('plugin-overlay')
-
-// Subscribe at module load (synchronously, before React mounts) so we never
-// miss the one-shot init IPC: main sends 'plugin-overlay:init' during the
-// window's first show, which can arrive before a useEffect-registered listener.
-let initialPluginId: string | null = null
-const idListeners = new Set<(id: string) => void>()
-window.api.onPluginOverlayInit((id) => {
-  initialPluginId = id
-  for (const listener of idListeners) listener(id)
-})
-
-function Root(): JSX.Element | null {
-  const [pluginId, setPluginId] = useState<string | null>(initialPluginId)
-  useEffect(() => {
-    if (pluginId) return
-    idListeners.add(setPluginId)
-    return () => {
-      idListeners.delete(setPluginId)
-    }
-  }, [pluginId])
-  if (!pluginId) return null
-  return <App pluginId={pluginId} />
-}
-
-const root = document.getElementById('root')!
-createRoot(root).render(
-  <StrictMode>
-    <DiagnosticErrorBoundary source="plugin-overlay">
-      <LocaleProvider>
-        <Root />
-      </LocaleProvider>
-    </DiagnosticErrorBoundary>
-  </StrictMode>,
-)
+mountPluginOverlayRoot('plugin-overlay', App)

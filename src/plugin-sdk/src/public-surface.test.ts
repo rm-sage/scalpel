@@ -80,6 +80,7 @@ const EXPECTED_SDK_EXPORTS = [
 // is what a running plugin actually touches (the type side is in types.ts /
 // types.test.ts; this catches implementation drift away from that type).
 const EXPECTED_CONTEXT_KEYS = [
+  'captureGameWindow',
   'closeOverlay',
   'copyAndEvaluateItem',
   'fetch',
@@ -141,6 +142,7 @@ function stubDeps(): PluginContextFactoryDeps {
     registerHotkey: () => {},
     openTab: () => {},
     copyAndEvaluateItem: async () => null,
+    captureGameWindow: async () => null,
     registerOverlay: () => {},
     openOverlay: () => {},
     closeOverlay: () => {},

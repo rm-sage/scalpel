@@ -1,10 +1,484 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "poe1": {
-    "Mageblood": ["Leftmost # Magic Utility Flask constantly applies its Flask Effect to you"],
-    "Loreweave": ["Your Maximum Resistances are #%"]
+    "Watcher's Eye": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "Megalomaniac": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "Sublime Vision": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "That Which Was Taken": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "The Balance of Terror": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "Split Personality": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "Forbidden Flame": {
+      "mode": "all_explicits",
+      "confidence": "verified",
+      "note": "Allocates mod; pairs with Flesh"
+    },
+    "Forbidden Flesh": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "Impossible Escape": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "The Light of Meaning": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "Precursor's Emblem": {
+      "mode": "all_explicits",
+      "familyMatch": true,
+      "confidence": "verified"
+    },
+    "Circle of": {
+      "mode": "all_explicits",
+      "familyMatch": true,
+      "confidence": "verified",
+      "note": "Anguish/Fear/Guilt/Nostalgia/Regret; Herald synth mods drive price"
+    },
+    "Ventor's Gamble": {
+      "mode": "all_explicits",
+      "confidence": "verified"
+    },
+    "Aul's Uprising": {
+      "mode": "all_explicits",
+      "confidence": "verified",
+      "note": "aura variant + reserves-no-mana line"
+    },
+    "Skin of the Lords": {
+      "mode": "all_explicits",
+      "confidence": "verified",
+      "nonStatFilters": ["socket_colors"],
+      "note": "random keystone; immutable sockets, white sockets premium"
+    },
+    "The Adorned": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_461663422",
+          "text": "#% increased Effect of Jewel Socket Passive Skills containing Corrupted Magic Jewels",
+          "note": "price superlinear in roll"
+        }
+      ]
+    },
+    "Voices": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_1085446536",
+          "text": "Adds # Small Passive Skills which grant nothing",
+          "direction": "lower",
+          "note": "1/3/5/7 variants; 1-passive is a different price universe"
+        }
+      ]
+    },
+    "Bottled Faith": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_3278399103",
+          "text": "#% increased Critical Strike Chance against Enemies on Consecrated Ground during Effect"
+        },
+        {
+          "id": "explicit.stat_1866211373",
+          "text": "Consecrated Ground created during Effect applies #% increased Damage taken to Enemies"
+        }
+      ]
+    },
+    "Progenesis": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_41860024",
+          "text": "When Hit during effect, #% of Life loss from Damage taken occurs over 4 seconds instead"
+        }
+      ]
+    },
+    "Ashes of the Stars": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_3655769732",
+          "text": "+#% to Quality of all Skill Gems"
+        }
+      ]
+    },
+    "Defiance of Destiny": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_1383676476",
+          "text": "Gain #% of Missing Unreserved Life before being Hit by an Enemy"
+        }
+      ]
+    },
+    "Ryslatha's Coil": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_3029185248",
+          "text": "#% more Maximum Physical Attack Damage"
+        },
+        {
+          "id": "explicit.stat_1715495976",
+          "text": "#% less Minimum Physical Attack Damage",
+          "tier": "secondary"
+        }
+      ]
+    },
+    "Loreweave": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_798767971",
+          "text": "Your Maximum Resistances are #%"
+        }
+      ],
+      "note": "migrated from legacy v1 text entry"
+    },
+    "Thread of Hope": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["ring_size_variant"]
+    },
+    "Hands of the High Templar": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["corrupted_implicits"]
+    },
+    "Stranglegasp": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["anointments"]
+    },
+    "Shroud of the Lightless": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["abyssal_socket_count"]
+    },
+    "Bubonic Trail": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["abyssal_socket_count"]
+    },
+    "Tombfist": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["abyssal_socket_count"]
+    },
+    "Lightpoacher": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["abyssal_socket_count"]
+    },
+    "Command of the Pit": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["abyssal_socket_count"]
+    },
+    "Mageblood": {
+      "mode": "none",
+      "confidence": "verified",
+      "note": "variance is corrupted implicits, user-driven; replaces legacy v1 premium flask-effect entry per June 2026 spec"
+    },
+    "Headhunter": {
+      "mode": "none",
+      "confidence": "verified"
+    },
+    "Original Sin": {
+      "mode": "none",
+      "confidence": "verified"
+    },
+    "Nimis": {
+      "mode": "none",
+      "confidence": "verified"
+    },
+    "Kalandra's Touch": {
+      "mode": "none",
+      "confidence": "verified"
+    }
   },
   "poe2": {
-    "Loreweave": ["Your Maximum Resistances are #%"]
-  }
+    "Ventor's Gamble": {
+      "mode": "all_explicits",
+      "confidence": "verified",
+      "note": "rarity/life/quantity roll negative to positive; the rolled set is the item"
+    },
+    "Mageblood": {
+      "mode": "all_explicits",
+      "confidence": "verified",
+      "note": "0.5: 4x random Legacy of # mods plus a duplicate-stacking effect mod; the rolled Legacies are the item"
+    },
+    "Astramentis": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_1379411836",
+          "text": "# to all Attributes",
+          "note": "trade exposes two explicit ids with identical all-Attributes text; both listed so the curated default fires regardless of which the matcher resolves"
+        },
+        {
+          "id": "explicit.stat_2897413282",
+          "text": "# to all Attributes"
+        }
+      ]
+    },
+    "Temporalis": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_396200591",
+          "text": "Skills have # seconds to Cooldown",
+          "direction": "lower",
+          "note": "rolls negative; more negative is better, so prefill a max bound"
+        },
+        {
+          "id": "explicit.stat_1444556985",
+          "text": "#% of Damage taken Recouped as Life",
+          "tier": "secondary"
+        },
+        {
+          "id": "explicit.stat_472520716",
+          "text": "#% of Damage taken Recouped as Mana",
+          "tier": "secondary"
+        }
+      ]
+    },
+    "Ingenuity": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "nonStatFilters": ["charm_slot_count"],
+      "mods": [
+        {
+          "id": "explicit.stat_513747733",
+          "text": "#% increased bonuses gained from left Equipped Ring"
+        },
+        {
+          "id": "explicit.stat_3885501357",
+          "text": "#% increased bonuses gained from right Equipped Ring"
+        }
+      ]
+    },
+    "Headhunter": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_1416292992",
+          "text": "Has # Charm Slot"
+        },
+        {
+          "id": "explicit.stat_3299347043",
+          "text": "# to maximum Life",
+          "tier": "secondary"
+        }
+      ]
+    },
+    "Hand of Wisdom and Action": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_3261801346",
+          "text": "# to Dexterity"
+        },
+        {
+          "id": "explicit.stat_328541901",
+          "text": "# to Intelligence"
+        }
+      ],
+      "note": "0.5 verified: per-attribute scaling divisors are fixed (per 20 Dex/Int), only the flat Dex/Int adds roll"
+    },
+    "Darkness Enthroned": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_2081918629",
+          "text": "#% increased effect of Socketed Augment Items"
+        }
+      ]
+    },
+    "Defiance of Destiny": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_1990472846",
+          "text": "Recover #% of Missing Life before being Hit by an Enemy"
+        }
+      ]
+    },
+    "Rathpith Globe": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "nonStatFilters": ["cultivated_mods"],
+      "mods": [
+        {
+          "id": "explicit.stat_4015621042",
+          "text": "#% increased Energy Shield"
+        },
+        {
+          "id": "explicit.stat_3299347043",
+          "text": "# to maximum Life"
+        }
+      ],
+      "note": "cultivated_mods is documentary only; PoE2 trade has no cultivated filter (native no-op)"
+    },
+    "Choir of the Storm": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["granted_skill_level"],
+      "note": "granted Lightning Bolt level varies; level surfaces via the granted-skill filter"
+    },
+    "Strugglescream": {
+      "mode": "none",
+      "confidence": "verified",
+      "nonStatFilters": ["instilled_mods"]
+    },
+    "Against the Darkness": {
+      "mode": "all_explicits",
+      "confidence": "verified",
+      "note": "unique Time-Lost Diamond; 2 random jewel modifiers from a pool, the rolled set is the item"
+    },
+    "Loreweave": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_798767971",
+          "text": "Your Maximum Resistances are #%"
+        }
+      ],
+      "note": "migrated from legacy v1 text entry"
+    },
+    "From Nothing": {
+      "mode": "none",
+      "confidence": "verified",
+      "note": "migrated from legacy v1 entry whose stat id (explicit.stat_2422708892) is absent from the live 0.5 trade stats; random-keystone Diamond jewel, buyers search by keystone variant not a numeric roll"
+    },
+    "Kalandra's Touch": {
+      "mode": "none",
+      "confidence": "verified"
+    },
+    "Original Sin": {
+      "mode": "none",
+      "confidence": "verified"
+    },
+    "Constricting Command": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_2267564181",
+          "text": "Require # additional enemies to be Surrounded",
+          "direction": "lower",
+          "prefill": 1,
+          "note": "clipboard prints \"Require N fewer enemies to be Surrounded\" but trade stores the inverted \"additional\" stat with a negative value, so more negative is better. prefill 1 measures the exact roll as a MAX bound."
+        }
+      ]
+    },
+    "Wraeclast Besieged": {
+      "mode": "stat_list",
+      "confidence": "verified",
+      "mods": [
+        {
+          "id": "explicit.stat_2734787892",
+          "text": "Breach Hives in Map have an additional wave of Hiveborn Monsters",
+          "tier": "primary",
+          "note": "chase mod (clipboard roll 2-5 additional waves); trade stores it valueless as \"an additional wave\", so it is a presence toggle"
+        },
+        {
+          "id": "explicit.stat_3762913035",
+          "text": "Unstable Breaches in Map spawn an additional Rare Monster when Stabilised",
+          "tier": "primary",
+          "note": "chase mod (clipboard roll 2-5 additional Rare Monsters); trade stores it valueless as \"an additional Rare Monster\", so it is a presence toggle"
+        },
+        {
+          "id": "explicit.stat_4104094246",
+          "text": "Unstable Breaches in Map take an additional second to collapse after timer is filled",
+          "tier": "secondary"
+        },
+        {
+          "id": "explicit.stat_1210760818",
+          "text": "Breaches in Map have #% increased Pack Size",
+          "tier": "secondary",
+          "note": "clipboard prints \"reduced Pack Size\"; trade stores the increased stat with a negative value (drawback)"
+        }
+      ],
+      "note": "stat_list overrides the generic Unique-Tablet all_explicits rule: the two 2-5-range chase mods are the premium signature; the collapse-time and pack-size drawback rows are shown but off. The chase mods match valueless (trade has no # for \"an additional ...\"), which all_explicits would skip - stat_list flags them premium regardless (issue #417)."
+    }
+  },
+  "itemClassRules": [
+    {
+      "game": "poe2",
+      "itemClass": "Tablet",
+      "rarity": "Unique",
+      "mode": "all_explicits",
+      "lowerIsBetter": ["explicit.stat_2017682521"],
+      "nonStatFilters": ["uses_remaining"],
+      "note": "unique tablets are farming-EV items: every rolled explicit moves price; drawback rolls prefill a max bound"
+    }
+  ],
+  "factionRules": [
+    {
+      "game": "poe2",
+      "tag": "extraction_eligible",
+      "uniques": [
+        "Quill Rain",
+        "Hoghunt",
+        "Olrovasara",
+        "Hrimnor's Hymn",
+        "Brain Rattler",
+        "Trenchtimbre",
+        "Twisted Empyrean",
+        "Blackbraid",
+        "Irongrasp",
+        "Bramblejack",
+        "Keeper of the Arc",
+        "Crown of Thorns",
+        "Alpha's Howl",
+        "Starkonja's Head",
+        "Ezomyte Peak",
+        "Wanderlust",
+        "Trampletoe",
+        "Legionstride",
+        "Deathblow",
+        "Svalinn",
+        "Chernobog's Pillar",
+        "Elevore",
+        "Amor Mandragora",
+        "Dionadair"
+      ],
+      "defaultFilters": { "corrupted": false },
+      "note": "Aldur's Legacy extracts mods only from non-corrupted Ezomyte/Kalguuran uniques; a corrupted copy is a different market. PARTIAL list (24 confirmed of a ~60 pool); expand from a clean poe2db faction export."
+    }
+  ]
 }

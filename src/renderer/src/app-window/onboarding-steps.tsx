@@ -9,7 +9,7 @@ import poe1Logo from '../assets/other/poe1-logo.png'
 import poe2Logo from '../assets/other/poe2-logo.png'
 import { FilterPicker } from '../components/FilterPicker'
 import { LeagueDropdown } from '../components/LeagueDropdown'
-import { HotkeyField } from '../components/settings'
+import { HotkeyField } from '../components/primitives/HotkeyField'
 import { Toggle } from '../components/Toggle'
 import { IconGlow } from '../shared/IconGlow'
 import type { SelectedGames } from './constants'
@@ -507,15 +507,21 @@ export function PreferencesStep({
   )
 }
 
-export function DoneStep({ onFinish }: { onFinish: () => void }): JSX.Element {
+export function DoneStep({
+  onOpenSettings,
+  onCloseWindow,
+}: {
+  onOpenSettings: () => void
+  onCloseWindow: () => void
+}): JSX.Element {
   return (
     <div>
       <StepHeader title={m.onb_done_title()} subtitle={m.onb_done_subtitle()} />
       <div className="flex gap-[10px] mt-8">
-        <button className="primary px-6 py-[10px] text-[13px] font-semibold" onClick={onFinish}>
+        <button className="primary px-6 py-[10px] text-[13px] font-semibold" onClick={onOpenSettings}>
           {m.onb_done_open_settings()}
         </button>
-        <button onClick={() => window.close()} className="px-6 py-[10px] text-[13px]">
+        <button onClick={onCloseWindow} className="px-6 py-[10px] text-[13px]">
           {m.onb_done_close_window()}
         </button>
       </div>

@@ -1,0 +1,203 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "premium-mods.schema.json",
+  "title": "PremiumModsData",
+  "description": "Schema for src/shared/data/items/premium-mods.json (schema version 2)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "poe1", "poe2"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "poe1": {
+      "$ref": "#/definitions/gameRecord"
+    },
+    "poe2": {
+      "$ref": "#/definitions/gameRecord"
+    },
+    "itemClassRules": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/itemClassRule" }
+    },
+    "factionRules": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/factionRule" }
+    }
+  },
+  "definitions": {
+    "defaultFilters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "corrupted": { "type": "boolean" }
+      }
+    },
+    "statIdPattern": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z0-9_]+$"
+    },
+    "nonStatFilterToken": {
+      "type": "string",
+      "enum": [
+        "rune_socket_count",
+        "abyssal_socket_count",
+        "charm_slot_count",
+        "socket_colors",
+        "links",
+        "corrupted_implicits",
+        "cultivated_mods",
+        "instilled_mods",
+        "anointments",
+        "granted_skill_level",
+        "uses_remaining",
+        "seed_number",
+        "conqueror_name",
+        "ring_size_variant"
+      ]
+    },
+    "gameRecord": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/uniqueOverrideEntry"
+      }
+    },
+    "uniqueOverrideEntry": {
+      "oneOf": [
+        { "$ref": "#/definitions/legacyEntry" },
+        { "$ref": "#/definitions/uniqueOverride" }
+      ]
+    },
+    "legacyEntry": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "uniqueOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "confidence"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["stat_list", "all_explicits", "none"]
+        },
+        "familyMatch": {
+          "type": "boolean"
+        },
+        "mods": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/overrideModSpec" },
+          "minItems": 1
+        },
+        "nonStatFilters": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/nonStatFilterToken" }
+        },
+        "defaultFilters": {
+          "$ref": "#/definitions/defaultFilters"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["verified", "carry_over", "speculative"]
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "if": {
+        "properties": { "mode": { "const": "stat_list" } },
+        "required": ["mode"]
+      },
+      "then": {
+        "required": ["mods"]
+      }
+    },
+    "overrideModSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/statIdPattern"
+        },
+        "text": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["higher", "lower"]
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["primary", "secondary"]
+        },
+        "prefill": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "itemClassRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game", "itemClass", "mode"],
+      "properties": {
+        "game": {
+          "type": "string",
+          "enum": ["poe1", "poe2"]
+        },
+        "itemClass": {
+          "type": "string"
+        },
+        "rarity": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["all_explicits"]
+        },
+        "lowerIsBetter": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/statIdPattern" }
+        },
+        "nonStatFilters": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/nonStatFilterToken" }
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "factionRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["game", "tag", "uniques", "defaultFilters"],
+      "properties": {
+        "game": {
+          "type": "string",
+          "enum": ["poe1", "poe2"]
+        },
+        "tag": {
+          "type": "string"
+        },
+        "uniques": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "defaultFilters": {
+          "$ref": "#/definitions/defaultFilters"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

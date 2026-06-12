@@ -14,4 +14,8 @@ export const BENEFICIAL_NEGATIVE_KEYWORDS = [
   /\bcharges? used\b/i,
   /\benemy\b/i,
   /\benemies\b/i,
+  // Precursor-tablet Ritual mods: paying less Tribute to reroll/defer Favours is good,
+  // so a "reduced Tribute" cost roll is a beneficial negative (more reduction = better).
+  // Scoped to "costs ... Tribute" so "grant reduced Tribute" (detrimental) is excluded.
+  /\bcosts\b[^\n]*\btribute\b/i,
 ]

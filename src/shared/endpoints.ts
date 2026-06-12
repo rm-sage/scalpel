@@ -118,6 +118,13 @@ export const PREMIUM_MODS_MANIFEST_URL =
 export const PREMIUM_MODS_URL =
   'https://raw.githubusercontent.com/scalpelpoe/scalpel/main/src/shared/data/items/premium-mods.json'
 
+/** Allowlist of PoE2 trade2 "Endgame Filters" GGG currently indexes for search.
+ *  Tiny file, fetched directly on launch (no manifest) so a chip can be re-enabled
+ *  without an app release when GGG starts indexing its key. Bundled copy is the
+ *  offline fallback. */
+export const ENDGAME_FILTER_SUPPORT_URL =
+  'https://raw.githubusercontent.com/scalpelpoe/scalpel/main/src/shared/data/trade/endgame-filter-support.json'
+
 /** "Powered by..." attribution links shown under the regex output bar. The
  *  underlying mod / regex data ships from these projects; we point users at the
  *  source so they can compare against the upstream tools and contribute upstream. */
@@ -129,7 +136,18 @@ export const POE2_RE_URL = 'https://poe2.re'
 export const PLUGIN_REGISTRY_URL =
   'https://raw.githubusercontent.com/scalpelpoe/scalpel-plugins-registry/main/registry.json'
 
-/** Construct the download URL for a plugin release asset on GitHub. */
+/** Construct the download URL for a plugin release asset on GitHub.
+ *
+ *  Dev-only override: when SCALPEL_PLUGIN_ASSET_BASE is set (unpackaged dev /
+ *  local test harness), assets are fetched flat from `<base>/<file>` instead of
+ *  GitHub releases. The registry's sha256 pin is still enforced against whatever
+ *  bytes come back, so this loosens only the host, not the trust check. Never
+ *  set in production. */
 export function pluginReleaseAssetUrl(repo: string, version: string, file: string): string {
+  // Read via globalThis so this stays valid in the types-only SDK dts build
+  // (its tsconfig has no Node ambient types); undefined in browser contexts.
+  const base = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+    ?.SCALPEL_PLUGIN_ASSET_BASE
+  if (base) return `${base}/${file}`
   return `https://github.com/${repo}/releases/download/v${version}/${file}`
 }

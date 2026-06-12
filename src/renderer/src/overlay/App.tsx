@@ -12,15 +12,15 @@ import { PoeVersionProvider } from '../shared/poe-version-context'
 import { CurrencyLabelsProvider } from '../shared/currency-labels-context'
 import { useReportInputFocus } from '../shared/use-report-input-focus'
 import { useCurrentZone } from '../shared/use-current-zone'
-import { FilterPanel } from '../components/FilterPanel'
-import { SettingsPanel } from '../components/SettingsPanel'
+import { FilterPanel } from '../features/filter/FilterPanel'
+import { SettingsPanel } from '../features/settings/SettingsPanel'
 import { SocketRecolor } from '../components/SocketRecolor'
-import { DustExplorer } from '../components/dust-explorer'
-import { DivCardExplorer } from '../components/div-card-explorer'
-import { RegexTool } from '../components/regex-tool'
+import { DustExplorer } from '../features/dust-explorer'
+import { DivCardExplorer } from '../features/div-card-explorer'
+import { RegexTool } from '../features/regex'
 import { ExtraFeaturesPanel } from '../components/extra-features/ExtraFeaturesPanel'
-import { PriceCheck } from '../components/price-check'
-import { PriceCheckSkeleton } from '../components/price-check/PriceCheckSkeleton'
+import { PriceCheck } from '../features/price-check'
+import { PriceCheckSkeleton } from '../features/price-check/PriceCheckSkeleton'
 import { SnapGhosts } from './SnapGhosts'
 import { TitleBar } from './TitleBar'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -39,12 +39,13 @@ import {
   divCardArtMap,
   initIconMap,
   initItemClassMaps,
+  initPoeVersion,
   initUniquesByBase,
   mergeIconCache,
 } from '../shared/constants'
 import { initManifest, getManifest } from '../shared/manifest'
-import { prettyHotkey } from '../components/settings'
-import { createTryHotkey } from '../components/settings/hotkey-collisions'
+import { prettyHotkey } from '../components/primitives/hotkey-utils'
+import { createTryHotkey } from '../components/primitives/hotkey-collisions'
 import { PluginErrorBanner } from '../plugins/PluginErrorBanner'
 import type { BrokenPlugin } from '../plugins/PluginErrorBanner'
 import type { View } from './view'
@@ -132,6 +133,7 @@ export default function App(): JSX.Element {
   // of waiting for the next trade fetch to re-populate them.
   useEffect(() => {
     if (!poeVersion) return
+    initPoeVersion(poeVersion)
     initIconMap(poeVersion)
     initUniquesByBase(poeVersion)
     initItemClassMaps(poeVersion)
@@ -766,6 +768,7 @@ export default function App(): JSX.Element {
           <SisterOverlay
             ref={sisterRef}
             itemName={priceCheckData.item.name}
+            poeVersion={poeVersion ?? 1}
             league={priceCheckData.league}
             chaosPerDivine={priceCheckData.chaosPerDivine}
             left={sisterLeft}

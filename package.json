@@ -1,6 +1,6 @@
 {
   "name": "scalpel",
-  "version": "0.9.13-rmsage.1",
+  "version": "0.9.14-rmsage.1",
   "description": "Path of Exile's First Fourth-Party Tool",
   "author": "Scalpel",
   "license": "AGPL-3.0-only",
@@ -18,6 +18,7 @@
     "build": "npm run build:i18n && npm run build:internal-assets && electron-vite build",
     "build:internal-assets": "node scripts/build-internal-assets.mjs",
     "build:i18n": "paraglide-js compile --project ./project.inlang --outdir ./src/shared/paraglide",
+    "validate:premium-mods": "node scripts/validate-premium-mods.mjs",
     "build-tier-data": "node scripts/build-tier-data.js",
     "sync-regex": "node scripts/sync-regex-data.js",
     "sync-prefabs": "node scripts/sync-prefabs.js",
@@ -60,6 +61,7 @@
     "@types/react-dom": "^18.3.1",
     "@types/sortablejs": "^1.15.9",
     "@vitejs/plugin-react": "^4.3.4",
+    "ajv": "^8.20.0",
     "autoprefixer": "^10.4.27",
     "cheerio": "^1.2.0",
     "electron": "^32.3.3",
@@ -115,7 +117,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "allowElevation": true,
+      "allowElevation": false,
       "createDesktopShortcut": false,
       "artifactName": "Scalpel-Setup.${ext}"
     },

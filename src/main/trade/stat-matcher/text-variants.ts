@@ -22,6 +22,14 @@ function generateTextVariants(text: string): string[] {
   if (/\bmore\b/i.test(text)) {
     variants.push(text.replace(/\bmore\b/i, 'less'))
   }
+  // "fewer" <-> "additional": the trade API stores "Require # fewer enemies to be
+  // Surrounded" as its positive inverse "Require # additional enemies to be
+  // Surrounded" with a negative value. Only fewer->additional is generated (not the
+  // reverse) so the many ordinary "additional <noun>" mods aren't given nonsense
+  // "fewer" variants. The matcher negates the value when matching this way.
+  if (/\bfewer\b/i.test(text)) {
+    variants.push(text.replace(/\bfewer\b/gi, 'additional'))
+  }
   // Common PoE plural -> singular transformations
   // "X% per Y% Overcapped Z" -> "N% of Overcapped Z" (trade API uses a different wording)
   const perOvercapMatch = text.match(/^(.+?) \d+% per \d+% Overcapped (.+)$/)
@@ -29,9 +37,20 @@ function generateTextVariants(text: string): string[] {
     variants.push(`${perOvercapMatch[1]} 0% of Overcapped ${perOvercapMatch[2]}`)
   }
 
-  // "N additional" -> "an additional" (trade API uses "an" where clipboard has the number)
+  // "N additional" -> "an additional" (trade API uses "an" where clipboard has the number).
+  // The clipboard also pluralizes the noun head ("2 additional waves of Hiveborn Monsters",
+  // "3 additional Rare Monsters when Stabilised", "120 additional seconds to collapse") while
+  // the trade stat keeps it singular ("an additional wave of Hiveborn Monsters", "an additional
+  // Rare Monster when Stabilised", "an additional second to collapse"). So also emit a variant
+  // that singularizes the noun head: the run of words after "an additional" up to the next
+  // word, dropping the trailing 's' from the first plural word in that run (the noun, e.g.
+  // "Rare Monsters" -> "Rare Monster"). Naive -s is sufficient for the regular plurals these
+  // tablet count-mods use; an irregular plural (-es) would need a special case below.
   if (/\b\d+ additional\b/i.test(text)) {
-    variants.push(text.replace(/\b\d+ additional\b/i, 'an additional'))
+    const an = text.replace(/\b\d+ additional\b/i, 'an additional')
+    variants.push(an)
+    const singular = an.replace(/\b(an additional (?:\w+ )*?\w+?)s\b/i, '$1')
+    if (singular !== an) variants.push(singular)
   }
 
   // "an additional <Noun>" -> "1 additional <Noun>s" (clipboard says "an additional Arrow"
@@ -70,6 +89,11 @@ function generateTextVariants(text: string): string[] {
     // Trade API stores the singular "Has # Charm Slot" / "# Charm Slot"; an item
     // with 2+ slots reads "Charm Slots", so without this it never matches.
     [/Charm Slots/gi, 'Charm Slot'],
+    // Tablet implicits ("Adds Abysses to a Map \n# use remaining") are stored
+    // singular by the trade API, but a multi-use tablet's clipboard reads
+    // "10 uses remaining" -- without this the plural form never matches and the
+    // tablet's only implicit is dropped. Single-use tablets already say "use".
+    [/uses remaining/gi, 'use remaining'],
     [/Charges/gi, 'Charge'],
     [/Effects/gi, 'Effect'],
     [/Sockets/gi, 'Socket'],

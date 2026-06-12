@@ -31,6 +31,31 @@ export function getStatEntries(): StatEntry[] {
   return statEntries
 }
 
+// Lazy statId -> canonical text map, rebuilt only when the statEntries array
+// reference swaps (fetch / refresh / test seed). Shared by every producer that
+// needs a mod's canonical trade text by id (premium matching, tablet sign
+// detection) so there's a single map instead of one per producer.
+let textById: Map<string, string> | null = null
+let textBuiltFrom: StatEntry[] | null = null
+
+/** Canonical trade text for a stat id, or '' if unknown. */
+export function statTextById(id: string): string {
+  if (!textById || textBuiltFrom !== statEntries) {
+    textById = new Map()
+    for (const e of statEntries) if (!textById.has(e.id)) textById.set(e.id, e.text)
+    textBuiltFrom = statEntries
+  }
+  return textById.get(id) ?? ''
+}
+
+/** Drop the lazy statId -> text map so the next lookup rebuilds. Tests that seed
+ *  fresh entries via _setStatEntries already swap the array reference (which
+ *  invalidates the map), so this is belt-and-suspenders for explicit isolation. */
+export function _resetStatTextCacheForTests(): void {
+  textById = null
+  textBuiltFrom = null
+}
+
 export function getStatsFetched(): boolean {
   return statsFetched
 }

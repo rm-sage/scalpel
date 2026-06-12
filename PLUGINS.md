@@ -108,9 +108,11 @@ interface ScalpelPluginContext {
   // draggable, game-anchored window, separate from its tab. `render` runs in
   // that window's own process. `hotkeyLabel`, when set, adds a dedicated
   // overlay-toggle row in Settings > Macros (separate from registerHotkey's).
+  // `mode` selects between 'window' (default: chrome'd, draggable) and
+  // 'annotation' (transparent, click-through, full-game-window surface).
   // See "Overlay windows" below.
   registerOverlay(
-    opts: { title: string; icon?: string; hotkeyLabel?: string; defaultSize?: { width: number; height: number } },
+    opts: { title: string; icon?: string; hotkeyLabel?: string; defaultSize?: { width: number; height: number }; mode?: 'window' | 'annotation' },
     render: (container: HTMLElement) => (() => void) | void,
   ): void
   openOverlay(): void   // show the overlay window
@@ -150,6 +152,9 @@ interface ScalpelPluginContext {
     refresh(): Promise<void>
     onChange(handler: () => void): () => void
   }
+
+  // Screen capture - returns null when PoE is not focused
+  captureGameWindow(region?: GameRect): Promise<GameCapture | null>
 
   // Utilities
   fetch: typeof fetch                  // standard browser fetch
@@ -281,6 +286,83 @@ await ctx.prices.refresh() // force a refetch now, bypassing the host cache TTL
 - `refresh()` forces a refetch; `onChange(handler)` fires after any host refresh
   and returns an unsubscribe function.
 
+### Screen capture
+
+`ctx.captureGameWindow(region?)` takes a one-shot screenshot of the PoE window and
+resolves to a raw RGBA frame. It resolves to `null` when PoE is not the focused
+window - the capture is scoped to the game window and never grabs the rest of the
+desktop, other apps, or other monitors.
+
+```ts
+interface GameRect {
+  x: number      // game CSS px from the game window's left edge
+  y: number      // game CSS px from the game window's top edge
+  width: number
+  height: number
+}
+
+interface GameCapture {
+  pixels: Uint8ClampedArray           // RGBA, row-major, length === width*height*4
+  width: number                       // captured frame px (may be downscaled from physical)
+  height: number
+  origin: { x: number; y: number }   // top-left of the captured frame in game CSS px ({0,0} for full window)
+  gameSize: { width: number; height: number }  // full game window size in CSS px
+  scale: number                       // captured frame px per game CSS px
+}
+```
+
+Pass a `GameRect` to capture only part of the window. Omit it to capture the
+full window.
+
+**Coordinate model.** All geometry is in game-window CSS px, with the origin at
+the game's top-left corner. `origin` is the CSS-px position of the top-left of
+the captured frame (same as your `region.x/y`, or `{0,0}` for a full-window
+capture). `scale` converts between frame px and CSS px. To map an OCR bounding
+box (in frame px) to a CSS-px position for a label:
+
+```
+cssX = origin.x + box.x / scale
+cssY = origin.y + box.y / scale
+```
+
+The annotation overlay (when used alongside `registerOverlay`) spans exactly
+`gameSize`, so these CSS-px coords line up directly with overlay-relative
+positions.
+
+**The host does not do OCR.** You receive raw pixels and run your own OCR. A
+realistic plugin might bundle `tesseract.js` as a web worker and feed it an
+`ImageData`:
+
+```tsx
+ctx.registerHotkey({ label: 'Scan game window' }, async () => {
+  const cap = await ctx.captureGameWindow({ x: 0, y: 0, width: 800, height: 200 })
+  if (!cap) return  // PoE not focused
+
+  // Build a standard ImageData for your OCR library
+  const imageData = new ImageData(cap.pixels, cap.width, cap.height)
+  // run your OCR here (e.g. pass imageData to a tesseract.js worker)
+  const result = await myOcrWorker.recognize(imageData)
+
+  // Map an OCR bounding box back to CSS px for an overlay label
+  for (const word of result.words) {
+    const cssX = cap.origin.x + word.bbox.x0 / cap.scale
+    const cssY = cap.origin.y + word.bbox.y0 / cap.scale
+    showLabel(word.text, cssX, cssY)
+  }
+})
+```
+
+**One-shot, on demand.** The game menus a plugin would OCR are static while open,
+so call `captureGameWindow` when you need it (e.g. from a registered hotkey)
+rather than polling.
+
+**Safety and trust.** The capture is focus-gated and game-window-scoped - it
+never captures the desktop, other apps, or other monitors. Once your plugin holds
+a frame, the trust boundary is identical to `ctx.fetch`: the pixels leave the
+machine only if your own code sends them. There is no runtime permission prompt.
+Registry curation is the gate - the Scalpel plugin registry requires review
+before a plugin is listed publicly.
+
 ### Overlay windows
 
 A tab lives inside Scalpel's main overlay. `registerOverlay` instead gives your plugin its own **separate window** - the same kind of chrome'd, draggable, game-anchored window Scalpel uses for the whiteboard and cheat sheets. A plugin can register a tab, an overlay, or both (each at most once).
@@ -314,6 +396,55 @@ Launch it three ways: the **Pop out** button on the plugin's tab, the dedicated 
 - **Keep `activate` idempotent.** It runs once per window. Any side effect at the top of `activate` runs again when the overlay window opens. For example, do not POST analytics or mutate a shared counter directly in `activate` - it will fire a second time. Put such work behind an event handler or guard it, and confine per-window work to the render callbacks.
 
 The full context (`getCurrentItem`, `onCurrentZone`, `onLogLine`, `storage`, `fetch`, etc.) is available inside the overlay render exactly as in a tab.
+
+#### Annotation mode
+
+Pass `mode: 'annotation'` to get a **transparent, click-through surface** that covers the entire game window instead of a chrome'd draggable window. This is the right choice when you want to draw labels or overlays directly on top of PoE (for example, value annotations next to an in-game stash) rather than a separate, repositionable panel.
+
+```tsx
+ctx.registerOverlay(
+  { title: 'Value labels', mode: 'annotation' },
+  (container) => {
+    // container spans the full game window in CSS px.
+    // It is position:absolute; inset:0; pointer-events:none.
+    // Absolutely-position your own children inside it.
+    const label = document.createElement('div')
+    label.style.cssText = 'position:absolute; left:200px; top:150px; color:white; font-size:14px'
+    label.textContent = '3.5 div'
+    container.appendChild(label)
+  },
+)
+```
+
+Key differences from `mode: 'window'` (the default):
+
+- The surface locks to the game window and cannot be moved or resized - `defaultSize` is ignored.
+- The root `container` is always `position:absolute; inset:0; pointer-events:none`, sized to the full game window in CSS px. Position your child elements absolutely within it.
+- The entire surface passes mouse events through to the game by default. To make a specific child element interactive, set `pointer-events: auto` on that element only.
+- There is no title bar, border, or window chrome.
+
+`openOverlay()` / `closeOverlay()` and the `hotkeyLabel` toggle work the same way in both modes.
+
+**Positioning with screen-capture coordinates.** The annotation surface spans exactly `gameSize`, so CSS-px coordinates from a `captureGameWindow` call map directly to positions inside the container. See the [Screen capture](#screen-capture) section - the formula `cssX = origin.x + box.x / scale` gives you the coordinate to pass to `left` on an absolutely-positioned child.
+
+**Where your code runs (important).** Your `activate(ctx)` runs in two separate processes: Scalpel's main overlay process, where `registerTab` and `registerHotkey` handlers execute, and each overlay window's own process, where that overlay's `render` runs. The two do not share DOM or JavaScript state. So the capture-then-draw loop for an annotation overlay belongs **inside `render`** - it can call `captureGameWindow`, OCR the frame, and update its own elements directly. Driving it from a `registerHotkey` handler instead runs the capture in the main overlay process, which has no way to reach the annotation window's DOM. To refresh while the overlay is open, create a timer (or a `pointer-events:auto` control) inside `render`:
+
+```tsx
+ctx.registerOverlay({ title: 'Value labels', mode: 'annotation' }, (container) => {
+  let alive = true
+  const refresh = async () => {
+    if (!alive) return
+    const cap = await ctx.captureGameWindow()
+    if (cap) {
+      // OCR cap.pixels, then position labels in container using
+      // cssX = cap.origin.x + box.x / cap.scale (see Screen capture).
+    }
+  }
+  const timer = setInterval(refresh, 1000)
+  void refresh()
+  return () => { alive = false; clearInterval(timer) } // cleanup on teardown
+})
+```
 
 ## Forwarded helpers, hooks, and components
 
@@ -434,6 +565,7 @@ These render the standard Scalpel settings-row chrome (label on the left, contro
 - `RegisterTabOptions`, `RegisterHotkeyOptions`, `PluginStorage`
 - `PoeItem`, `Zone`, `RelatedRef`, `RelatedEntry`, `GameFeatures`, `TrendDirection`
 - `ModTier`, `TierLadder`, `TierStat` - data shape for an affix's tier ladder (tier number, roll range, required level)
+- `GameRect`, `GameCapture` - geometry and pixel-data shapes for `captureGameWindow`
 
 ## Project setup
 

@@ -48,6 +48,7 @@ export function createPluginContext(deps: PluginContextFactoryDeps): ScalpelPlug
         icon: opts.icon,
         hotkeyLabel: opts.hotkeyLabel,
         defaultSize: opts.defaultSize,
+        mode: opts.mode,
       })
     },
     openOverlay: () => deps.openOverlay(deps.pluginId),
@@ -64,6 +65,7 @@ export function createPluginContext(deps: PluginContextFactoryDeps): ScalpelPlug
     openExternal: deps.openExternal,
     openTab: () => deps.openTab(deps.pluginId),
     copyAndEvaluateItem: () => deps.copyAndEvaluateItem(),
+    captureGameWindow: (region) => deps.captureGameWindow(region),
     log: (...args: unknown[]) => {
       if (DEBUG()) {
         // biome-ignore lint/suspicious/noConsole: gated behind DEBUG() debug logging

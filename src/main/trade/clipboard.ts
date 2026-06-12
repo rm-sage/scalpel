@@ -375,7 +375,9 @@ export function parseItemText(text: string): PoeItem | null {
   }
 
   const attacksPerSecond = extractFloat(allLines, 'Attacks per Second:')
-  const critChance = extractFloat(allLines, 'Critical Strike Chance:')
+  // PoE1 labels this "Critical Strike Chance:"; PoE2 renamed it "Critical Hit
+  // Chance:". The two never collide, so try both rather than gating on version.
+  const critChance = extractFloat(allLines, 'Critical Strike Chance:') ?? extractFloat(allLines, 'Critical Hit Chance:')
 
   const reqStr = extractNum(allLines, 'Str:') ?? 0
   const reqDex = extractNum(allLines, 'Dex:') ?? 0
@@ -519,6 +521,17 @@ export function parseItemText(text: string): PoeItem | null {
     }
   }
 
+  // Parse Grants Skill lines (PoE2 uniques/rune-corrupted items).
+  // Scan every section for lines matching "Grants Skill: Level N <SkillName>".
+  // Multiple granted skills on one item are all captured.
+  const grantedSkills: string[] = []
+  const GRANTS_SKILL_RE = /^Grants Skill: Level \d+ /
+  for (const section of sections) {
+    for (const line of section.split('\n').map((l) => l.trim())) {
+      if (GRANTS_SKILL_RE.test(line)) grantedSkills.push(line)
+    }
+  }
+
   // Parse enchant and imbue lines
   const imbues: string[] = []
   for (const section of sections) {
@@ -617,6 +630,7 @@ export function parseItemText(text: string): PoeItem | null {
     implicits,
     enchants,
     imbues,
+    ...(grantedSkills.length > 0 ? { grantedSkills } : {}),
     ...(memoryStrands != null ? { memoryStrands } : {}),
     ...(advancedMods.length > 0 ? { advancedMods } : {}),
     ...(mapQuantity != null ? { mapQuantity } : {}),
@@ -721,6 +735,7 @@ function parseModSections(sections: string[], explicits: string[], implicits: st
     'Physical Damage:',
     'Elemental Damage:',
     'Critical Strike Chance:',
+    'Critical Hit Chance:',
     'Attacks per Second:',
     'Weapon Range:',
     'Map Area:',
