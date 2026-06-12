@@ -69,7 +69,9 @@ becomes `0.9.13-rmsage.1`. The script `scripts/set-fork-version.js` derives it.
 5. **Only if green**, pushes `main` and a `v<version>` tag, which triggers `release.yml`
    to build and publish — so the app auto-updates.
 
-If the merge conflicts or verification fails, it opens an issue and ships nothing.
+If the merge conflicts or verification fails, it writes the reason to the run summary
+and **fails the run** (GitHub emails you) and ships nothing — it does not rely on
+Issues being enabled.
 
 ### Doing a sync manually
 

@@ -5,11 +5,11 @@ name: Upstream sync
 # Once a day (or on manual dispatch) this merges upstream/main into the fork's
 # main, re-derives the fork version, verifies with the SAME gate as CI plus the
 # fork-invariant test, and -- only if everything is green -- pushes a release tag
-# so the app auto-updates. If the merge conflicts, or verification fails, it opens
-# an issue and ships nothing. The fork-invariant test (src/shared/fork-invariants
-# .test.ts) is what guarantees a merge can never silently revert the update-feed
-# repoint or drop the macro and still publish: that would turn the suite red and
-# block the tag push.
+# so the app auto-updates. If the merge conflicts, or verification fails, it writes
+# the reason to the run summary and fails the run (so GitHub emails the owner) and
+# ships nothing. The fork-invariant test (src/shared/fork-invariants.test.ts) is
+# what guarantees a merge can never silently revert the update-feed repoint or drop
+# the macro and still publish: that would turn the suite red and block the tag push.
 #
 # One-time setup (see FORK-SETUP.md):
 #   - Enable Actions on the fork (GitHub disables them on forks by default).
@@ -28,7 +28,6 @@ concurrency:
 
 permissions:
   contents: write
-  issues: write
 
 jobs:
   sync:
@@ -147,47 +146,37 @@ jobs:
           git push origin "v${{ steps.version.outputs.fork_ver }}"
           echo "Pushed v${{ steps.version.outputs.fork_ver }} -> release.yml will build and publish."
 
-      - name: Open issue on merge conflict
+      # Notifications use the run summary + a failed run (GitHub emails the repo
+      # owner on workflow failure) instead of gh issue create -- Issues are
+      # disabled on this fork and the default token is read-only, so creating an
+      # issue isn't reliably available. The summary needs no token/permissions.
+      - name: Report merge conflict (no auto-ship)
         if: steps.merge.outputs.conflict == 'true'
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BODY=$(cat <<EOF
-          The scheduled upstream sync hit a real merge conflict against upstream/main (\`${{ steps.merge.outputs.upstream_ver }}\`) and shipped nothing.
+          {
+            echo "## ⚠️ Upstream sync needs a manual merge"
+            echo ""
+            echo "Hit a real merge conflict against upstream \`${{ steps.merge.outputs.upstream_ver }}\` and shipped nothing. \`origin/main\` is untouched."
+            echo ""
+            echo "**Conflicting files:**"
+            echo '```'
+            echo "${{ steps.merge.outputs.conflicts }}"
+            echo '```'
+            echo ""
+            echo "Resolve via a PR (local installs need Node 22, so push a branch and let CI verify), then ff \`main\` + tag to ship. See FORK-SETUP.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Upstream sync needs a manual merge (${{ steps.merge.outputs.upstream_ver }}) — see the run summary."
+          exit 1
 
-          Conflicting files:
-          \`\`\`
-          ${{ steps.merge.outputs.conflicts }}
-          \`\`\`
-
-          Resolve locally on Node 22:
-          \`\`\`
-          git fetch upstream
-          git checkout main && git merge upstream/main   # resolve conflicts
-          node scripts/set-fork-version.js \$(git show upstream/main:package.json | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
-          npm ci && npm test
-          git commit && git push origin main
-          git tag vX.Y.Z-rmsage.N && git push origin vX.Y.Z-rmsage.N
-          \`\`\`
-
-          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          EOF
-          )
-          gh issue create --title "Upstream sync needs a manual merge (${{ steps.merge.outputs.upstream_ver }})" --body "$BODY"
-
-      - name: Open issue on verification failure
-        if: failure()
+      - name: Report verification failure (no auto-ship)
+        if: failure() && steps.merge.outputs.conflict != 'true'
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BODY=$(cat <<EOF
-          The scheduled upstream sync merged upstream cleanly but FAILED verification (typecheck / lint / test / build), so nothing was published. origin/main is untouched.
-
-          This usually means upstream changed something the fork patch set (macro, repoint) or the fork-invariant test depends on. Check the failing step, fix it on a branch, and re-run the workflow.
-
-          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          EOF
-          )
-          gh issue create --title "Upstream sync failed verification" --body "$BODY"
+          {
+            echo "## ❌ Upstream sync failed verification"
+            echo ""
+            echo "Merged upstream cleanly but a check (typecheck / lint / test / build) failed, so nothing was published. \`origin/main\` is untouched."
+            echo ""
+            echo "Usually means upstream changed something the macro, the repoint, or the fork-invariant test depends on. Fix on a branch and re-run."
+          } >> "$GITHUB_STEP_SUMMARY"
