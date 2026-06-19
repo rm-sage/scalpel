@@ -1,5 +1,5 @@
-import tabletMods from '../../../../shared/data/trade/tablet-mods.json'
-import { BENEFICIAL_NEGATIVE_KEYWORDS } from '../../../../shared/data/trade/beneficial-negatives'
+import tabletMods from '@shared/data/trade/tablet-mods.json'
+import { BENEFICIAL_NEGATIVE_KEYWORDS } from '@shared/data/trade/beneficial-negatives'
 import type { StatFilter } from '../../trade'
 import { findAdvMod } from '../adv-mods'
 import { computeValueBounds } from '../bounds'
@@ -11,6 +11,17 @@ import { statTextById } from '../stats-cache'
 // positive ("increased"/"more"/"additional") stat. Used to decide when a table-mapped
 // tablet value needs negating, and to skip stats that are themselves phrased "reduced".
 const REDUCING_KEYWORDS_RE = /\breduced\b|\bless\b|\bfewer\b/i
+
+// These mods read as valueless in the trade2 stat dictionary ("an additional wave",
+// no #) but the trade2 API still applies a numeric value filter on them (live-probed:
+// stat_2734787892 min:5 -> 474 vs 1873 unfiltered). The clipboard carries the rolled
+// count in advanced-mod form ("5(2-5)"), so adopt that value when the matcher comes
+// back null, letting bounds + the premium prefill pin the exact roll. Curated per
+// stat id because most genuinely-valueless mods must stay presence-only.
+const VALUE_BEARING_VALUELESS_STATS = new Set([
+  'explicit.stat_2734787892', // Breach Hives in Map have # additional waves of Hiveborn Monsters
+  'explicit.stat_3762913035', // Unstable Breaches in Map spawn # additional Rare Monsters when Stabilised
+])
 
 // PoE2 precursor tablets. Their affixes are regular explicit map mods, but the
 // in-game clipboard phrases them differently from the trade API's stat text
@@ -89,15 +100,26 @@ export function buildTabletFilters(ctx: MatchContext): StatFilter[] {
       aggregated = matched.aggregated
     }
 
+    const advMod = advancedMods ? findAdvMod(advancedMods, cleaned, 'explicit') : undefined
+
+    // Value-bearing valueless stats: pull the rolled count from the advanced-mod range
+    // (fallback: the first integer in the cleaned line) so the otherwise-null row carries
+    // a value the API and prefill can use.
+    if (value == null && VALUE_BEARING_VALUELESS_STATS.has(id)) {
+      const fromRange = advMod?.ranges?.[0]?.value
+      if (fromRange != null) value = fromRange
+      else {
+        const m = cleaned.match(/\d+/)
+        if (m) value = parseInt(m[0], 10)
+      }
+    }
+
     let modTier: number | undefined
     let modRange: { min: number; max: number } | undefined
-    if (advancedMods) {
-      const advMod = findAdvMod(advancedMods, cleaned, 'explicit')
-      if (advMod) {
-        if (advMod.tier > 0) modTier = advMod.tier
-        const range = advMod.ranges.find((r) => r.value === value)
-        if (range && range.min !== range.max) modRange = { min: range.min, max: range.max }
-      }
+    if (advMod) {
+      if (advMod.tier > 0) modTier = advMod.tier
+      const range = advMod.ranges.find((r) => r.value === value)
+      if (range && range.min !== range.max) modRange = { min: range.min, max: range.max }
     }
 
     // Non-unique tablets use the shared negative-aware bounds (a beneficial negative like

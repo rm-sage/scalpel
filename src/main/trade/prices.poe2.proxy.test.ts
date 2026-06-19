@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { PriceInfo } from '../../shared/types'
+import type { PriceInfo } from '@shared/types'
 import {
   applyProxyResponse,
   buildPoe2UniquesByBaseFromProxy,
@@ -296,6 +296,102 @@ describe('applyProxyResponse (EE2 proxy math)', () => {
       {},
     )
     expect(map.get('x')).toMatchObject({ chaosValue: 100 })
+  })
+})
+
+describe('applyProxyResponse pair-currency entries', () => {
+  it('carries a divine sparkline from a currency overview line onto the canonical divine entry', () => {
+    const map = new Map<string, PriceInfo>()
+    applyProxyResponse(
+      resp({
+        rates: { exalted: 141 },
+        itemOverviews: [
+          {
+            type: 'Currency',
+            lines: [{ name: 'Divine Orb', primaryValue: 0.97, sparkline: { data: [0, 5, 12] } }],
+          },
+        ],
+      }),
+      map,
+      { Currency: 'currency' },
+    )
+    // Canonical exchange-rate values win over the overview line's roundtripped
+    // numbers, but the line's sparkline is preserved.
+    expect(map.get('divine orb')).toMatchObject({ chaosValue: 141, divineValue: 1, graph: [0, 5, 12] })
+    expect(map.get('exalted orb')).toMatchObject({ chaosValue: 1, divineValue: 1 / 141 })
+  })
+
+  it('still seeds divine and exalted when no overview line mentions them', () => {
+    const map = new Map<string, PriceInfo>()
+    applyProxyResponse(resp({ rates: { exalted: 141 }, itemOverviews: [] }), map, {})
+    expect(map.get('divine orb')).toMatchObject({ chaosValue: 141, divineValue: 1 })
+    expect(map.get('divine orb')?.graph).toBeUndefined()
+    expect(map.get('exalted orb')).toMatchObject({ chaosValue: 1, divineValue: 1 / 141 })
+  })
+
+  it('carries an exalted sparkline from a currency overview line onto the canonical exalted entry and into entriesOut', () => {
+    const map = new Map<string, PriceInfo>()
+    const variantMap = new Map<string, PriceInfo>()
+    const entries: import('@shared/types').PriceEntry[] = []
+    applyProxyResponse(
+      resp({
+        rates: { exalted: 141 },
+        itemOverviews: [
+          {
+            type: 'Currency',
+            lines: [
+              { name: 'Divine Orb', primaryValue: 0.97, sparkline: { data: [0, 5, 12] } },
+              { name: 'Exalted Orb', primaryValue: 0.0071, sparkline: { data: [0, -3, -7] } },
+            ],
+          },
+        ],
+      }),
+      map,
+      { Currency: 'currency' },
+      variantMap,
+      entries,
+    )
+    // Canonical values win over the drifted overview primaryValue, but graphs survive
+    expect(map.get('divine orb')).toMatchObject({ chaosValue: 141, divineValue: 1, graph: [0, 5, 12] })
+    expect(map.get('exalted orb')).toMatchObject({ chaosValue: 1, divineValue: 1 / 141, graph: [0, -3, -7] })
+    // pricesByVariant reuses the same canonical objects
+    expect(variantMap.get('exalted orb|')?.graph).toEqual([0, -3, -7])
+    // entriesOut has exactly one Exalted Orb entry carrying the exalted graph
+    const exaltedEntries = entries.filter((e) => e.name === 'Exalted Orb')
+    expect(exaltedEntries).toHaveLength(1)
+    expect(exaltedEntries[0].graph).toEqual([0, -3, -7])
+    // entriesOut has exactly one Divine Orb entry carrying the divine graph
+    const divineEntries = entries.filter((e) => e.name === 'Divine Orb')
+    expect(divineEntries).toHaveLength(1)
+    expect(divineEntries[0].graph).toEqual([0, 5, 12])
+  })
+
+  it('deduplicates: when a Currency line mentions Divine Orb, entriesOut has exactly one Divine Orb entry (canonical) and pricesByVariant carries the canonical chaosValue', () => {
+    const map = new Map<string, PriceInfo>()
+    const variantMap = new Map<string, PriceInfo>()
+    const entries: import('@shared/types').PriceEntry[] = []
+    applyProxyResponse(
+      resp({
+        rates: { exalted: 150 },
+        itemOverviews: [
+          {
+            type: 'Currency',
+            // The overview line carries a drifted primaryValue and a sparkline
+            lines: [{ name: 'Divine Orb', primaryValue: 0.95, sparkline: { data: [1, 2, 3] } }],
+          },
+        ],
+      }),
+      map,
+      { Currency: 'currency' },
+      variantMap,
+      entries,
+    )
+    const divineEntries = entries.filter((e) => e.name === 'Divine Orb')
+    // Exactly one entry - the canonical one
+    expect(divineEntries).toHaveLength(1)
+    expect(divineEntries[0].chaosValue).toBe(150)
+    // pricesByVariant also carries the canonical chaosValue
+    expect(variantMap.get('divine orb|')?.chaosValue).toBe(150)
   })
 })
 

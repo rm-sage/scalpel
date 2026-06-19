@@ -1,5 +1,5 @@
 import { isEndgameFilterIndexed } from '../../endgame-filter-support'
-import type { AdvancedMod } from '../../../../shared/types'
+import type { AdvancedMod } from '@shared/types'
 import type { StatFilter } from '../../trade'
 
 /** "Fuzz floor" applied to a map/waystone property when searching: accept
@@ -29,7 +29,8 @@ type MapItemInfo = {
  *  indexes each key for search is NOT encoded here -- it changes league to league and
  *  is sourced from the remote-overridable allowlist (isEndgameFilterIndexed), so a
  *  chip can be re-enabled without an app release. As of 2026-06 (live-probed on Runes
- *  of Aldur) only map_tier and map_revives return results; the rest come back empty.
+ *  of Aldur) map_tier, map_packsize, map_iir, map_revives, map_bonus, map_magic_monsters
+ *  and map_rare_monsters return results; map_iiq and map_gold still come back empty.
  *  `map_experience` has no clipboard field yet, so it is omitted rather than listed
  *  with a dangling `field`. */
 interface WaystoneEndgameFilter {
@@ -42,14 +43,14 @@ interface WaystoneEndgameFilter {
 
 const WAYSTONE_ENDGAME_FILTERS: readonly WaystoneEndgameFilter[] = [
   { field: 'mapTier', id: 'map.map_tier', label: 'Tier', enabledByDefault: true, exact: true },
-  { field: 'mapPackSize', id: 'map.map_packsize', label: 'Pack Size' },
+  { field: 'mapPackSize', id: 'map.map_packsize', label: 'Pack Size', enabledByDefault: true },
   { field: 'mapQuantity', id: 'map.map_iiq', label: 'Quantity' },
-  { field: 'mapRarity', id: 'map.map_iir', label: 'Rarity' },
+  { field: 'mapRarity', id: 'map.map_iir', label: 'Rarity', enabledByDefault: true },
   { field: 'mapRevives', id: 'map.map_revives', label: 'Revives' },
   { field: 'mapDropChance', id: 'map.map_bonus', label: 'Drop Chance' },
   { field: 'mapGold', id: 'map.map_gold', label: 'Gold' },
-  { field: 'mapMagicMonsters', id: 'map.map_magic_monsters', label: 'Magic Monsters' },
-  { field: 'mapRareMonsters', id: 'map.map_rare_monsters', label: 'Rare Monsters' },
+  { field: 'mapMagicMonsters', id: 'map.map_magic_monsters', label: 'Monster Effectiveness', enabledByDefault: true },
+  { field: 'mapRareMonsters', id: 'map.map_rare_monsters', label: 'Monster Rarity', enabledByDefault: true },
 ]
 
 // Map property chips (Item Quantity, Rarity, Pack Size, More X) and 8-mod corrupted maps

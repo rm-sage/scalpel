@@ -1,8 +1,9 @@
 import { app, net } from 'electron'
-import tabletModMap from '../../shared/data/trade/tablet-mods.json'
-import { TRANSFIGURED_GEM_DISC } from '../../shared/data/trade/transfigured-gems'
-import { getTradeUrls } from '../../shared/endpoints'
-import { isClusterJewel, isSkillGem, splitRuneTier } from '../../shared/poe-item'
+import tabletModMap from '@shared/data/trade/tablet-mods.json'
+import { TRANSFIGURED_GEM_DISC } from '@shared/data/trade/transfigured-gems'
+import { getTradeUrls } from '@shared/endpoints'
+import { isClusterJewel, isSkillGem, splitRuneTier } from '@shared/poe-item'
+import { recordMainBreadcrumb } from '../diagnostics'
 import { getPoeVersion } from '../game-state'
 import { getOverlayWindow } from '../overlay'
 import { harvestIcons } from './icon-cache'
@@ -73,6 +74,34 @@ interface TradeDialect {
  *  parseAffixStrings helper. */
 export function stripTradeTokens(s: string): string {
   return s.replace(/\[([^\]|]+)\|?([^\]]*)\]/g, (_, a: string, b: string) => b || a)
+}
+
+/** A single entry in a trade-fetch item's `*Mods` array.
+ *
+ *  PoE1 (and, as of 2026-06, PoE2 *implicit* mods) send a plain string. PoE2's
+ *  /api/trade2 now sends the *explicit-family* mods (explicit/fractured/crafted/
+ *  desecrated/enchant) as objects: the display text moves to `description` and
+ *  the per-mod tier/magnitude data that used to live only in `extended.mods`
+ *  (now absent for explicits) is inlined under `mods`. Consumers must read the
+ *  text via `modEntryText` rather than assuming a string -- treating the object
+ *  as a string threw `t.replace is not a function` for every PoE2 search. */
+export type FetchItemMod =
+  | string
+  | {
+      description: string
+      hash?: string
+      mods?: Array<{
+        // name/tier are omitted for fixed unique rolls (only magnitudes present).
+        name?: string
+        tier?: string
+        level?: number
+        magnitudes: Array<{ hash?: string; min: string; max: string }> | null
+      }>
+    }
+
+/** Display text of a `*Mods` entry regardless of which shape GGG sent. */
+export function modEntryText(e: FetchItemMod | undefined): string {
+  return typeof e === 'string' ? e : (e?.description ?? '')
 }
 
 // Calculated pseudos that PoE2's /api/trade2 rejects as native `pseudo.*` stat
@@ -205,7 +234,7 @@ export interface StatFilter {
   modRange?: { min: number; max: number } // possible roll range for this mod
   /** Resolved tier ladder for scrubbable affixes (single-stat or trade-averaged,
    *  non-Unique). Attached by the explicits producer; absent when not scrubbable. */
-  tierLadder?: import('../../shared/data/tiers/types').ModTier[]
+  tierLadder?: import('@shared/data/tiers/types').ModTier[]
   /** Quality magnitude multiplier (e.g. 1.2) for a quality-increased mod; the tierLadder
    *  ranges are unmodified, so the renderer multiplies by this for the modified search-value space. */
   tierQualityMult?: number
@@ -334,17 +363,43 @@ export function _resetRateLimitsForTests(): void {
   }
 }
 
+/** "45s" under two minutes, "8m" above -- the 10-minute Cloudflare blocks
+ *  read better in minutes. */
+function formatWaitSec(waitMs: number): string {
+  const sec = Math.round(waitMs / 1000)
+  return sec >= 120 ? `${Math.ceil(sec / 60)}m` : `${sec}s`
+}
+
 function categoryFor(url: string): RateLimitCategory {
   if (url.includes('/fetch/')) return 'fetch'
   if (url.includes('/exchange/')) return 'exchange'
   return 'search'
 }
 
+// ─── Trade auth cookie ────────────────────────────────────────────────────────
+//
+// Trade requests deliberately send NO session cookies: GGG's API mints an
+// anonymous POESESSID on its own responses, and Cloudflare bot-challenges any
+// /api/trade2 request that echoes it back (verified A/B: cookie-less requests
+// pass, cookie-carrying ones are challenged from the second request on, #429).
+// A genuinely logged-in POESESSID still has to reach the API for weighted-sum
+// searches, so the auth flow pushes it here and we attach it by hand.
+let tradeAuthCookie: string | null = null
+
+/** Set (on confirmed login) or clear (logout / failed auth check) the
+ *  POESESSID attached to trade API requests. */
+export function setTradeAuthCookie(value: string | null): void {
+  tradeAuthCookie = value
+}
+
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 //
 // Match the approach APT + EE2 use (verified in their main/src/proxy.ts):
-//   - `net.request` with `useSessionCookies: true` so any POESESSID / cf-
-//     clearance picked up by the app's login window is included.
+//   - `net.request` with `useSessionCookies: false`: GGG's API mints an
+//     anonymous POESESSID on its own responses, and Cloudflare bot-challenges
+//     any request that echoes it back (#429). Never let Electron attach the
+//     session cookie jar; a logged-in POESESSID is injected by hand in
+//     setTradeHeaders when the auth flow provides one.
 //   - No `Origin`, no `Referer`, no `Sec-Fetch-*`, no `Accept-Language`. APT
 //     actively strips these from their proxy -- sending them puts us in a
 //     stricter bucket than the trade website.
@@ -356,7 +411,7 @@ function commonRequestOpts(url: string, method: string): Electron.ClientRequestC
   return {
     url,
     method,
-    useSessionCookies: true,
+    useSessionCookies: false,
     referrerPolicy: 'no-referrer-when-downgrade',
   }
 }
@@ -365,6 +420,7 @@ function setTradeHeaders(request: Electron.ClientRequest): void {
   request.setHeader('Content-Type', 'application/json')
   request.setHeader('Accept', 'application/json')
   request.setHeader('User-Agent', app.userAgentFallback)
+  if (tradeAuthCookie) request.setHeader('Cookie', `POESESSID=${tradeAuthCookie}`)
 }
 
 // Hard ceiling on a single HTTP attempt. electron's `net.request` has no
@@ -382,6 +438,10 @@ async function fetchJson(url: string, options?: { method?: string; body?: string
   // firing under normal use. Seed limiters handle the first request before
   // we've seen a response's headers.
   await RateLimiter.waitMulti(RATE_LIMIT_RULES[category])
+  // One-shot auth-cookie drop for Cloudflare challenges (see the challenged
+  // branch below): attempted once per call when a logged-in POESESSID is
+  // active, then we surface the error.
+  let challengeResetDone = false
   for (let attempt = 0; attempt <= retries; attempt++) {
     const started = Date.now()
     try {
@@ -427,13 +487,49 @@ async function fetchJson(url: string, options?: { method?: string; body?: string
             clearTimeout(timer)
             const retryAfter = response.headers['retry-after']
             const wait = retryAfter ? parseInt(String(retryAfter), 10) * 1000 : 5000
+            // Three 429 flavors (#429): GGG's own rate limiter always sends
+            // x-rate-limit-* headers; a Cloudflare bot challenge marks itself
+            // with cf-mitigated: challenge (no GGG headers, no retry-after);
+            // and a Cloudflare timed BLOCK has no GGG headers and no
+            // cf-mitigated but a concrete Retry-After countdown. Blocks behave
+            // like rate limits (wait it out); challenges do not (waiting never
+            // helps an API client).
+            const cfMitigated = flatHeaders['cf-mitigated']
+            const hasGggHeaders = !!flatHeaders['x-rate-limit-rules']
+            const challenged = cfMitigated === 'challenge' || (!hasGggHeaders && !retryAfter)
+            const edgeBlocked = !challenged && !hasGggHeaders
             console.error(`[trade] 429 rate limited: retry-after=${Math.round(wait / 1000)}s for ${url}`)
             // Broadcast only when the penalty is long enough to surface to the
             // user. Short waits are absorbed by the retry loop and never reach
             // the UI, so lighting up the Greg banner for a 1-second blip would
-            // just flicker.
-            if (wait >= 10000) broadcastTradePenalty(Date.now() + wait)
-            reject({ rateLimited: true, wait })
+            // just flicker. Challenges never broadcast: a countdown would hide
+            // the challenge error and promise a recovery that won't come.
+            if (!challenged && wait >= 10000) broadcastTradePenalty(Date.now() + wait)
+            // One line per 429 into scalpel.log: issue #429 reports first-request 429s
+            // we can't reproduce, and the rule/state headers are the only evidence that
+            // can tell a hot per-IP bucket apart from an edge-level 429 with no GGG
+            // headers at all.
+            const ruleNames = (flatHeaders['x-rate-limit-rules'] ?? '')
+              .split(',')
+              .map((r) => r.trim().toLowerCase())
+              .filter(Boolean)
+            const ruleDetail = ruleNames
+              .map(
+                (r) =>
+                  `${r}=${flatHeaders[`x-rate-limit-${r}`] ?? '?'} ${r}-state=${flatHeaders[`x-rate-limit-${r}-state`] ?? '?'}`,
+              )
+              .join(' ')
+            // Cookie names (not values) the edge plants on the 429 itself --
+            // challenge-state cookies here are what keep a flagged session
+            // flagged across connection resets.
+            const setCookieNames = ([] as string[])
+              .concat((response.headers['set-cookie'] as unknown as string | string[]) ?? [])
+              .map((s) => s.split('=')[0])
+              .join(',')
+            recordMainBreadcrumb(
+              `trade 429 (${category}) retry-after=${flatHeaders['retry-after'] ?? 'none'} ${ruleDetail || 'no rate-limit headers'}${cfMitigated ? ` cf-mitigated=${cfMitigated}` : ''} cf-ray=${flatHeaders['cf-ray'] ?? 'none'} set-cookie=${setCookieNames || 'none'}`,
+            )
+            reject({ rateLimited: true, wait, challenged, edgeBlocked })
             return
           }
           response.on('data', (chunk) => {
@@ -477,14 +573,44 @@ async function fetchJson(url: string, options?: { method?: string; body?: string
         // things like UA fingerprint on top of the advertised policies). No
         // point sleeping the retry out silently -- surface the wait to the
         // user and let the Greg banner count it down.
-        const wait = (e as unknown as { wait: number }).wait
+        const { wait, challenged, edgeBlocked } = e as unknown as {
+          wait: number
+          challenged?: boolean
+          edgeBlocked?: boolean
+        }
+        if (challenged) {
+          if (!challengeResetDone && attempt < retries && tradeAuthCookie) {
+            challengeResetDone = true
+            // The only cookie we ever send is the logged-in POESESSID; if the
+            // edge has started challenging that too, degrade to anonymous (the
+            // auth cache re-validates within minutes) rather than hard-fail.
+            recordMainBreadcrumb('trade 429 challenge: dropping auth cookie, retrying anonymously')
+            setTradeAuthCookie(null)
+            continue
+          }
+          // Anonymous cookie-less requests that still get challenged mean the
+          // edge is in an elevated mode nothing client-side can clear.
+          throw new Error(
+            "Cloudflare challenged Scalpel's connection to the trade site -- this is a bot check, not a rate limit. It usually clears on its own within a few minutes",
+          )
+        }
         const MAX_SILENT_WAIT_MS = 30000
         if (wait <= MAX_SILENT_WAIT_MS && attempt < retries) {
           await new Promise((r) => setTimeout(r, wait))
           continue
         }
-        const waitSec = Math.round(wait / 1000)
-        throw new Error(`Rate limited by the trade API -- wait ${waitSec}s and try again`)
+        // Surface the countdown even for short waits: on this path the search
+        // has failed for good, so the banner is the result, not a flicker.
+        // Waits of 10s+ already broadcast in the response handler.
+        if (wait < 10000) broadcastTradePenalty(Date.now() + wait)
+        if (edgeBlocked) {
+          throw new Error(
+            `Cloudflare (the trade site's CDN) temporarily blocked this connection -- it lifts in ${formatWaitSec(wait)}`,
+          )
+        }
+        throw new Error(
+          `GGG's trade API rate limited this search (limits are per IP, shared with the trade website) -- wait ${formatWaitSec(wait)} and try again`,
+        )
       }
       if (e && typeof e === 'object' && 'timedOut' in e && attempt < retries) {
         // Re-loop without sleeping: the remote just ate our connection, try
@@ -493,7 +619,7 @@ async function fetchJson(url: string, options?: { method?: string; body?: string
         continue
       }
       if (e && typeof e === 'object' && 'timedOut' in e) {
-        throw new Error(`Trade API timed out after ${REQUEST_TIMEOUT_MS / 1000}s -- retry when you're ready`)
+        throw new Error(`GGG's trade API timed out after ${REQUEST_TIMEOUT_MS / 1000}s -- retry when you're ready`)
       }
       throw e
     }
@@ -753,10 +879,11 @@ export async function searchTrade(
   )
   const miscQuery: Record<string, unknown> = {}
   for (const f of miscFiltersAll) {
-    if (f.id === 'misc.quality' && f.enabled) miscQuery.quality = minMaxValue(f)
-    if (f.id === 'misc.ilvl' && f.enabled) miscQuery.ilvl = minMaxValue(f)
+    if (f.id === 'misc.quality' && f.enabled && getPoeVersion() === 1) miscQuery.quality = minMaxValue(f)
+    if (f.id === 'misc.ilvl' && f.enabled && getPoeVersion() === 1) miscQuery.ilvl = minMaxValue(f)
     if (f.id === 'misc.unidentified_tier' && f.enabled) miscQuery.unidentified_tier = minMaxValue(f)
     if (f.id === 'misc.gem_level' && f.enabled) miscQuery.gem_level = minMaxValue(f)
+    if (f.id === 'misc.gem_sockets' && f.enabled) miscQuery.gem_sockets = minMaxValue(f)
     if (f.id === 'misc.gem_transfigured') miscQuery.gem_transfigured = { option: f.enabled ? 'true' : 'false' }
     if (f.id === 'misc.corrupted' && (f.chipState === 'yes' || f.chipState === 'no'))
       miscQuery.corrupted = { option: ynToOption(f.chipState) }
@@ -837,6 +964,26 @@ export async function searchTrade(
     }
   }
 
+  // PoE2 indexes item level AND quality under type_filters, not misc_filters (which it
+  // silently ignores), so those chips must be routed there for PoE2 (#436). PoE1 keeps
+  // them in misc_filters above.
+  if (getPoeVersion() === 2) {
+    const typeFilterExtras: Record<string, unknown> = {}
+    const ilvlFilter = statFilters.find((f) => f.id === 'misc.ilvl' && f.enabled)
+    if (ilvlFilter) typeFilterExtras.ilvl = minMaxValue(ilvlFilter)
+    const qualityFilter = statFilters.find((f) => f.id === 'misc.quality' && f.enabled)
+    if (qualityFilter) typeFilterExtras.quality = minMaxValue(qualityFilter)
+    if (Object.keys(typeFilterExtras).length > 0) {
+      const existing = (query.filters as Record<string, unknown>) ?? {}
+      const existingTypeFilters =
+        ((existing.type_filters as Record<string, unknown>)?.filters as Record<string, unknown>) ?? {}
+      query.filters = {
+        ...existing,
+        type_filters: { filters: { ...existingTypeFilters, ...typeFilterExtras } },
+      }
+    }
+  }
+
   // Add stat filters (exclude non-stat types, but include pseudo filters from misc chips)
   const miscPseudoIds = new Set([
     'pseudo.pseudo_number_of_empty_prefix_mods',
@@ -860,6 +1007,7 @@ export async function searchTrade(
       f.enabled &&
       f.type !== 'timeless' &&
       f.id !== 'misc.memory_level' &&
+      f.id !== 'misc.area_level' &&
       f.id !== 'socket.white_sockets' &&
       (!['defence', 'weapon', 'socket', 'misc', 'gem', 'map', 'heist', 'currency', 'ultimatum'].includes(f.type) ||
         miscPseudoIds.has(f.id) ||
@@ -1005,64 +1153,13 @@ export async function searchTrade(
   // Fetch first 10 results
   const ids = searchResult.result.slice(0, 10).join(',')
   const fetchResult = (await fetchJson(urls.fetch(ids, searchResult.id ?? ''))) as {
-    result: Array<{
-      id: string
-      listing: {
-        price?: { amount: number; currency: string }
-        account: { name: string; lastCharacterName?: string; online?: { status?: string } }
-        indexed?: string
-        whisper?: string
-        method?: string
-        fee?: number
-        offers?: unknown[]
-      }
-      item?: {
-        icon?: string
-        name?: string
-        typeLine?: string
-        baseType?: string
-        explicitMods?: string[]
-        implicitMods?: string[]
-        mutatedMods?: string[]
-        fracturedMods?: string[]
-        craftedMods?: string[]
-        desecratedMods?: string[]
-        enchantMods?: string[]
-        ilvl?: number
-        sockets?: Array<{ group: number; sColour: string }>
-        properties?: Array<{ name: string; values: Array<[string, number]>; type?: number }>
-        additionalProperties?: Array<{ name: string; values: Array<[string, number]>; type?: number }>
-        corrupted?: boolean
-        duplicated?: boolean
-        identified?: boolean
-        frameType?: number
-        extended?: {
-          ar?: number
-          ev?: number
-          es?: number
-          pdps?: number
-          edps?: number
-          dps?: number
-          mods?: Record<
-            string,
-            Array<{
-              name: string
-              tier: string
-              level: number
-              magnitudes: Array<{ hash: string; min: string; max: string }> | null
-            }>
-          >
-          hashes?: Record<string, Array<[string, number[]]>>
-        }
-        grantedSkills?: Array<{ name: string; values: Array<[string, number]>; icon?: string }>
-      }
-    }>
+    result: Array<FetchEntry | null>
   }
 
   // The trade fetch endpoint occasionally returns `null` for entries whose
   // listing was deleted between our search call and our fetch call -- guard
   // both consumers below so we don't NPE inside the map callback.
-  const fetchedEntries = (fetchResult.result ?? []).filter((r): r is NonNullable<typeof r> => r != null)
+  const fetchedEntries = (fetchResult.result ?? []).filter((r): r is FetchEntry => r != null)
 
   broadcastNewIcons(
     harvestIcons(
@@ -1076,7 +1173,78 @@ export async function searchTrade(
     ),
   )
 
-  const listings: TradeListing[] = fetchedEntries.map((r) => ({
+  const listings = parseFetchedListings(fetchedEntries)
+
+  return {
+    total: searchResult.total,
+    listings,
+    queryId: searchResult.id,
+    remainingIds: searchResult.result.slice(10),
+    ...loginRequiredField,
+  }
+}
+
+/** A single result entry from a trade `/fetch` response. Extracted so the
+ *  GGG-JSON -> TradeListing mapping (the only place that has to absorb GGG's
+ *  periodic shape changes) is a pure, unit-testable function. */
+export interface FetchEntry {
+  id: string
+  listing: {
+    price?: { amount: number; currency: string }
+    account: { name: string; lastCharacterName?: string; online?: { status?: string } }
+    indexed?: string
+    whisper?: string
+    method?: string
+    fee?: number
+    offers?: unknown[]
+  }
+  item?: {
+    icon?: string
+    name?: string
+    typeLine?: string
+    baseType?: string
+    explicitMods?: FetchItemMod[]
+    implicitMods?: FetchItemMod[]
+    mutatedMods?: FetchItemMod[]
+    fracturedMods?: FetchItemMod[]
+    craftedMods?: FetchItemMod[]
+    desecratedMods?: FetchItemMod[]
+    enchantMods?: FetchItemMod[]
+    ilvl?: number
+    sockets?: Array<{ group: number; sColour: string }>
+    properties?: Array<{ name: string; values: Array<[string, number]>; type?: number }>
+    additionalProperties?: Array<{ name: string; values: Array<[string, number]>; type?: number }>
+    corrupted?: boolean
+    duplicated?: boolean
+    identified?: boolean
+    frameType?: number
+    extended?: {
+      ar?: number
+      ev?: number
+      es?: number
+      pdps?: number
+      edps?: number
+      dps?: number
+      mods?: Record<
+        string,
+        Array<{
+          name: string
+          tier: string
+          level: number
+          magnitudes: Array<{ hash: string; min: string; max: string }> | null
+        }>
+      >
+      hashes?: Record<string, Array<[string, number[]]>>
+    }
+    grantedSkills?: Array<{ name: string; values: Array<[string, number]>; icon?: string }>
+  }
+}
+
+/** Map raw `/fetch` result entries into the renderer-facing TradeListing model.
+ *  Pure (no IPC / network) so it can be unit-tested against captured GGG JSON --
+ *  this is the seam where GGG's recurring item-shape changes land. */
+export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing[] {
+  return fetchedEntries.map((r) => ({
     id: r.id,
     price: r.listing.price ?? null,
     account: r.listing.account.name,
@@ -1091,7 +1259,12 @@ export async function searchTrade(
     indexed: r.listing.indexed,
     itemData: r.item
       ? (() => {
-          const clean = (arr?: string[]): string[] | undefined => arr?.map(stripTradeTokens)
+          // GGG sends mod entries as plain strings (PoE1, PoE2 implicits) or as
+          // objects carrying the text in `description` (PoE2 explicit family).
+          // Normalize to text before stripping tokens -- calling .replace on the
+          // object form is what threw `t.replace is not a function` (#PoE2 fetch).
+          const clean = (arr?: FetchItemMod[]): string[] | undefined =>
+            arr?.map((e) => stripTradeTokens(modEntryText(e)))
           const explicit = clean(r.item.explicitMods)
           const implicit = clean(r.item.implicitMods)
           const enchant = clean(r.item.enchantMods)
@@ -1170,23 +1343,41 @@ export async function searchTrade(
               return { templeOpenRooms: open, templeObstructedRooms: obstructed }
             })(),
             modTiers: (() => {
-              const mods = r.item?.extended?.mods
-              const hashes = r.item?.extended?.hashes
-              if (!mods || !hashes) return undefined
+              const extMods = r.item?.extended?.mods
+              const extHashes = r.item?.extended?.hashes
 
               // Detect implicit magnitude multipliers (e.g. "25% increased Suffix Modifier magnitudes")
               let prefixMult = 1
               let suffixMult = 1
               for (const imp of r.item?.implicitMods ?? []) {
-                const mm = imp.match(/(\d+)% increased (Prefix|Suffix) Modifier magnitudes/)
+                const mm = modEntryText(imp).match(/(\d+)% increased (Prefix|Suffix) Modifier magnitudes/)
                 if (mm) {
                   if (mm[2] === 'Prefix') prefixMult += parseInt(mm[1], 10) / 100
                   if (mm[2] === 'Suffix') suffixMult += parseInt(mm[1], 10) / 100
                 }
               }
+              // `tier` is absent on unique mods (GGG's inline objects carry only
+              // magnitudes for fixed unique rolls), so treat it as optional and
+              // default to '' -- a missing tier is neither prefix nor suffix.
+              const multFor = (key: string, tier: string | undefined): number => {
+                const isAffix = key === 'explicit' || key === 'fractured' || key === 'crafted' || key === 'desecrated'
+                if (!isAffix) return 1
+                return tier?.startsWith('P') ? prefixMult : tier?.startsWith('S') ? suffixMult : 1
+              }
+              // The trade API can return magnitudes: null for mods with no numeric
+              // ranges (Inscribed Ultimatum challenges, fixed unique mods, etc), so
+              // guard the array. min/max are strings on both shapes.
+              const rangesOf = (mags: Array<{ min: string; max: string }> | null | undefined, mult: number): string =>
+                (mags ?? [])
+                  .map((mag) => {
+                    const min = Math.trunc(parseFloat(mag.min) * mult)
+                    const max = Math.trunc(parseFloat(mag.max) * mult)
+                    return min === max ? String(min) : `${min}-${max}`
+                  })
+                  .join(', ')
 
               const result: Record<string, { tier: string; name: string; ranges: string }> = {}
-              const categories: Array<{ key: string; texts?: string[] }> = [
+              const categories: Array<{ key: string; texts?: FetchItemMod[] }> = [
                 { key: 'explicit', texts: r.item?.explicitMods },
                 { key: 'implicit', texts: r.item?.implicitMods },
                 { key: 'fractured', texts: r.item?.fracturedMods },
@@ -1195,38 +1386,37 @@ export async function searchTrade(
                 { key: 'desecrated', texts: r.item?.desecratedMods },
               ]
               for (const { key, texts } of categories) {
-                const modEntries = mods[key]
-                const hashEntries = hashes[key]
-                if (!modEntries || !hashEntries || !texts) continue
-                for (let i = 0; i < hashEntries.length && i < texts.length; i++) {
+                if (!texts) continue
+                const modEntries = extMods?.[key]
+                const hashEntries = extHashes?.[key]
+                for (let i = 0; i < texts.length; i++) {
+                  const entry = texts[i]
+                  // New PoE2 shape: tier/magnitude data is inlined on the mod object
+                  // (extended.mods.explicit no longer exists), so read it directly.
+                  if (typeof entry !== 'string') {
+                    const m = entry.mods?.[0]
+                    if (!m) continue
+                    // tier/name are absent on unique mods -- normalize to '' so the
+                    // modTiers value always matches its `{tier,name,ranges}: string`
+                    // contract (a downstream `.startsWith` on undefined was the crash).
+                    result[stripTradeTokens(entry.description)] = {
+                      tier: m.tier ?? '',
+                      name: m.name ?? '',
+                      ranges: rangesOf(m.magnitudes, multFor(key, m.tier)),
+                    }
+                    continue
+                  }
+                  // Legacy shape (PoE1, PoE2 implicits): resolve the mod via the
+                  // text-index -> mod-index mapping in extended.hashes/mods.
+                  if (!modEntries || !hashEntries) continue
                   if (!hashEntries[i]?.[1]?.[0] && hashEntries[i]?.[1]?.[0] !== 0) continue
-                  const modIdx = hashEntries[i][1][0]
-                  const m = modEntries[modIdx]
+                  const m = modEntries[hashEntries[i][1][0]]
                   if (!m) continue
-                  // Apply implicit multiplier to prefix/suffix ranges
-                  const isAffixCategory =
-                    key === 'explicit' || key === 'fractured' || key === 'crafted' || key === 'desecrated'
-                  const mult = isAffixCategory
-                    ? m.tier.startsWith('P')
-                      ? prefixMult
-                      : m.tier.startsWith('S')
-                        ? suffixMult
-                        : 1
-                    : 1
-                  // The trade API can return magnitudes: null for mods with no
-                  // numeric ranges (Inscribed Ultimatum challenges, certain
-                  // unique fixed mods, etc). The TS type promises an array but
-                  // runtime disagrees - guard so we don't NPE.
-                  const ranges = (m.magnitudes ?? [])
-                    .map((mag) => {
-                      const min = Math.trunc(parseFloat(mag.min) * mult)
-                      const max = Math.trunc(parseFloat(mag.max) * mult)
-                      return min === max ? String(min) : `${min}-${max}`
-                    })
-                    .join(', ')
-                  // Strip tokens to match the stripped mod text used as display key
-                  // in the explicit/implicit/fractured/crafted arrays above.
-                  result[stripTradeTokens(texts[i])] = { tier: m.tier, name: m.name, ranges }
+                  result[stripTradeTokens(entry)] = {
+                    tier: m.tier ?? '',
+                    name: m.name ?? '',
+                    ranges: rangesOf(m.magnitudes, multFor(key, m.tier)),
+                  }
                 }
               }
               return Object.keys(result).length > 0 ? result : undefined
@@ -1244,20 +1434,12 @@ export async function searchTrade(
         })()
       : undefined,
   }))
-
-  return {
-    total: searchResult.total,
-    listings,
-    queryId: searchResult.id,
-    remainingIds: searchResult.result.slice(10),
-    ...loginRequiredField,
-  }
 }
 
 // ─── Bulk Exchange ──────────────────────────────────────────────────────────
 
-import { isVendorExchangeItem } from '../../shared/data/trade/bulk-exchange-eligibility'
-import { getBulkExchangeIdMap } from '../../shared/data/trade/bulk-exchange-ids'
+import { isVendorExchangeItem } from '@shared/data/trade/bulk-exchange-eligibility'
+import { getBulkExchangeIdMap } from '@shared/data/trade/bulk-exchange-ids'
 
 /** Build the `type` field of a gem trade query. Returns the discriminator shape for
  *  transfigured gems (with "Vaal " prepended to the base when the gem has a Vaal alt),
@@ -1431,8 +1613,8 @@ async function fetchAndMapListings(ids: string[], queryId: string): Promise<Trad
         frameType?: number
         icon?: string
         ilvl?: number
-        implicitMods?: string[]
-        explicitMods?: string[]
+        implicitMods?: FetchItemMod[]
+        explicitMods?: FetchItemMod[]
         properties?: Array<{ name: string; values: Array<[string, number]> }>
         corrupted?: boolean
         duplicated?: boolean
@@ -1471,8 +1653,11 @@ async function fetchAndMapListings(ids: string[], queryId: string): Promise<Trad
           name: r.item.name,
           baseType: r.item.baseType ?? r.item.typeLine,
           rarity: ['Normal', 'Magic', 'Rare', 'Unique'][r.item.frameType ?? 0] ?? 'Normal',
-          explicitMods: (r.item.explicitMods ?? []).map(stripTradeTokens),
-          implicitMods: r.item.implicitMods?.map(stripTradeTokens),
+          // Normalize each entry to text first: GGG sends PoE2 explicit-family
+          // mods as objects (text in `description`), so stripTradeTokens must not
+          // receive the raw entry. Mirrors parseFetchedListings (#PoE2 fetch).
+          explicitMods: (r.item.explicitMods ?? []).map((e) => stripTradeTokens(modEntryText(e))),
+          implicitMods: r.item.implicitMods?.map((e) => stripTradeTokens(modEntryText(e))),
           ilvl: r.item.ilvl,
           // ExpandedListing surfaces these flags as status chips (Corrupted, Mirrored,
           // Unidentified); the regular trade path includes them, so map-regex listings

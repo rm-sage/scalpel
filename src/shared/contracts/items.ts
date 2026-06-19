@@ -196,6 +196,11 @@ export interface OverlayData {
   strandBreakpoints?: StackSizeBreakpoint[]
   tierGroup?: TierGroup
   priceInfo?: PriceInfo
+  /** Live divine rate + Divine Orb sparkline, shipped alongside priceInfo so
+   *  the hero's NinjaPriceChip can render pair-currency displays (the 1/N
+   *  divine fraction needs the divine-rate chart). */
+  chaosPerDivine?: number
+  divineGraph?: (number | null)[]
 }
 
 export interface SearchableItem {

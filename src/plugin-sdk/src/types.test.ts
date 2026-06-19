@@ -50,6 +50,8 @@ describe('ScalpelPluginContext', () => {
     expectTypeOf(ctx.pluginVersion).toEqualTypeOf<string>()
     expectTypeOf(ctx.getPoeVersion).returns.toEqualTypeOf<1 | 2>()
     expectTypeOf(ctx.getLeague).returns.toEqualTypeOf<string>()
+    expectTypeOf(ctx.getLeagues).parameter(0).toEqualTypeOf<1 | 2 | undefined>()
+    expectTypeOf(ctx.getLeagues).returns.toEqualTypeOf<Promise<readonly string[]>>()
     expectTypeOf(ctx.registerTab).toBeFunction()
     expectTypeOf(ctx.registerTab).parameter(0).toEqualTypeOf<RegisterTabOptions>()
     expectTypeOf(ctx.onCurrentItem).toBeFunction()

@@ -145,6 +145,15 @@ export interface ScalpelPluginContext {
 
   getPoeVersion(): 1 | 2
   getLeague(): string
+  /**
+   * The league list for a game (defaults to the detected game), read live from
+   * the host each call so it is correct on league-launch day. Returns the same
+   * list Scalpel's own League setting offers: the host-fetched trade-API list,
+   * or the bundled fallback before the host has fetched. Both games' lists are
+   * always available regardless of which game is running, so a plugin running
+   * PoE1 can still offer PoE2 leagues.
+   */
+  getLeagues(version?: 1 | 2): Promise<readonly string[]>
   // Snapshot accessors return the latest state at call time. Combine with the
   // matching onCurrent* subscribers for reactive code; use the accessors when
   // you just need a one-shot read (e.g. inside the render function).

@@ -87,6 +87,24 @@ for (const line of lines) {
   }
 }
 
+// GGG splits Abyss into TWO trade stats: the numeric "# additional Abysses"
+// (stat_3490187949) and a dedicated singular "an additional Abyss"
+// (stat_1070816711). Most map-content mods (Strongbox, Essence, Shrine) alias both
+// phrasings under one id, so EE2 folds them into a single ref and the `explicit[0]`
+// pick above is correct -- but for Abyss [0] is the numeric id, which then wrongly
+// covers the valueless singular phrasings too. Re-point those at the singular id so
+// the price check searches the stat the item is actually indexed under (the numeric
+// stat misses every singular-Abyss tablet).
+const SINGULAR_STAT_OVERRIDES = {
+  'area contains an additional abyss': 'explicit.stat_1070816711',
+  'map contains an additional abyss': 'explicit.stat_1070816711',
+  'your maps contain an additional abyss': 'explicit.stat_1070816711',
+}
+for (const [key, id] of Object.entries(SINGULAR_STAT_OVERRIDES)) {
+  if (map[key]) map[key] = id
+  else console.log(`  override key absent from source (EE2 phrasing changed?): "${key}"`)
+}
+
 const sorted = {}
 for (const key of Object.keys(map).sort()) sorted[key] = map[key]
 

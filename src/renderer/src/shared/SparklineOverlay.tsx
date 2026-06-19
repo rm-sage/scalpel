@@ -23,6 +23,10 @@ interface Props {
    *  chips with the historical price on that day; without it they fall back to
    *  percent-change text labels. */
   currentPrice?: CurrentPrice
+  /** Pin all price displays (footer, peak/valley chips) to the baseline
+   *  currency. Used by the pair-currency display where promoting Divine's
+   *  own price back to "1 div" would be a tautology. */
+  noPromote?: boolean
 }
 
 const CLAMP = 200
@@ -152,14 +156,16 @@ function historicalChaos(currentChaos: number, todayPct: number | null | undefin
 function MiniPriceChip({
   chaosValue,
   chaosPerDivine,
+  noPromote,
   testId,
 }: {
   chaosValue: number
   chaosPerDivine?: number
+  noPromote?: boolean
   testId: string
 }): JSX.Element {
   const version = usePoeVersion()
-  const { text: display, currencyKey } = promoteChaos(chaosValue, chaosPerDivine, version)
+  const { text: display, currencyKey } = promoteChaos(chaosValue, chaosPerDivine, version, undefined, noPromote)
   return (
     <div
       data-testid={testId}
@@ -189,7 +195,7 @@ function MiniPriceChip({
  *  visually consistent with the rest of the (scaled) UI. Animation timeline:
  *  0-600ms line traces left-to-right, 600-750ms peak/valley dots pop in,
  *  700-900ms peak/valley markers fade. */
-export function SparklineOverlay({ graph, visible, cursor, currentPrice }: Props): JSX.Element {
+export function SparklineOverlay({ graph, visible, cursor, currentPrice, noPromote }: Props): JSX.Element {
   const version = usePoeVersion()
   const direction = getTrendDirection(graph)
   const strokeColor = direction === 'up' ? TREND_UP_COLOR : direction === 'down' ? TREND_DOWN_COLOR : '#888'
@@ -222,7 +228,7 @@ export function SparklineOverlay({ graph, visible, cursor, currentPrice }: Props
   // Current price shown in the footer bar. Pass the raw currentPrice fields (not
   // the derived cpd) so it formats identically to the PriceChip the user hovered.
   const currentDisplay = currentPrice
-    ? promoteChaos(currentPrice.chaosValue, currentPrice.chaosPerDivine, version, currentPrice.divineValue)
+    ? promoteChaos(currentPrice.chaosValue, currentPrice.chaosPerDivine, version, currentPrice.divineValue, noPromote)
     : null
   const todayPct = totalChange ?? null
   const peakChaos = currentPrice && peak ? historicalChaos(currentPrice.chaosValue, todayPct, peak.value) : null
@@ -390,7 +396,12 @@ export function SparklineOverlay({ graph, visible, cursor, currentPrice }: Props
               ...fadeStyle,
             }}
           >
-            <MiniPriceChip chaosValue={peakChaos} chaosPerDivine={cpd} testId="sparkline-peak-chip-inner" />
+            <MiniPriceChip
+              chaosValue={peakChaos}
+              chaosPerDivine={cpd}
+              noPromote={noPromote}
+              testId="sparkline-peak-chip-inner"
+            />
           </div>
         )}
         {valley && valleyChaos != null && (
@@ -410,7 +421,12 @@ export function SparklineOverlay({ graph, visible, cursor, currentPrice }: Props
               ...fadeStyle,
             }}
           >
-            <MiniPriceChip chaosValue={valleyChaos} chaosPerDivine={cpd} testId="sparkline-valley-chip-inner" />
+            <MiniPriceChip
+              chaosValue={valleyChaos}
+              chaosPerDivine={cpd}
+              noPromote={noPromote}
+              testId="sparkline-valley-chip-inner"
+            />
           </div>
         )}
       </div>

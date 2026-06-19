@@ -126,4 +126,23 @@ describe('SparklineOverlay', () => {
     expect(queryByTestId('sparkline-peak-dot')).toBeNull()
     expect(queryByTestId('sparkline-valley-dot')).toBeNull()
   })
+
+  it('keeps footer and peak/valley chips in the baseline currency when noPromote is set', () => {
+    const graph = [10, 5, -8, 3, 25, 12, 18]
+    const { getByTestId } = render(
+      <SparklineOverlay
+        graph={graph}
+        visible
+        cursor={{ viewportX: 100, viewportY: 100, scale: 1 }}
+        currentPrice={{ chaosValue: 400, chaosPerDivine: 200 }}
+        noPromote
+      />,
+    )
+    // 400c at 200c/div would normally promote to "2 divine"; noPromote pins chaos.
+    expect(getByTestId('sparkline-current-price').textContent).toBe('400 chaos')
+    // Peak historical value also stays chaos-denominated - the chip inner span
+    // contains the numeric value (unpromoted). baseline=400/1.18=338.98,
+    // peak=338.98*1.25=423.7 -> rounds to "424" chaos, not "2.1 divine".
+    expect(getByTestId('sparkline-peak-chip-inner').querySelector('span')!.textContent).toContain('424')
+  })
 })

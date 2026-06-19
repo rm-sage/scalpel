@@ -2,10 +2,10 @@
 import { useState } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { AppSettings } from '../../../../../shared/types'
-import { DEFAULT_PALETTE } from '../../../../../shared/theme/presets'
+import type { AppSettings } from '@shared/types'
+import { DEFAULT_PALETTE } from '@shared/theme/presets'
 import { ThemeSettings } from './ThemeSettings'
-import { applyPalette, applyVars } from '../../../shared/apply-theme'
+import { applyPalette, applyVars } from '@renderer/shared/apply-theme'
 
 vi.mock('../../../shared/apply-theme', () => ({ applyPalette: vi.fn(), applyVars: vi.fn() }))
 

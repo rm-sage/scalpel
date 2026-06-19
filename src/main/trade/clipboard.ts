@@ -1,7 +1,7 @@
 import { clipboard } from 'electron'
-import { getItemClasses } from '../../shared/data/items/item-classes'
-import { endgameAreaLevel, SKILL_GEM_CLASSES } from '../../shared/poe-item'
-import type { AdvancedMod, ItemRarity, PoeItem } from '../../shared/types'
+import { getItemClasses } from '@shared/data/items/item-classes'
+import { endgameAreaLevel, SKILL_GEM_CLASSES } from '@shared/poe-item'
+import type { AdvancedMod, ItemRarity, PoeItem } from '@shared/types'
 import { getPoeVersion } from '../game-state'
 
 // Both base-name and class-size lookups seed lazily from the active game's
@@ -290,8 +290,11 @@ export function parseItemText(text: string): PoeItem | null {
   const mapRevives = extractNum(allLines, 'Revives Available:')
   const mapDropChance = extractNum(allLines, 'Waystone Drop Chance:')
   const mapGold = extractNum(allLines, 'Gold Found:')
-  const mapMagicMonsters = extractNum(allLines, 'Magic Monsters:')
-  const mapRareMonsters = extractNum(allLines, 'Rare Monsters:')
+  // GGG relabeled these waystone properties: "Magic Monsters" -> "Monster Effectiveness",
+  // "Rare Monsters" -> "Monster Rarity" (trade keys map_magic_monsters / map_rare_monsters
+  // are unchanged). Keep the old labels as a fallback for legacy clipboard text.
+  const mapMagicMonsters = extractNum(allLines, 'Monster Effectiveness:') ?? extractNum(allLines, 'Magic Monsters:')
+  const mapRareMonsters = extractNum(allLines, 'Monster Rarity:') ?? extractNum(allLines, 'Rare Monsters:')
   const rewardLine = allLines.find((l) => l.startsWith('Reward:'))
   const mapReward = rewardLine
     ? rewardLine
@@ -317,10 +320,33 @@ export function parseItemText(text: string): PoeItem | null {
     ? parseInt(storedExpLine.split(':')[1].trim().replace(/,/g, ''), 10)
     : undefined
 
-  // `Level:` body line is how PoE1 gems report their level. PoE2 uncut gems
-  // don't have it -- their level lives in the name (see nameGemLevel above) --
-  // so fall back to that when the body didn't surface one.
-  const gemLevel = extractNum(allLines, 'Level:') ?? nameGemLevel
+  // Equipped PoE2 gems inflate the `Level:` display line with transient bonuses
+  // (Global Modifiers, Support links) that vanish when the gem is unsocketed and
+  // sold. When breakdown lines are present, reconstruct the persistent level from
+  // base gem level + corruption only; fall back to the display `Level:` line
+  // (PoE1 gems, PoE2 uncut gems) or the name-embedded level otherwise.
+  const gemBreakdownBase = isGemClass
+    ? (() => {
+        // Matches "20 Levels from Gem (Max)" or "1 Level from Gem"
+        const line = allLines.find((l) => /^\d+ Levels? from Gem\b/.test(l))
+        if (!line) return null
+        const m = line.match(/^(\d+)/)
+        return m ? parseInt(m[1], 10) : null
+      })()
+    : null
+  const gemBreakdownCorruption = isGemClass
+    ? (() => {
+        // Matches "+1 Level from Corruption (augmented)" or "+2 Levels from Corruption"
+        const line = allLines.find((l) => /^\+\d+ Levels? from Corruption(?:\s|$)/.test(l))
+        if (!line) return 0
+        const m = line.match(/^\+(\d+)/)
+        return m ? parseInt(m[1], 10) : 0
+      })()
+    : 0
+  const gemLevel =
+    gemBreakdownBase !== null
+      ? gemBreakdownBase + gemBreakdownCorruption
+      : (extractNum(allLines, 'Level:') ?? nameGemLevel)
   const stackSizeLine = allLines.find((l) => l.startsWith('Stack Size:'))
   const stackParts = stackSizeLine?.split(':')[1]?.trim().split('/') ?? []
   const stackSize = stackParts[0] ? parseInt(stackParts[0].replace(/,/g, ''), 10) : 1

@@ -1,3 +1,4 @@
+import { getPoeVersion } from '@main/game-state'
 import type { StatFilter } from '../../trade'
 
 type HeistItemInfo = {
@@ -6,6 +7,7 @@ type HeistItemInfo = {
   wingsRevealed?: number
   wingsTotal?: number
   itemClass?: string
+  baseType?: string
 }
 
 // Heist job skill requirement (contracts only; blueprints have multiple jobs that don't filter search)
@@ -29,14 +31,21 @@ export function buildHeistFilters(itemInfo: HeistItemInfo | undefined): StatFilt
 
   // Area level chip (for heist contracts/blueprints)
   if (itemInfo?.monsterLevel && itemInfo.itemClass !== 'Maps' && itemInfo.itemClass !== 'Sanctum Research') {
+    // Both PoE2 trial keys (Djinn Barya and Inscribed Ultimatum) render as an
+    // editable row with both ends pinned - within an ascendancy bracket a LOWER
+    // area level is worth more, so an open-ended min lumps the item in with
+    // cheaper higher-level listings (#433). PoE1 ultimatums scale the other way
+    // and keep the min-only misc chip. All other items use min-only chip.
+    const isPoe2TrialKey =
+      getPoeVersion() === 2 && (itemInfo.baseType === 'Djinn Barya' || itemInfo.baseType === 'Inscribed Ultimatum')
     out.push({
       id: 'misc.area_level',
       text: `Area Level: ${itemInfo.monsterLevel}`,
       value: itemInfo.monsterLevel,
       min: itemInfo.monsterLevel,
-      max: null,
+      max: isPoe2TrialKey ? itemInfo.monsterLevel : null,
       enabled: true,
-      type: 'misc',
+      type: isPoe2TrialKey ? 'pseudo' : 'misc',
     })
   }
 

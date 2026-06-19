@@ -1,18 +1,10 @@
 import { clipboard, screen, shell } from 'electron'
 import { OverlayController } from 'electron-overlay-window'
 import type Store from 'electron-store'
-import { craftOfExileUrl } from '../shared/external-link'
-import { isTownOrHideout } from '../shared/is-town-or-hideout'
-import { IPC_CHANNELS } from '../shared/contracts/ipc'
-import type {
-  AppSettings,
-  FilterFile,
-  MatchResult,
-  OverlayData,
-  PoeItem,
-  TierGroup,
-  TierSibling,
-} from '../shared/types'
+import { craftOfExileUrl } from '@shared/external-link'
+import { isTownOrHideout } from '@shared/is-town-or-hideout'
+import { IPC_CHANNELS } from '@shared/contracts/ipc'
+import type { AppSettings, FilterFile, MatchResult, OverlayData, PoeItem, TierGroup, TierSibling } from '@shared/types'
 import { getCurrentZone } from './client-log'
 import { snapshotClipboard } from './clipboard-preserve'
 import { getProfileBackedSetting } from './profiles/profile-settings'
@@ -184,6 +176,7 @@ export function evaluateAndSend(item: PoeItem): void {
   const activeMatch = matches.find((m) => m.isFirstMatch)
   const tierGroup = activeMatch ? buildTierGroup(currentFilter, activeMatch, effective) : undefined
   const priceInfo = lookupPriceForItem(effective)
+  const divinePrice = lookupPrice('Divine Orb', 'Divine Orb')
   const payload: OverlayData = {
     item,
     matches,
@@ -192,6 +185,8 @@ export function evaluateAndSend(item: PoeItem): void {
     strandBreakpoints: effectiveStrandBps,
     tierGroup,
     priceInfo,
+    chaosPerDivine: divinePrice?.chaosValue,
+    divineGraph: divinePrice?.graph,
   }
   const win = getOverlayWindow()
   if (win) {
@@ -317,6 +312,7 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
     statFilters,
     league,
     chaosPerDivine,
+    divineGraph: divinePrice?.graph,
     sessionId,
     learnedDecisions,
     unidCandidates: unidCandidates.length > 0 ? unidCandidates : undefined,

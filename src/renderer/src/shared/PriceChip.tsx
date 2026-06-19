@@ -21,6 +21,13 @@ interface PriceChipProps {
   graph?: (number | null)[]
   /** When true, suppress the trend arrow and sparkline overlay. */
   hideTrend?: boolean
+  /** Pin the chip (and its sparkline overlay) to the baseline currency - no
+   *  divine promotion. Pair-currency display: Divine Orb priced in ex/chaos. */
+  noPromote?: boolean
+  /** Replace the formatted price text + currency icon outright (e.g. the
+   *  "1/141" divine fraction for Exalted/Chaos Orb). The sparkline overlay
+   *  still uses chaosValue/noPromote for its own chips and footer. */
+  displayOverride?: { text: string; currencyKey: string }
 }
 
 export function PriceChip({
@@ -32,11 +39,15 @@ export function PriceChip({
   size = 'md',
   graph,
   hideTrend,
+  noPromote,
+  displayOverride,
 }: PriceChipProps): JSX.Element {
   const version = usePoeVersion()
   // PoE1 baseline = chaos, PoE2 baseline = exa(lted). Both use "divine" for the
   // high tier. Shared with the sparkline footer so the two always agree.
-  const { text: displayValue, currencyKey } = promoteChaos(chaosValue, chaosPerDivine, version, divineValue)
+  const promoted = promoteChaos(chaosValue, chaosPerDivine, version, divineValue, noPromote)
+  const displayValue = displayOverride?.text ?? promoted.text
+  const currencyKey = displayOverride?.currencyKey ?? promoted.currencyKey
 
   const showTrend = !hideTrend && graph != null && graph.length > 0
   const [hovered, setHovered] = useState(false)
@@ -80,6 +91,7 @@ export function PriceChip({
         visible={hovered}
         cursor={cursor}
         currentPrice={{ chaosValue, divineValue, chaosPerDivine }}
+        noPromote={noPromote}
       />
     </div>
   )

@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
-import type { PoeItem, PriceInfo } from '../../../../shared/types'
-import { isVendorExchangeItem } from '../../../../shared/data/trade/bulk-exchange-eligibility'
+import type { PoeItem, PriceInfo } from '@shared/types'
+import { isVendorExchangeItem } from '@shared/data/trade/bulk-exchange-eligibility'
 import { angePortrait } from '../../shared/icons'
 import { PriceChip } from '../../shared/PriceChip'
+import { NinjaPriceChip } from '../../shared/NinjaPriceChip'
 
 /** Extra flavor appended to the Ange subtitle. One is picked per item view.  */
 const ANGE_JOKES: string[] = [
@@ -20,11 +21,12 @@ interface AngeBannerProps {
   item: PoeItem
   priceInfo?: PriceInfo
   chaosPerDivine?: number
+  divineGraph?: (number | null)[]
 }
 
 /** PoE2 analog of FaustusBanner -- surfaces when the item is better priced at
  *  Ange's Currency Exchange than via the web trade API. */
-export function AngeBanner({ item, priceInfo, chaosPerDivine }: AngeBannerProps): JSX.Element | null {
+export function AngeBanner({ item, priceInfo, chaosPerDivine, divineGraph }: AngeBannerProps): JSX.Element | null {
   const joke = useMemo(() => ANGE_JOKES[Math.floor(Math.random() * ANGE_JOKES.length)], [item.name, item.baseType])
 
   if (!isVendorExchangeItem(2, item.itemClass, item.baseType, item.rarity)) return null
@@ -42,11 +44,11 @@ export function AngeBanner({ item, priceInfo, chaosPerDivine }: AngeBannerProps)
       </div>
       {priceInfo && priceInfo.chaosValue > 0 && (
         <div className="flex flex-col gap-1 items-end shrink-0 self-center pr-3">
-          <PriceChip
-            chaosValue={priceInfo.chaosValue}
-            divineValue={priceInfo.divineValue}
-            graph={priceInfo.graph}
-            showNinja
+          <NinjaPriceChip
+            baseType={item.baseType}
+            priceInfo={priceInfo}
+            chaosPerDivine={chaosPerDivine}
+            divineGraph={divineGraph}
           />
           {item.stackSize > 1 && (
             <PriceChip

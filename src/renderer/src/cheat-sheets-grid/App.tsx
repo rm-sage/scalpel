@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { GridFour, GridNine, GridSixteen } from '@icon-park/react'
-import type { CheatSheetsSettings, CheatSheetCategory, RuntimeSettings } from '../../../shared/types'
-import { CHEAT_SHEET_MINIMIZED_HEIGHT, CHEAT_SHEET_MINIMIZED_SLACK } from '../../../shared/cheat-sheet-window'
+import type { CheatSheetsSettings, CheatSheetCategory, RuntimeSettings } from '@shared/types'
+import { CHEAT_SHEET_MINIMIZED_HEIGHT, CHEAT_SHEET_MINIMIZED_SLACK } from '@shared/cheat-sheet-window'
 import { Chrome } from '../secondary-overlay/Chrome'
 import { useStickyZone } from '../shared/use-current-zone'
 
@@ -100,7 +100,13 @@ export function App(): JSX.Element {
     void window.api.setProfileSettingForGame(poeVersion, 'cheatSheets', next)
   }
   const sizeControls = (
-    <SizeControls value={thumbSize} onChange={setThumbSize} pinned={pinned} onTogglePin={togglePin} />
+    <SizeControls
+      value={thumbSize}
+      onChange={setThumbSize}
+      pinned={pinned}
+      onTogglePin={togglePin}
+      minimized={minimized}
+    />
   )
 
   if (settings.categories.length === 0) {
@@ -130,7 +136,11 @@ export function App(): JSX.Element {
       onClose={onClose}
       onMinimize={toggleMinimize}
       minimized={minimized}
-      headerContent={tabs}
+      // Drop the category tabs while collapsed: the minimized strip is only
+      // ~220px wide, not enough for the logo + tabs + controls, so the tabs
+      // overflow and clip. The grid is hidden when minimized anyway, so the
+      // tabs serve no purpose there.
+      headerContent={minimized ? undefined : tabs}
       headerEnd={sizeControls}
     >
       <div className="flex-1 overflow-y-auto p-2 flex flex-wrap gap-2 content-start">
@@ -194,11 +204,13 @@ function SizeControls({
   onChange,
   pinned,
   onTogglePin,
+  minimized,
 }: {
   value: ThumbSize
   onChange: (s: ThumbSize) => void
   pinned: boolean
   onTogglePin: () => void
+  minimized: boolean
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -253,42 +265,46 @@ function SizeControls({
           </svg>
         </span>
       </button>
-      <div ref={wrapRef} className="relative">
-        <button
-          type="button"
-          onClick={() => setMenuOpen((v) => !v)}
-          title="Thumb size"
-          className={`w-6 h-6 flex items-center justify-center transition-colors ${menuOpen ? '' : 'text-text-dim hover:text-text'}`}
-          style={{ lineHeight: 0, color: menuOpen ? ACTIVE_COLOR : undefined }}
-        >
-          <ActiveIcon size={15} theme="outline" fill="currentColor" />
-        </button>
-        {menuOpen && (
-          <div className="absolute right-0 top-full mt-1 z-10 min-w-[110px] bg-bg-card-translucent border border-border rounded shadow-lg py-1 text-[11px]">
-            {SIZE_OPTIONS.map(({ key, label }, i) => {
-              const active = key === value
-              return (
-                <div key={key}>
-                  {i > 0 && <div className="mx-2 h-px bg-white/5" />}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onChange(key)
-                      setMenuOpen(false)
-                    }}
-                    className={`menu-row w-full text-left px-2 py-1 transition-colors ${
-                      active ? '' : 'text-text-dim hover:text-text'
-                    }`}
-                    style={active ? { color: ACTIVE_COLOR } : undefined}
-                  >
-                    {label}
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
+      {/* Thumb-size control hides while collapsed: the minimized strip has no
+          grid to resize, and dropping it keeps the narrow bar uncluttered. */}
+      {!minimized && (
+        <div ref={wrapRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            title="Thumb size"
+            className={`w-6 h-6 flex items-center justify-center transition-colors ${menuOpen ? '' : 'text-text-dim hover:text-text'}`}
+            style={{ lineHeight: 0, color: menuOpen ? ACTIVE_COLOR : undefined }}
+          >
+            <ActiveIcon size={15} theme="outline" fill="currentColor" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-full mt-1 z-10 min-w-[110px] bg-bg-card-translucent border border-border rounded shadow-lg py-1 text-[11px]">
+              {SIZE_OPTIONS.map(({ key, label }, i) => {
+                const active = key === value
+                return (
+                  <div key={key}>
+                    {i > 0 && <div className="mx-2 h-px bg-white/5" />}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onChange(key)
+                        setMenuOpen(false)
+                      }}
+                      className={`menu-row w-full text-left px-2 py-1 transition-colors ${
+                        active ? '' : 'text-text-dim hover:text-text'
+                      }`}
+                      style={active ? { color: ACTIVE_COLOR } : undefined}
+                    >
+                      {label}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </>
   )
 }

@@ -13,6 +13,7 @@ export function createPluginContext(deps: PluginContextFactoryDeps): ScalpelPlug
     pluginVersion: deps.pluginVersion,
     getPoeVersion: deps.getPoeVersion,
     getLeague: deps.getLeague,
+    getLeagues: (version) => deps.getLeagues(version ?? deps.getPoeVersion()),
     getCurrentItem: deps.getCurrentItem,
     getCurrentZone: deps.getCurrentZone,
     onCurrentItem: (h) => deps.subscribeCurrentItem(h),

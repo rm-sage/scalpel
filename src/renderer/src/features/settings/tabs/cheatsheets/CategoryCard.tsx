@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { ReactSortable } from 'react-sortablejs'
 import { AddOne, Drag } from '@icon-park/react'
-import type { CheatSheetCategory } from '../../../../../../shared/types'
-import { RemoveButton } from '../../../../components/RemoveButton'
-import { createMomentumScrollHandler } from '../../../../shared/momentumScroll'
-import { HotkeyField } from '../../../../components/primitives/HotkeyField'
-import type { HotkeySlot } from '../../../../components/primitives/hotkey-collisions'
+import type { CheatSheetCategory } from '@shared/types'
+import { RemoveButton } from '@renderer/components/RemoveButton'
+import { createMomentumScrollHandler } from '@renderer/shared/momentumScroll'
+import { HotkeyField } from '@renderer/components/primitives/HotkeyField'
+import type { HotkeySlot } from '@renderer/components/primitives/hotkey-collisions'
 import { PlaceholderTile } from './PlaceholderTile'
 import { ThumbnailTile } from './ThumbnailTile'
 import { UrlPasteRow } from './UrlPasteRow'
+import { stripIpcErrorWrapper } from '@renderer/shared/utils'
 
 interface CategoryCardProps {
   category: CheatSheetCategory
@@ -66,11 +67,9 @@ export function CategoryCard({
       onUpdate({ ...category, sheets: [{ id: added.id, ext: added.ext }, ...category.sheets] })
       setUrlInput(null)
     } catch (e) {
-      // Strip Electron's IPC rejection wrapper ("Error invoking remote
-      // method 'foo': Error: <our message>") so the user sees just our
-      // friendly copy in the banner.
+      // stripIpcErrorWrapper removes the Electron IPC plumbing prefix.
       const raw = e instanceof Error ? e.message : String(e)
-      onError(raw.replace(/^Error invoking remote method '[^']+': Error: /, ''))
+      onError(stripIpcErrorWrapper(raw))
     }
   }
 

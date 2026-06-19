@@ -13,17 +13,20 @@ export function formatPrice(value: number): string {
  *  current-price footer so they all format identically. `divineValue` (when the
  *  caller already knows the exact divine price) takes precedence over deriving
  *  it from `chaosPerDivine`; `version` selects the low-tier currency (PoE1
- *  chaos, PoE2 exalted). */
+ *  chaos, PoE2 exalted). `noPromote` pins the result to the baseline currency,
+ *  used by the pair-currency display (Divine Orb priced in ex/chaos). */
 export function promoteChaos(
   chaosValue: number,
   chaosPerDivine: number | undefined,
   version: number,
   divineValue?: number | null,
+  noPromote?: boolean,
 ): { text: string; currencyKey: string } {
   const useDivine =
-    divineValue != null
+    !noPromote &&
+    (divineValue != null
       ? divineValue >= 1
-      : chaosPerDivine != null && chaosPerDivine > 0 && chaosValue >= chaosPerDivine
+      : chaosPerDivine != null && chaosPerDivine > 0 && chaosValue >= chaosPerDivine)
   return {
     text: useDivine
       ? formatPrice(divineValue != null && divineValue >= 1 ? divineValue : chaosValue / chaosPerDivine!)
@@ -43,4 +46,11 @@ export function formatDust(value: number): string {
  *  evenBg for rows that use a different tint (e.g. 0.03). */
 export function zebraRowBg(index: number, evenBg = 'rgba(255,255,255,0.02)'): string {
   return index % 2 === 0 ? evenBg : 'transparent'
+}
+
+/** Strip Electron's IPC rejection wrapper ("Error invoking remote method
+ *  'foo': Error: <our message>") so users see just the message we threw in
+ *  the main process, not the plumbing. */
+export function stripIpcErrorWrapper(message: string): string {
+  return message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')
 }

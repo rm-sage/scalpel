@@ -1,4 +1,12 @@
 {
   "schemaVersion": 1,
-  "indexedKeys": ["map.map_tier", "map.map_revives"]
+  "indexedKeys": [
+    "map.map_tier",
+    "map.map_packsize",
+    "map.map_iir",
+    "map.map_revives",
+    "map.map_bonus",
+    "map.map_magic_monsters",
+    "map.map_rare_monsters"
+  ]
 }

@@ -8,7 +8,9 @@ on:
 
 jobs:
   check:
-    runs-on: windows-latest
+    # Pinned: windows-latest rotated to an image where node-gyp can't locate
+    # Visual Studio to rebuild active-win. windows-2022 has the working toolchain.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 

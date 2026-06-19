@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
-import type { PoeItem, PriceInfo } from '../../../../shared/types'
-import { isVendorExchangeItem } from '../../../../shared/data/trade/bulk-exchange-eligibility'
+import type { PoeItem, PriceInfo } from '@shared/types'
+import { isVendorExchangeItem } from '@shared/data/trade/bulk-exchange-eligibility'
 import { faustusPortrait } from '../../shared/icons'
 import { PriceChip } from '../../shared/PriceChip'
+import { NinjaPriceChip } from '../../shared/NinjaPriceChip'
 
 /** Extra flavor appended to the Faustus subtitle. One is picked per item view */
 const FAUSTUS_JOKES: string[] = [
@@ -20,11 +21,17 @@ interface FaustusBannerProps {
   item: PoeItem
   priceInfo?: PriceInfo
   chaosPerDivine?: number
+  divineGraph?: (number | null)[]
 }
 
 /** Navy-rounded card that surfaces when an item is better priced via Faustus' Currency
  *  Exchange than the web trade. */
-export function FaustusBanner({ item, priceInfo, chaosPerDivine }: FaustusBannerProps): JSX.Element | null {
+export function FaustusBanner({
+  item,
+  priceInfo,
+  chaosPerDivine,
+  divineGraph,
+}: FaustusBannerProps): JSX.Element | null {
   const joke = useMemo(
     () => FAUSTUS_JOKES[Math.floor(Math.random() * FAUSTUS_JOKES.length)],
     [item.name, item.baseType],
@@ -49,11 +56,11 @@ export function FaustusBanner({ item, priceInfo, chaosPerDivine }: FaustusBanner
       </div>
       {priceInfo && priceInfo.chaosValue > 0 && (
         <div className="flex flex-col gap-1 items-end shrink-0 self-center pr-3">
-          <PriceChip
-            chaosValue={priceInfo.chaosValue}
-            divineValue={priceInfo.divineValue}
-            graph={priceInfo.graph}
-            showNinja
+          <NinjaPriceChip
+            baseType={item.baseType}
+            priceInfo={priceInfo}
+            chaosPerDivine={chaosPerDivine}
+            divineGraph={divineGraph}
           />
           {item.stackSize > 1 && (
             <PriceChip

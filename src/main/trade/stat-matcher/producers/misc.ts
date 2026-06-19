@@ -1,6 +1,6 @@
-import { getPoeVersion } from '../../../game-state'
-import { SKILL_GEM_CLASSES } from '../../../../shared/poe-item'
-import type { AdvancedMod } from '../../../../shared/types'
+import { getPoeVersion } from '@main/game-state'
+import { SKILL_GEM_CLASSES } from '@shared/poe-item'
+import type { AdvancedMod } from '@shared/types'
 import type { StatFilter } from '../../trade'
 import { ITEM_CLASS_TO_CATEGORY } from '../item-classes'
 
@@ -71,8 +71,9 @@ export function buildMiscFilters(
     // skipped: an ilvl filter matches no currency listing, so it broke their
     // trade search outright (#418).
     // Type 'gem' (instead of 'misc') routes the filter through StatFilterRow
-    // rendering -- 'misc' goes through FilterChip -- while still landing in the
-    // misc-filter group on the API side (trade.ts dispatches by id).
+    // rendering -- 'misc' goes through FilterChip. trade.ts dispatches by id to
+    // the right API group per game: misc_filters on PoE1, type_filters on PoE2
+    // (PoE2 indexes ilvl under type_filters; see the #436 routing in trade.ts).
     out.push({
       id: 'misc.ilvl',
       text: 'Item Level',

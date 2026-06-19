@@ -1,5 +1,5 @@
 import { app, net } from 'electron'
-import { getTradeUrls } from '../../../shared/endpoints'
+import { getTradeUrls } from '@shared/endpoints'
 import { getPoeVersion } from '../../game-state'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ async function fetchStats(): Promise<void> {
         const request = net.request({
           url,
           method: 'GET',
-          useSessionCookies: true,
+          useSessionCookies: false, // anonymous POESESSID echoed back triggers CF challenges (#429)
           referrerPolicy: 'no-referrer-when-downgrade',
         })
         // Header set matches trade.ts (and APT/EE2's proxy): minimal headers,

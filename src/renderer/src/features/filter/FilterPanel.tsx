@@ -143,6 +143,8 @@ export function FilterPanel({
         <ItemSummary
           item={item}
           priceInfo={data.priceInfo}
+          chaosPerDivine={data.chaosPerDivine}
+          divineGraph={data.divineGraph}
           onRecolor={onOpenTools}
           onDustExplore={onOpenDustExplore}
           onDivExplore={onOpenDivExplore}

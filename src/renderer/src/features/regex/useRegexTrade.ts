@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Listing } from '../../shared/trade-types'
+import { stripIpcErrorWrapper } from '../../shared/utils'
 
 export interface RegexTradeResult {
   total: number
@@ -72,7 +73,7 @@ export function useRegexTrade(): RegexTrade {
       setLeague(result.league)
       setRemainingIds(result.remainingIds)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Search failed')
+      setError(stripIpcErrorWrapper(e instanceof Error ? e.message : 'Search failed'))
     } finally {
       setSearching(false)
     }

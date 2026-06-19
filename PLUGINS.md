@@ -74,6 +74,14 @@ interface ScalpelPluginContext {
   // Game state
   getPoeVersion(): 1 | 2
   getLeague(): string
+  // Returns the live league list for the given game (defaults to the detected
+  // game). Reads host settings fresh each call, so it is correct on
+  // league-launch day. Both games' lists are always available regardless of
+  // which game is running. Returns the same list as Scalpel's own League
+  // setting: the host-fetched trade-API list, or the bundled fallback before
+  // the host has fetched. Pair with the exported LeagueDropdown component for
+  // a Scalpel-matched picker.
+  getLeagues(version?: 1 | 2): Promise<readonly string[]>
   getCurrentItem(): PoeItem | null   // the most recent hotkey'd item
   getCurrentZone(): Zone | null      // raw current zone
 
@@ -551,8 +559,8 @@ These render the standard Scalpel settings-row chrome (label on the left, contro
 
 - `<HotkeyField value onChange />` - full-width hotkey recorder with a Change button. Used for filter/price-check hotkey rows.
 - `<HotkeyRecorder value onChange className? />` - compact 200px variant without the Change button. Used inside macro rows where space is tight.
-- `keyEventToAccelerator(e)` - converts a `KeyboardEvent` to an Electron accelerator string (`"CommandOrControl+Shift+F"`), or `null` for bare modifier presses.
-- `prettyHotkey(accelerator)` - formats an accelerator for display (`"CommandOrControl"` becomes `"Ctrl"` on Windows).
+- `keyEventToAccelerator(e)` - converts a `KeyboardEvent` to an accelerator string (`"CommandOrControl+Shift+F"`), or `null` for bare modifier presses. International / OEM keys (a Danish `æ`, a bare `;`, etc.) are encoded as a physical-position token (`"Phys:Semicolon:Æ"`) that Scalpel matches kernel-side; pass the string straight back to the hotkey APIs and bind/display work as-is.
+- `prettyHotkey(accelerator)` - formats an accelerator for display (`"CommandOrControl"` becomes `"Ctrl"`; a physical token renders as its captured glyph).
 
 **Other forwarded components**
 

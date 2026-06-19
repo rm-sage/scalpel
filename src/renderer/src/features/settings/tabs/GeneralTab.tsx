@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Github } from '@icon-park/react'
-import type { AppSettings, ProfileSettingValue, RuntimeSettings } from '../../../../../shared/types'
-import { getGameFeatures } from '../../../../../shared/game-features'
-import { GITHUB_REPO_URL, KOFI_URL } from '../../../../../shared/endpoints'
-import { reportDiagnosticError } from '../../../shared/diagnostics'
-import { CollapsibleSection } from '../../../shared/CollapsibleSection'
-import kofiIcon from '../../../assets/other/kofi-logo.svg'
-import { SettingToggleBox } from '../../../components/primitives/SettingToggleBox'
-import { LOCALE_LABELS, setAppLocale, SUPPORTED_LOCALES, useCurrentLocale } from '../../../shared/locale'
-import { m } from '../../../../../shared/paraglide/messages.js'
+import type { AppSettings, ProfileSettingValue, RuntimeSettings } from '@shared/types'
+import { GITHUB_REPO_URL, KOFI_URL } from '@shared/endpoints'
+import { reportDiagnosticError } from '@renderer/shared/diagnostics'
+import { resolveLeagueOptions } from '@renderer/shared/league-options'
+import { CollapsibleSection } from '@renderer/shared/CollapsibleSection'
+import kofiIcon from '@renderer/assets/other/kofi-logo.svg'
+import { SettingToggleBox } from '@renderer/components/primitives/SettingToggleBox'
+import { LOCALE_LABELS, setAppLocale, SUPPORTED_LOCALES, useCurrentLocale } from '@renderer/shared/locale'
+import { m } from '@shared/paraglide/messages.js'
 
 interface Props {
   settings: RuntimeSettings
@@ -30,9 +30,7 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
   useEffect(() => {
     loadDebugLog()
   }, [])
-  const features = getGameFeatures(settings.poeVersion)
-  const cachedLeagues = settings.poeVersion === 2 ? settings.leaguesPoe2 : settings.leaguesPoe1
-  const leagueOptions: readonly string[] = cachedLeagues && cachedLeagues.length > 0 ? cachedLeagues : features.leagues
+  const leagueOptions = resolveLeagueOptions(settings, settings.poeVersion)
   const activeLeague = settings.activeProfile?.league ?? ''
 
   const reportBug = async (): Promise<void> => {

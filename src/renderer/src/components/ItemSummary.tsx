@@ -1,6 +1,6 @@
-import type { PoeItem, PriceInfo } from '../../../shared/types'
+import type { PoeItem, PriceInfo } from '@shared/types'
 import { ArrowRight } from '@icon-park/react'
-import { PriceChip } from '../shared/PriceChip'
+import { NinjaPriceChip } from '../shared/NinjaPriceChip'
 import { InfoChip } from '../shared/InfoChip'
 import { ExternalLinkButton } from '../shared/ExternalLinkButton'
 import { INFLUENCE_ICONS_BY_NAME } from '../shared/item-display'
@@ -14,9 +14,9 @@ import socketBlue from '../assets/sockets/socket-blue.png'
 import socketWhite from '../assets/sockets/socket-white.png'
 import { RuneSocketChipPoe2 } from './sockets/RuneSocketChip.poe2'
 import { usePoeVersion } from '../shared/poe-version-context'
-import { getGameFeatures } from '../../../shared/game-features'
-import divCardsData from '../../../shared/data/economy/div-cards.json'
-import baseToUniques from '../../../shared/data/items/unique-info.json'
+import { getGameFeatures } from '@shared/game-features'
+import divCardsData from '@shared/data/economy/div-cards.json'
+import baseToUniques from '@shared/data/items/unique-info.json'
 import { ItemChip } from './ItemChip'
 import { IconGlow } from '../shared/IconGlow'
 import mapFrameIcon from '../assets/other/map-frame.png'
@@ -70,6 +70,8 @@ function RewardText({ reward }: { reward: string }): JSX.Element {
 interface Props {
   item: PoeItem
   priceInfo?: PriceInfo
+  chaosPerDivine?: number
+  divineGraph?: (number | null)[]
   rightSlot?: React.ReactNode
   /** Optional content rendered as its own row at the bottom of the hero's
    *  left column, after the iLvl/Quality/socket chip row. Used by the
@@ -90,7 +92,7 @@ interface Props {
 const divCardDropMap = new Map(
   (divCardsData as Array<{ name: string; drop: { areas: string[] } }>).map((c) => [c.name, c.drop.areas]),
 )
-import mapsData from '../../../shared/data/economy/div-maps.json'
+import mapsData from '@shared/data/economy/div-maps.json'
 const mapNameLookup = new Map(
   (mapsData as Array<{ ids: string[]; name: string }>).flatMap((m) => m.ids.map((id) => [id, m.name])),
 )
@@ -98,6 +100,8 @@ const mapNameLookup = new Map(
 export function ItemSummary({
   item,
   priceInfo,
+  chaosPerDivine,
+  divineGraph,
   rightSlot,
   extraRow,
   onRecolor,
@@ -216,11 +220,11 @@ export function ItemSummary({
           return (
             <div className="flex gap-[6px] items-center">
               {hasPrice && (
-                <PriceChip
-                  chaosValue={priceInfo.chaosValue}
-                  divineValue={priceInfo.divineValue}
-                  graph={priceInfo.graph}
-                  showNinja
+                <NinjaPriceChip
+                  baseType={item.baseType}
+                  priceInfo={priceInfo}
+                  chaosPerDivine={chaosPerDivine}
+                  divineGraph={divineGraph}
                 />
               )}
               {dustInfo != null && (

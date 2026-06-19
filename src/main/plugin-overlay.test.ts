@@ -10,6 +10,7 @@ const fakeOverlay = {
   send: vi.fn(),
   getWindow: vi.fn(() => null),
   setBoundsProgrammatic: vi.fn(),
+  setBoundsProgrammaticOnce: vi.fn(),
   setSizeProgrammatic: vi.fn(),
   hideKeepingRestore: vi.fn(),
 }

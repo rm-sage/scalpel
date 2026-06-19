@@ -2,13 +2,14 @@
 
 import { describe, it, expect, vi } from 'vitest'
 import { createPluginContext } from './context'
-import type { PoeItem } from '../../../shared/types'
+import type { PoeItem } from '@shared/types'
 
 const baseDeps = () => ({
   pluginId: 'test',
   pluginVersion: '1.0.0',
   getPoeVersion: () => 1 as const,
   getLeague: () => 'Mirage',
+  getLeagues: vi.fn(async () => ['Standard']),
   getCurrentItem: () => null,
   getCurrentZone: () => null,
   subscribeCurrentItem: () => () => {},
@@ -210,5 +211,21 @@ describe('createPluginContext captureGameWindow', () => {
     const region = { x: 1, y: 2, width: 3, height: 4 }
     await ctx.captureGameWindow(region)
     expect(captureGameWindow).toHaveBeenCalledWith(region)
+  })
+})
+
+describe('createPluginContext getLeagues', () => {
+  it('calls dep with the current game when no version is passed', async () => {
+    const getLeagues = vi.fn(async () => ['Standard'])
+    const ctx = createPluginContext({ ...baseDeps(), getLeagues })
+    await ctx.getLeagues()
+    expect(getLeagues).toHaveBeenCalledWith(1)
+  })
+
+  it('calls dep with the explicit version when provided', async () => {
+    const getLeagues = vi.fn(async () => ['Standard'])
+    const ctx = createPluginContext({ ...baseDeps(), getLeagues })
+    await ctx.getLeagues(2)
+    expect(getLeagues).toHaveBeenCalledWith(2)
   })
 })

@@ -8,7 +8,7 @@ const LOCAL_DEFENCE_PATTERNS = [
 // Offensive mod patterns -- only local on weapons, NOT on armour (gloves, boots, etc.)
 const LOCAL_WEAPON_PATTERNS = [
   /^Adds \d+ to \d+ (?:Physical|Fire|Cold|Lightning|Chaos) Damage$/i,
-  /^\d+(?:\.\d+)?% increased Attack Speed$/i,
+  /^\d+(?:\.\d+)?% (?:increased|reduced) Attack Speed$/i,
   /^\+\d+ to Accuracy Rating$/i,
   /^\d+(?:\.\d+)?% of Physical Attack Damage Leeched as (?:Life|Mana)$/i,
   /^\d+(?:\.\d+)?% chance to Poison on Hit$/i,

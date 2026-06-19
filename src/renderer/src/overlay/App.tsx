@@ -2,12 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { PluginHost } from '../plugins/PluginHost'
 import { PluginTabHost } from '../plugins/PluginTabHost'
 import type { RegisteredTab } from '../plugins/PluginHost'
-import type { AppSettings, RuntimeSettings, OverlayData, PoeItem, PriceInfo } from '../../../shared/types'
-import { isHideableTabKey } from '../../../shared/types'
-import { m } from '../../../shared/paraglide/messages.js'
-import type { ExternalLinkTarget } from '../../../shared/external-link'
-import { externalLinkUrl, ninjaLinkUrl } from '../../../shared/external-link'
-import { getGameFeatures } from '../../../shared/game-features'
+import type { AppSettings, RuntimeSettings, OverlayData, PoeItem, PriceInfo } from '@shared/types'
+import { isHideableTabKey } from '@shared/types'
+import { m } from '@shared/paraglide/messages.js'
+import type { ExternalLinkTarget } from '@shared/external-link'
+import { externalLinkUrl, ninjaLinkUrl } from '@shared/external-link'
+import { getGameFeatures } from '@shared/game-features'
 import { PoeVersionProvider } from '../shared/poe-version-context'
 import { CurrencyLabelsProvider } from '../shared/currency-labels-context'
 import { useReportInputFocus } from '../shared/use-report-input-focus'
@@ -181,6 +181,7 @@ export default function App(): JSX.Element {
     }>
     league: string
     chaosPerDivine?: number
+    divineGraph?: (number | null)[]
     unidCandidates?: Array<{ name: string; chaosValue: number }>
     sessionId: number
     learnedDecisions: Record<string, boolean>
@@ -222,7 +223,7 @@ export default function App(): JSX.Element {
     [],
   )
   const onSubscribeCurrentZone = useCallback(
-    (h: (z: import('../../../shared/types').Zone) => void): (() => void) =>
+    (h: (z: import('@shared/types').Zone) => void): (() => void) =>
       window.api.onZoneChanged((z) => {
         if (z !== null) h(z)
       }),
@@ -985,7 +986,12 @@ export default function App(): JSX.Element {
                   />
                 )}
                 {view === 'tools' && overlayData && features.socketRecolor && (
-                  <SocketRecolor item={overlayData.item} priceInfo={overlayData.priceInfo} />
+                  <SocketRecolor
+                    item={overlayData.item}
+                    priceInfo={overlayData.priceInfo}
+                    chaosPerDivine={overlayData.chaosPerDivine}
+                    divineGraph={overlayData.divineGraph}
+                  />
                 )}
                 {view === 'pricecheck' &&
                   (priceCheckData ? (
@@ -997,6 +1003,7 @@ export default function App(): JSX.Element {
                       league={priceCheckData.league}
                       poeVersion={poeVersion ?? 1}
                       chaosPerDivine={priceCheckData.chaosPerDivine}
+                      divineGraph={priceCheckData.divineGraph}
                       unidCandidates={priceCheckData.unidCandidates}
                       sessionId={priceCheckData.sessionId}
                       learnedDecisions={priceCheckData.learnedDecisions}

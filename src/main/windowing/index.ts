@@ -7,7 +7,7 @@ import { prewarmSnapCanvas, type Rect, setSnapGhost } from './snap-canvas'
 import { fireOnLeaveScalpel, type OverlayState, overlays } from './state'
 import { createOverlayWindow } from './window'
 
-export type { OverlayAnchor } from '../../shared/types'
+export type { OverlayAnchor } from '@shared/types'
 export {
   aroundNativeDialog,
   closeAllOverlaysOnPoeExit,
@@ -23,7 +23,7 @@ export { registerAuxiliaryScalpelWindow, registerOnPoeLeave, setMainOverlayGette
 // Public re-exports - this module is the public face of the windowing system.
 export type { Rect }
 
-import type { OverlayAnchor } from '../../shared/types'
+import type { OverlayAnchor } from '@shared/types'
 
 export interface OverlaySpec {
   /** Stable id, used for IPC channels and as a lookup key. Kebab-case. */
@@ -113,6 +113,13 @@ export interface SecondaryOverlay {
    *  animation, content-driven height) that shouldn't pollute the stored
    *  anchor. No-op if the window hasn't been created. */
   setBoundsProgrammatic(target: Rect): void
+  /** Like setBoundsProgrammatic but issues setBounds exactly once. The double-
+   *  apply in setBoundsProgrammatic settles cross-display anchor moves, but on
+   *  Windows at fractional scale factors (1.5x) it compounds the DIP-to-physical
+   *  conversion and drifts/grows the window. Use for same-display tweens
+   *  (minimize/restore) that never cross displays. No-op if the window hasn't
+   *  been created. */
+  setBoundsProgrammaticOnce(target: Rect): void
   /** Resize the window in place without moving it. Calls setBounds exactly
    *  once: the double-call in setBoundsProgrammatic exists to settle cross-
    *  display anchor moves, and at fractional Windows scale factors (1.5x in
@@ -155,24 +162,48 @@ function snapTargetFor(state: OverlayState, cur: Rect): Rect | null {
   return { x: defaultRect.x, y: defaultRect.y, width: cur.width, height: cur.height }
 }
 
-/** Apply a programmatic setBounds and arm the settle timer. Calls setBounds
- *  twice on Windows because a fresh BrowserWindow's first setBounds doesn't
- *  always stick at the OS level (and a cross-DPI move needs a second pass to
- *  resolve the new display's scale factor) - same workaround the
- *  electron-overlay-window library uses for the main overlay. Replaces any
- *  pending settle so rapid back-to-back calls (PoE live-drag) don't let the
- *  flag drop while move/moved events from the latest setBounds are still in
- *  flight. */
-function setBoundsProgrammatic(state: OverlayState, target: Rect): void {
-  if (!state.win || state.win.isDestroyed()) return
+/** Mark a programmatic bounds change in flight, run `apply` (the actual
+ *  setBounds call or calls), then arm/replace the settle timer that drops the
+ *  in-flight flag once the OS has finished delivering the synthetic
+ *  move/moved/resized events the bounds change provokes. Replacing any pending
+ *  settle is what lets rapid back-to-back calls (PoE live-drag, the minimize
+ *  tween) keep the flag set instead of letting it drop mid-flight. */
+function withProgrammaticMove(state: OverlayState, apply: () => void): void {
   state.inProgrammaticMove = true
-  state.win.setBounds(target)
-  if (process.platform === 'win32') state.win.setBounds(target)
+  apply()
   if (state.programmaticSettleTimer) clearTimeout(state.programmaticSettleTimer)
   state.programmaticSettleTimer = setTimeout(() => {
     state.inProgrammaticMove = false
     state.programmaticSettleTimer = null
   }, PROGRAMMATIC_MOVE_SETTLE_MS)
+}
+
+/** Apply a programmatic setBounds and arm the settle timer. Calls setBounds
+ *  twice on Windows because a fresh BrowserWindow's first setBounds doesn't
+ *  always stick at the OS level (and a cross-DPI move needs a second pass to
+ *  resolve the new display's scale factor) - same workaround the
+ *  electron-overlay-window library uses for the main overlay. */
+function setBoundsProgrammatic(state: OverlayState, target: Rect): void {
+  if (!state.win || state.win.isDestroyed()) return
+  const win = state.win
+  withProgrammaticMove(state, () => {
+    win.setBounds(target)
+    if (process.platform === 'win32') win.setBounds(target)
+  })
+}
+
+/** Like setBoundsProgrammatic but issues setBounds exactly once. The second
+ *  apply in setBoundsProgrammatic settles cross-display anchor moves, but on
+ *  Windows at fractional scale factors (1.5x) it compounds the DIP-to-physical
+ *  conversion, drifting and growing the window by the scale factor on every
+ *  call. Use for same-display tweens (the minimize/restore animation) that
+ *  never cross displays, where the second apply is pure downside. */
+function setBoundsProgrammaticOnce(state: OverlayState, target: Rect): void {
+  if (!state.win || state.win.isDestroyed()) return
+  const win = state.win
+  withProgrammaticMove(state, () => {
+    win.setBounds(target)
+  })
 }
 
 /** Size-only programmatic resize. Single setBounds (no double-apply): the
@@ -187,13 +218,10 @@ function setSizeProgrammatic(state: OverlayState, width: number, height: number)
   if (!state.win || state.win.isDestroyed()) return
   const cur = state.win.getBounds()
   if (cur.width === width && cur.height === height) return
-  state.inProgrammaticMove = true
-  state.win.setBounds({ x: cur.x, y: cur.y, width, height })
-  if (state.programmaticSettleTimer) clearTimeout(state.programmaticSettleTimer)
-  state.programmaticSettleTimer = setTimeout(() => {
-    state.inProgrammaticMove = false
-    state.programmaticSettleTimer = null
-  }, PROGRAMMATIC_MOVE_SETTLE_MS)
+  const win = state.win
+  withProgrammaticMove(state, () => {
+    win.setBounds({ x: cur.x, y: cur.y, width, height })
+  })
 }
 
 /** Push the current anchor's DIP bounds onto the window. No-op when PoE
@@ -264,6 +292,10 @@ function makeOverlayApi(state: OverlayState): SecondaryOverlay {
     setBoundsProgrammatic: (target) => {
       if (!state.win || state.win.isDestroyed()) return
       setBoundsProgrammatic(state, target)
+    },
+    setBoundsProgrammaticOnce: (target) => {
+      if (!state.win || state.win.isDestroyed()) return
+      setBoundsProgrammaticOnce(state, target)
     },
     setSizeProgrammatic: (width, height) => {
       if (!state.win || state.win.isDestroyed()) return

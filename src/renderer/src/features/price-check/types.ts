@@ -1,5 +1,5 @@
-import type { PoeItem, PriceInfo } from '../../../../shared/types'
-import type { ModTier } from '../../../../shared/data/tiers/types'
+import type { PoeItem, PriceInfo } from '@shared/types'
+import type { ModTier } from '@shared/data/tiers/types'
 
 export type { Listing, BulkListing } from '../../shared/trade-types'
 
@@ -56,6 +56,9 @@ export interface PriceCheckProps {
   league: string
   poeVersion: 1 | 2
   chaosPerDivine?: number
+  /** Divine Orb's 7-day sparkline, shipped alongside chaosPerDivine so the
+   *  pair-currency header can chart the divine rate for Exalted/Chaos Orb. */
+  divineGraph?: (number | null)[]
   unidCandidates?: Array<{ name: string; chaosValue: number }>
   sessionId: number
   learnedDecisions: Record<string, boolean>

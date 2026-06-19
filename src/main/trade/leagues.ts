@@ -1,10 +1,10 @@
 import { net } from 'electron'
 import type Store from 'electron-store'
-import { getTradeUrls } from '../../shared/endpoints'
+import { getTradeUrls } from '@shared/endpoints'
 import { getProfileStore } from '../profiles/store'
 import { listProfilesByGameVariant, type ProfileChangedSetting } from '../profiles/profile-settings'
-import { getGameFeatures } from '../../shared/game-features'
-import type { AppSettings } from '../../shared/types'
+import { getGameFeatures } from '@shared/game-features'
+import type { AppSettings } from '@shared/types'
 
 interface LeaguesResponse {
   result?: Array<{ id?: string; text?: string; realm?: string }>
@@ -12,7 +12,12 @@ interface LeaguesResponse {
 
 function fetchJson(url: string, timeoutMs = 10000): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const request = net.request(url)
+    // Match trade.ts's request shape: never attach Electron's session cookie
+    // jar. GGG's API mints an anonymous POESESSID and Cloudflare bot-challenges
+    // any request that echoes it back (#429); with the default jar a challenged
+    // league fetch fails silently and strands users on the stale bundled list,
+    // worst of all on league-launch day. See commonRequestOpts in trade.ts.
+    const request = net.request({ url, useSessionCookies: false, referrerPolicy: 'no-referrer-when-downgrade' })
     let data = ''
     const timer = setTimeout(() => {
       try {

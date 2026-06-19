@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { endgameAreaLevel } from '../../shared/poe-item'
+import { endgameAreaLevel } from '@shared/poe-item'
 import { getPoeVersion } from '../game-state'
 import { parseItemText } from './clipboard'
 
@@ -421,6 +421,77 @@ describe('parseItemText', () => {
       expect(item.gemLevel).toBe(20)
     })
 
+    it('parses an equipped corrupted PoE2 gem (Essence Drain): uses base+corruption, not display level', () => {
+      // Display Level: 26 is inflated by +4 Global Modifiers and +1 Support.
+      // Persistent level = 20 (Gem) + 1 (Corruption) = 21.
+      const text = [
+        'Item Class: Skill Gems',
+        'Rarity: Gem',
+        'Essence Drain',
+        '--------',
+        'Spell, Projectile, Chaos, Duration, Repeatable',
+        'Level: 26 (augmented)',
+        '20 Levels from Gem (Max)',
+        '+1 Level from Corruption (augmented)',
+        '+4 Levels from Global Modifiers (augmented)',
+        '+1 Level from Support (augmented)',
+        'Quality: +20% (augmented)',
+        '--------',
+        'Requires: Level 90, 157 Int',
+        '--------',
+        'Sockets: G G G G G',
+        '--------',
+        'Corrupted',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.gemLevel).toBe(21)
+      expect(item.corrupted).toBe(true)
+      expect(item.quality).toBe(20)
+    })
+
+    it('parses an equipped non-corrupted PoE2 gem: uses base level only, ignores Global Modifiers', () => {
+      // Display Level: 24 is inflated by +4 Global Modifiers.
+      // Persistent level = 20 (Gem) + 0 (no Corruption) = 20.
+      const text = [
+        'Item Class: Skill Gems',
+        'Rarity: Gem',
+        'Fireball',
+        '--------',
+        'Spell, Projectile, Fire, AoE',
+        'Level: 24 (augmented)',
+        '20 Levels from Gem (Max)',
+        '+4 Levels from Global Modifiers (augmented)',
+        'Quality: +20% (augmented)',
+        '--------',
+        'Requires: Level 70, 111 Int',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.gemLevel).toBe(20)
+    })
+
+    it('parses a PoE2 gem with singular "Level from Gem" and "+1 Level from Corruption"', () => {
+      // Proves Level(s) plural tolerance and additive logic.
+      // Persistent level = 1 (Gem) + 1 (Corruption) = 2.
+      const text = [
+        'Item Class: Skill Gems',
+        'Rarity: Gem',
+        'Fireball',
+        '--------',
+        'Spell, Projectile, Fire, AoE',
+        'Level: 3 (augmented)',
+        '1 Level from Gem',
+        '+1 Level from Corruption (augmented)',
+        '+1 Level from Global Modifiers (augmented)',
+        '--------',
+        'Corrupted',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.gemLevel).toBe(2)
+    })
+
     it('parses a Vaal Gem', () => {
       const text = [
         'Item Class: Active Skill Gems',
@@ -727,6 +798,29 @@ describe('parseItemText', () => {
       expect(item.mapQuantity).toBeUndefined() // PoE2 waystones have no Item Quantity line
       // Monster affixes still flow through as explicits.
       expect(item.explicits).toContain('Monsters deal 29% of Damage as Extra Cold')
+    })
+
+    it('parses a PoE2 Waystone with new Monster Effectiveness / Monster Rarity labels', () => {
+      const text = [
+        'Item Class: Waystones',
+        'Rarity: Rare',
+        'Blighted Passage',
+        'Waystone (Tier 12)',
+        '--------',
+        'Revives Available: 2',
+        'Item Rarity: +45% (augmented)',
+        'Pack Size: +14% (augmented)',
+        'Monster Effectiveness: +28% (augmented)',
+        'Monster Rarity: +15% (augmented)',
+        '--------',
+        'Item Level: 79',
+        '--------',
+        'Can be used in a Map Device, allowing you to enter a Map. Waystones can only be used once.',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.mapMagicMonsters).toBe(28)
+      expect(item.mapRareMonsters).toBe(15)
     })
 
     it('parses a Flask', () => {

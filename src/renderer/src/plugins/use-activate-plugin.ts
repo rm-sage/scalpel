@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { PluginActivate, RegisterOverlayOptions, ScalpelPluginContext } from '../../../plugin-sdk/src/types'
-import type { PoeItem, Zone } from '../../../shared/types'
+import type { PoeItem, Zone } from '@shared/types'
 import { importPluginModule } from './import-plugin-module'
+import { resolveLeagueOptions } from '@renderer/shared/league-options'
 
 export interface ActivatedPlugin {
   captured: { opts: RegisterOverlayOptions; render: (container: HTMLElement) => (() => void) | void } | null
@@ -38,6 +39,8 @@ export function useActivatePlugin(pluginId: string): ActivatedPlugin {
         pluginVersion: entry.manifest.version,
         getPoeVersion: () => poeVersion,
         getLeague: () => league,
+        getLeagues: async (version) =>
+          resolveLeagueOptions(await window.api.getSettings().catch(() => null), version ?? poeVersion),
         getCurrentItem: () => latestItem,
         getCurrentZone: () => latestZone,
         onCurrentItem: (h) => window.api.onOverlayData((d) => h(d.item)),

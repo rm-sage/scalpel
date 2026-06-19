@@ -6,8 +6,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // still work -- they just never call into a path that invokes net.request.
 const capturedRequests: Array<{ url: string; method: string; body?: string }> = []
 
+// Per-test override for the body the mocked net returns on a `/fetch/` request.
+// Default (null) keeps the empty-result body so request-asserting tests are
+// unaffected; response-parsing tests set this to feed a real fetch payload.
+let mockFetchBody: string | null = null
+
 interface CapturedTradeFilterGroup {
   filters: Record<string, { min?: number; option?: string }>
+}
+
+interface CapturedTradeStatGroup {
+  type: string
+  filters?: Array<{ id: string; value?: Record<string, unknown> }>
+  value?: { min?: number; max?: number }
 }
 
 interface CapturedTradeBody {
@@ -18,9 +29,11 @@ interface CapturedTradeBody {
       socket_filters: CapturedTradeFilterGroup
       type_filters: CapturedTradeFilterGroup
       weapon_filters: CapturedTradeFilterGroup
+      map_filters?: CapturedTradeFilterGroup
+      misc_filters?: CapturedTradeFilterGroup
     }
     name?: string
-    stats: Array<{ type: string; filters: Array<{ id: string }> }>
+    stats: Array<CapturedTradeStatGroup>
     type?: string
   }
 }
@@ -70,7 +83,11 @@ vi.mock('electron', () => ({
                 if (event === 'end') endCb = cb as typeof endCb
               },
             })
-            ;(dataCb as ((chunk: unknown) => void) | null)?.('{"result":[],"total":0,"id":"q"}')
+            const body =
+              mockFetchBody != null && entry.url.includes('/fetch/')
+                ? mockFetchBody
+                : '{"result":[],"total":0,"id":"q"}'
+            ;(dataCb as ((chunk: unknown) => void) | null)?.(body)
             ;(endCb as (() => void) | null)?.()
           })
         }),
@@ -89,13 +106,17 @@ vi.mock('./stat-matcher', async (orig) => {
 import {
   buildGemTypeField,
   buildRegexStatGroups,
+  fetchMoreListings,
   isBulkExchangeItem,
+  modEntryText,
+  parseFetchedListings,
   searchTrade,
   searchTabletsByRegex,
   searchWaystonesByRegex,
   searchNeedsLogin,
   stripTradeTokens,
   _resetRateLimitsForTests,
+  type FetchEntry,
   type StatFilter,
 } from './trade'
 import { setPoeVersion } from '../game-state'
@@ -164,6 +185,178 @@ describe('stripTradeTokens', () => {
 
   it('leaves PoE1 strings unchanged (no brackets to match)', () => {
     expect(stripTradeTokens('+186 to maximum Life')).toBe('+186 to maximum Life')
+  })
+})
+
+describe('modEntryText', () => {
+  it('returns a plain string entry as-is (PoE1 / PoE2 implicit shape)', () => {
+    expect(modEntryText('+34 to maximum Life')).toBe('+34 to maximum Life')
+  })
+
+  it('extracts description from the PoE2 object-shaped mod entry', () => {
+    expect(modEntryText({ description: '10% increased [Armour|Armour]', hash: 'x', mods: [] })).toBe(
+      '10% increased [Armour|Armour]',
+    )
+  })
+
+  it('is null-safe', () => {
+    expect(modEntryText(undefined)).toBe('')
+  })
+})
+
+// Regression for the GGG trade2 change (2026-06) that broke every PoE2 price
+// check with `t.replace is not a function`: explicit-family mods switched from
+// string[] to objects carrying text in `description` plus inline tier/magnitude
+// data (extended.mods.explicit no longer exists). The fixtures below are real
+// shapes captured from /api/trade2/fetch.
+describe('parseFetchedListings', () => {
+  const baseListing: FetchEntry['listing'] = {
+    price: { amount: 5, currency: 'exalted' },
+    account: { name: 'Tester', lastCharacterName: 'Hero', online: { status: 'online' } },
+    indexed: '2026-06-18T00:00:00Z',
+    whisper: '@Hero hi',
+  }
+
+  it('parses PoE2 object-shaped explicit mods without throwing, extracting text + inline tiers', () => {
+    const entry: FetchEntry = {
+      id: 'a1',
+      listing: baseListing,
+      item: {
+        name: 'Sanguine Wide Belt of the Seal',
+        baseType: 'Wide Belt',
+        typeLine: 'Wide Belt',
+        frameType: 1,
+        explicitMods: [
+          {
+            description: '+34 to maximum Life',
+            hash: 'stat.explicit.stat_3299347043',
+            mods: [{ name: 'Sanguine', tier: 'P8', level: 16, magnitudes: [{ min: '30', max: '39' }] }],
+          },
+          {
+            description: '10% increased [Armour|Armour]',
+            hash: 'stat.explicit.stat_1062208444',
+            mods: [{ name: "Oyster's", tier: 'P6', level: 8, magnitudes: [{ min: '8', max: '12' }] }],
+          },
+        ],
+        implicitMods: ['Has 1 [Charm] Slot'],
+        // extended.mods.explicit is absent in the new shape; only implicit remains.
+        extended: {
+          mods: { implicit: [] },
+          hashes: { explicit: [], implicit: [] },
+        },
+      },
+    }
+
+    const [listing] = parseFetchedListings([entry])
+    const data = listing.itemData!
+    // Text is extracted from `description` and tokens stripped.
+    expect(data.explicitMods).toContain('+34 to maximum Life')
+    expect(data.explicitMods).toContain('10% increased Armour')
+    expect(data.implicitMods).toEqual(['Has 1 Charm Slot'])
+    // Tier/range data is read from the inline `mods` array, keyed by stripped text.
+    expect(data.modTiers?.['+34 to maximum Life']).toEqual({ tier: 'P8', name: 'Sanguine', ranges: '30-39' })
+    expect(data.modTiers?.['10% increased Armour']).toEqual({ tier: 'P6', name: "Oyster's", ranges: '8-12' })
+  })
+
+  it('still parses the legacy PoE1 string shape via extended.mods/hashes', () => {
+    const entry: FetchEntry = {
+      id: 'b2',
+      listing: baseListing,
+      item: {
+        name: 'Crest of Perandus',
+        baseType: 'Pine Buckler',
+        typeLine: 'Pine Buckler',
+        frameType: 3,
+        explicitMods: ['+76 to maximum Life'],
+        extended: {
+          mods: {
+            explicit: [{ name: 'Hale', tier: 'P2', level: 50, magnitudes: [{ hash: 's', min: '70', max: '79' }] }],
+          },
+          hashes: { explicit: [['explicit.stat_3299347043', [0]]] },
+        },
+      },
+    }
+
+    const [listing] = parseFetchedListings([entry])
+    const data = listing.itemData!
+    expect(data.explicitMods).toEqual(['+76 to maximum Life'])
+    expect(data.modTiers?.['+76 to maximum Life']).toEqual({ tier: 'P2', name: 'Hale', ranges: '70-79' })
+  })
+
+  it('handles PoE2 unique mods whose inline objects carry no tier/name (only magnitudes)', () => {
+    // Real shape from /api/trade2/fetch for a unique (Atziri's Disdain): the
+    // inline mod object has just `magnitudes` -- no `tier`, no `name`. Reading
+    // `.startsWith` on the missing tier was the `Cannot read properties of
+    // undefined (reading 'startsWith')` crash.
+    const entry: FetchEntry = {
+      id: 'u4',
+      listing: baseListing,
+      item: {
+        name: "Atziri's Disdain",
+        baseType: 'Gold Circlet',
+        typeLine: 'Gold Circlet',
+        frameType: 3,
+        explicitMods: [
+          { description: '+86 to maximum Mana', mods: [{ magnitudes: [{ min: '60', max: '100' }] }] },
+          {
+            description: '15% increased [ItemRarity|Rarity of Items] found',
+            mods: [{ magnitudes: [{ min: '10', max: '20' }] }],
+          },
+        ],
+        extended: { mods: {}, hashes: { explicit: [] } },
+      },
+    }
+
+    const [listing] = parseFetchedListings([entry])
+    const data = listing.itemData!
+    expect(data.explicitMods).toContain('+86 to maximum Mana')
+    // tier/name normalized to '' (never undefined) so the renderer's `.startsWith` is safe.
+    expect(data.modTiers?.['+86 to maximum Mana']).toEqual({ tier: '', name: '', ranges: '60-100' })
+    expect(data.modTiers?.['15% increased Rarity of Items found']).toEqual({ tier: '', name: '', ranges: '10-20' })
+  })
+
+  it('drops null fetch entries without NPE', () => {
+    const entry: FetchEntry = { id: 'c3', listing: baseListing, item: { name: 'X', frameType: 0 } }
+    const out = parseFetchedListings([null as unknown as FetchEntry, entry].filter(Boolean) as FetchEntry[])
+    expect(out).toHaveLength(1)
+  })
+})
+
+// The "load more" pagination path (fetchMoreListings -> fetchAndMapListings) is a
+// SEPARATE, leaner mapper from searchTrade's parseFetchedListings. It also called
+// stripTradeTokens directly on raw mod entries, so PoE2's object-shaped mods threw
+// `s.replace is not a function` on every page-2 fetch (logs filled with it even
+// though the first page rendered). Guards that mapper too.
+describe('fetchMoreListings (pagination mapper)', () => {
+  beforeEach(() => {
+    capturedRequests.length = 0
+    mockFetchBody = null
+  })
+
+  it('maps PoE2 object-shaped mods without throwing', async () => {
+    mockFetchBody = JSON.stringify({
+      result: [
+        {
+          id: 'p1',
+          listing: { account: { name: 'A' }, price: { amount: 1, currency: 'exalted' } },
+          item: {
+            name: '',
+            typeLine: 'Glaciated Wide Belt',
+            baseType: 'Wide Belt',
+            frameType: 1,
+            implicitMods: ['Has 1 [Charm] Slot'],
+            explicitMods: [
+              { description: '+34 to maximum [Life|Life]', hash: 'h', mods: [{ name: 'Sanguine', tier: 'P8' }] },
+            ],
+          },
+        },
+      ],
+    })
+
+    const { listings } = await fetchMoreListings('query-id', ['p1'])
+    expect(listings).toHaveLength(1)
+    expect(listings[0].itemData?.explicitMods).toEqual(['+34 to maximum Life'])
+    expect(listings[0].itemData?.implicitMods).toEqual(['Has 1 Charm Slot'])
   })
 })
 
@@ -304,7 +497,7 @@ describe('searchTrade filter-group dispatch', () => {
     expect(body.query.type).toBeUndefined()
     const andGroup = body.query.stats.find((g) => g.type === 'and')
     expect(andGroup).toBeDefined()
-    expect(andGroup?.filters.map((f) => f.id)).toContain('sanctum.stat_1583320325')
+    expect(andGroup?.filters?.map((f) => f.id)).toContain('sanctum.stat_1583320325')
   })
 
   it('PoE2 Tablet routes to map.tablet category, not a base-type-only search', async () => {
@@ -450,7 +643,7 @@ describe('searchTrade filter-group dispatch', () => {
     await searchTrade('Mirage', unidCluster, filters, { tradeStatus: 'any', tradePriceOption: 'chaos_divine' })
     const req = capturedRequests.find((r) => r.url.includes('/search/'))
     const body = parseCapturedBody(req)
-    const sentIds = body.query.stats[0].filters.map((f: { id: string }) => f.id)
+    const sentIds = body.query.stats[0].filters?.map((f) => f.id)
     // Enchant survives the unid drop, regular explicit does not.
     expect(sentIds).toContain('enchant.stat_3086156145')
     expect(sentIds).not.toContain('explicit.stat_2828710986')
@@ -517,6 +710,79 @@ describe('searchTrade filter-group dispatch', () => {
     expect(miscFilters.filters.unidentified_tier).toEqual({ min: 2, max: 4 })
   })
 
+  it('pseudo-typed misc.area_level (Djinn Barya row) lands in misc_filters and NOT in stats and-group', async () => {
+    // Djinn Barya emits area_level with type: 'pseudo' so the renderer shows it
+    // as an editable row rather than a chip. The query builder must still route it
+    // to misc_filters (by id, not by type) and must NOT let it flow into the stats
+    // and-group where 'misc.area_level' is an invalid stat id.
+    setPoeVersion(2)
+    const barya = {
+      name: '',
+      baseType: 'Djinn Barya',
+      itemClass: 'Trial Coins',
+      rarity: 'Normal',
+    }
+    const areaLevelRow: StatFilter[] = [
+      {
+        id: 'misc.area_level',
+        text: 'Area Level: 75',
+        type: 'pseudo',
+        enabled: true,
+        value: 75,
+        min: 75,
+        max: 75,
+      },
+    ]
+    await searchTrade('Fate of the Vaal', barya, areaLevelRow, {
+      tradeStatus: 'any',
+      tradePriceOption: 'exalted_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    // (1) area_level lands in misc_filters with both min and max
+    const miscFilters = (body.query.filters as Record<string, { filters: Record<string, unknown> }>).misc_filters
+    expect(miscFilters).toBeDefined()
+    expect(miscFilters.filters.area_level).toEqual({ min: 75, max: 75 })
+    // (2) misc.area_level must NOT appear in the stats and-group
+    const andGroup = body.query.stats.find((g: { type: string }) => g.type === 'and')
+    const andIds = ((andGroup as { filters: Array<{ id: string }> } | undefined)?.filters ?? []).map((f) => f.id)
+    expect(andIds).not.toContain('misc.area_level')
+  })
+
+  it('enabled misc.gem_sockets row lands in misc_filters.filters.gem_sockets and NOT in stats and-group', async () => {
+    // PoE2 support-socket count segments gem prices (5-socket premium). The
+    // query builder must route misc.gem_sockets to misc_filters by id and must
+    // not let it leak into the stats and-group where it is not a valid stat id.
+    setPoeVersion(2)
+    const gem = {
+      name: '',
+      baseType: 'Fireball',
+      itemClass: 'Active Skill Gems',
+      rarity: 'Normal',
+    }
+    const socketRow: StatFilter[] = [
+      {
+        id: 'misc.gem_sockets',
+        text: 'Sockets: 3',
+        type: 'gem',
+        enabled: true,
+        value: 3,
+        min: 3,
+        max: null,
+      },
+    ]
+    await searchTrade('', gem, socketRow, { tradeStatus: 'any', tradePriceOption: 'exalted_divine' })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const miscFilters = (body.query.filters as Record<string, { filters: Record<string, unknown> }>).misc_filters
+    expect(miscFilters).toBeDefined()
+    expect(miscFilters.filters.gem_sockets).toEqual({ min: 3 })
+    // Must not appear in the stats and-group
+    const andGroup = body.query.stats.find((g: { type: string }) => g.type === 'and')
+    const andIds = ((andGroup as { filters: Array<{ id: string }> } | undefined)?.filters ?? []).map((f) => f.id)
+    expect(andIds).not.toContain('misc.gem_sockets')
+  })
+
   it('PoE1 enabled weapon.damage filter lands under weapon_filters.damage', async () => {
     setPoeVersion(1)
     const sword = {
@@ -573,6 +839,200 @@ describe('searchTrade filter-group dispatch', () => {
     expect(body.query.filters.equipment_filters).toBeDefined()
     expect(body.query.filters.equipment_filters.filters.damage).toEqual({ min: 180 })
     expect(body.query.filters.weapon_filters).toBeUndefined()
+  })
+
+  it('PoE2 enabled misc.ilvl row lands in type_filters.filters.ilvl and NOT in misc_filters.filters.ilvl', async () => {
+    setPoeVersion(2)
+    const bow = {
+      name: '',
+      baseType: 'Advanced Dualstring Bow',
+      itemClass: 'Bows',
+      rarity: 'Rare',
+    }
+    const ilvlRow: StatFilter[] = [
+      {
+        id: 'misc.ilvl',
+        text: 'Item Level: 80',
+        type: 'misc',
+        enabled: true,
+        value: 80,
+        min: 80,
+        max: null,
+      },
+    ]
+    await searchTrade('Fate of the Vaal', bow, ilvlRow, {
+      tradeStatus: 'any',
+      tradePriceOption: 'exalted_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const allFilters = body.query.filters as Record<string, { filters: Record<string, unknown> }>
+    // ilvl must be under type_filters on PoE2
+    expect(allFilters.type_filters).toBeDefined()
+    expect(allFilters.type_filters.filters.ilvl).toEqual({ min: 80 })
+    // must NOT appear under misc_filters
+    expect(allFilters.misc_filters?.filters?.ilvl).toBeUndefined()
+  })
+
+  it('PoE1 enabled misc.ilvl row lands in misc_filters.filters.ilvl and NOT in type_filters.filters.ilvl', async () => {
+    setPoeVersion(1)
+    const ring = {
+      name: '',
+      baseType: 'Diamond Ring',
+      itemClass: 'Rings',
+      rarity: 'Rare',
+    }
+    const ilvlRow: StatFilter[] = [
+      {
+        id: 'misc.ilvl',
+        text: 'Item Level: 80',
+        type: 'misc',
+        enabled: true,
+        value: 80,
+        min: 80,
+        max: null,
+      },
+    ]
+    await searchTrade('Mirage', ring, ilvlRow, {
+      tradeStatus: 'any',
+      tradePriceOption: 'chaos_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const allFilters = body.query.filters as Record<string, { filters: Record<string, unknown> }>
+    // ilvl must be under misc_filters on PoE1
+    expect(allFilters.misc_filters).toBeDefined()
+    expect(allFilters.misc_filters.filters.ilvl).toEqual({ min: 80 })
+    // must NOT appear under type_filters
+    expect(allFilters.type_filters?.filters?.ilvl).toBeUndefined()
+  })
+
+  it('PoE2 enabled misc.ilvl row with max-only semantics lands as type_filters.filters.ilvl = {max: 80}', async () => {
+    setPoeVersion(2)
+    const bow = {
+      name: '',
+      baseType: 'Advanced Dualstring Bow',
+      itemClass: 'Bows',
+      rarity: 'Rare',
+    }
+    const ilvlRow: StatFilter[] = [
+      {
+        id: 'misc.ilvl',
+        text: 'Item Level: 80',
+        type: 'misc',
+        enabled: true,
+        value: 80,
+        min: null,
+        max: 80,
+      },
+    ]
+    await searchTrade('Fate of the Vaal', bow, ilvlRow, {
+      tradeStatus: 'any',
+      tradePriceOption: 'exalted_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const allFilters = body.query.filters as Record<string, { filters: Record<string, unknown> }>
+    expect(allFilters.type_filters).toBeDefined()
+    expect(allFilters.type_filters.filters.ilvl).toEqual({ max: 80 })
+  })
+
+  it('PoE2 enabled misc.quality (equipment) row lands in type_filters.filters.quality and NOT in misc_filters.filters.quality', async () => {
+    setPoeVersion(2)
+    const armour = {
+      name: '',
+      baseType: 'Advanced Plate Armour',
+      itemClass: 'Body Armours',
+      rarity: 'Rare',
+    }
+    const qualityRow: StatFilter[] = [
+      {
+        id: 'misc.quality',
+        text: 'Quality: 20',
+        type: 'misc',
+        enabled: true,
+        value: 20,
+        min: 20,
+        max: null,
+      },
+    ]
+    await searchTrade('Fate of the Vaal', armour, qualityRow, {
+      tradeStatus: 'any',
+      tradePriceOption: 'exalted_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const allFilters = body.query.filters as Record<string, { filters: Record<string, unknown> }>
+    // quality must be under type_filters on PoE2
+    expect(allFilters.type_filters).toBeDefined()
+    expect(allFilters.type_filters.filters.quality).toEqual({ min: 20 })
+    // must NOT appear under misc_filters
+    expect(allFilters.misc_filters?.filters?.quality).toBeUndefined()
+  })
+
+  it('PoE1 enabled misc.quality row lands in misc_filters.filters.quality and NOT in type_filters.filters.quality', async () => {
+    setPoeVersion(1)
+    const ring = {
+      name: '',
+      baseType: 'Diamond Ring',
+      itemClass: 'Rings',
+      rarity: 'Rare',
+    }
+    const qualityRow: StatFilter[] = [
+      {
+        id: 'misc.quality',
+        text: 'Quality: 20',
+        type: 'misc',
+        enabled: true,
+        value: 20,
+        min: 20,
+        max: null,
+      },
+    ]
+    await searchTrade('Mirage', ring, qualityRow, {
+      tradeStatus: 'any',
+      tradePriceOption: 'chaos_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const allFilters = body.query.filters as Record<string, { filters: Record<string, unknown> }>
+    // quality must be under misc_filters on PoE1
+    expect(allFilters.misc_filters).toBeDefined()
+    expect(allFilters.misc_filters.filters.quality).toEqual({ min: 20 })
+    // must NOT appear under type_filters
+    expect(allFilters.type_filters?.filters?.quality).toBeUndefined()
+  })
+
+  it('PoE2 enabled misc.quality (gem quality) row lands in type_filters.filters.quality', async () => {
+    setPoeVersion(2)
+    const gem = {
+      name: '',
+      baseType: 'Fireball',
+      itemClass: 'Active Skill Gems',
+      rarity: 'Normal',
+    }
+    const qualityRow: StatFilter[] = [
+      {
+        id: 'misc.quality',
+        text: 'Quality: 20',
+        type: 'gem',
+        enabled: true,
+        value: 20,
+        min: 20,
+        max: null,
+      },
+    ]
+    await searchTrade('', gem, qualityRow, {
+      tradeStatus: 'any',
+      tradePriceOption: 'exalted_divine',
+    })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const allFilters = body.query.filters as Record<string, { filters: Record<string, unknown> }>
+    // gem quality must also be routed to type_filters on PoE2
+    expect(allFilters.type_filters).toBeDefined()
+    expect(allFilters.type_filters.filters.quality).toEqual({ min: 20 })
+    expect(allFilters.misc_filters?.filters?.quality).toBeUndefined()
   })
 })
 
@@ -930,8 +1390,8 @@ describe('searchWaystonesByRegex', () => {
     expect(req).toBeDefined()
     const body = parseCapturedBody(req)
     expect(body.query.filters.type_filters.filters.category).toEqual({ option: 'map.waystone' })
-    expect((body.query.filters as any).map_filters.filters.map_tier).toEqual({ min: 14, max: 14 })
-    expect((body.query.filters as any).misc_filters.filters.corrupted).toEqual({ option: 'true' })
+    expect(body.query.filters.map_filters?.filters.map_tier).toEqual({ min: 14, max: 14 })
+    expect(body.query.filters.misc_filters?.filters.corrupted).toEqual({ option: 'true' })
   })
 
   it('matches the exact waystone stat, not a tablet-scoped fuzzy match', async () => {
@@ -964,9 +1424,7 @@ describe('searchWaystonesByRegex', () => {
     )
     const req = capturedRequests.find((r) => r.url.includes('/search/'))
     const body = parseCapturedBody(req)
-    const countGroup = body.query.stats.find((g: { type: string }) => g.type === 'count') as
-      | { filters: Array<{ id: string }> }
-      | undefined
+    const countGroup = body.query.stats.find((g) => g.type === 'count')
     expect(countGroup?.filters).toEqual([{ id: 'explicit.stat_mm', value: {} }])
   })
 
@@ -993,7 +1451,7 @@ describe('searchWaystonesByRegex', () => {
     const req = capturedRequests.find((r) => r.url.includes('/search/'))
     expect(req).toBeDefined()
     const body = parseCapturedBody(req)
-    expect((body.query.filters as any).misc_filters).toBeUndefined()
+    expect(body.query.filters.misc_filters).toBeUndefined()
   })
 
   it('sets corrupted option to false when uncorrupted only', async () => {
@@ -1019,7 +1477,7 @@ describe('searchWaystonesByRegex', () => {
     const req = capturedRequests.find((r) => r.url.includes('/search/'))
     expect(req).toBeDefined()
     const body = parseCapturedBody(req)
-    expect((body.query.filters as any).misc_filters.filters.corrupted).toEqual({ option: 'false' })
+    expect(body.query.filters.misc_filters?.filters.corrupted).toEqual({ option: 'false' })
   })
 
   it('does NOT send Quantity & yield thresholds to trade (disabled for now)', async () => {
@@ -1038,7 +1496,7 @@ describe('searchWaystonesByRegex', () => {
       true,
     )
     const req = capturedRequests.find((r) => r.url.includes('/search/'))
-    const mapFilters = (parseCapturedBody(req).query.filters as any).map_filters.filters
+    const mapFilters = parseCapturedBody(req).query.filters.map_filters?.filters
     // Only tier is sent; quantity map_filters are commented out in searchWaystonesByRegex.
     expect(mapFilters).toEqual({ map_tier: { min: 14, max: 14 } })
   })
@@ -1088,14 +1546,10 @@ describe('searchWaystonesByRegex', () => {
       true,
     )
     const body = parseCapturedBody(capturedRequests.find((r) => r.url.includes('/search/')))
-    const countGroup = body.query.stats.find((g: { type: string }) => g.type === 'count') as
-      | { filters: Array<{ id: string }> }
-      | undefined
+    const countGroup = body.query.stats.find((g) => g.type === 'count')
     // Delirious rides in the count group (optional, part of the any-set), not a separate required group.
-    expect(countGroup?.filters.map((f) => f.id).sort()).toEqual(['explicit.stat_delir', 'explicit.stat_dmg'])
-    expect(body.query.stats.some((g: { type: string }) => g.type === 'and' && (g as any).filters.length > 0)).toBe(
-      false,
-    )
+    expect(countGroup?.filters?.map((f) => f.id).sort()).toEqual(['explicit.stat_delir', 'explicit.stat_dmg'])
+    expect(body.query.stats.some((g) => g.type === 'and' && (g.filters?.length ?? 0) > 0)).toBe(false)
   })
 
   it('all-mode keeps delirious as a separate required and group', async () => {
@@ -1121,8 +1575,7 @@ describe('searchWaystonesByRegex', () => {
     // In all-mode delirious is a required term: its own `and` group holding just the delir stat.
     expect(
       body.query.stats.some(
-        (g: { type: string; filters: Array<{ id: string }> }) =>
-          g.type === 'and' && g.filters.length === 1 && g.filters[0].id === 'explicit.stat_delir',
+        (g) => g.type === 'and' && (g.filters?.length ?? 0) === 1 && g.filters?.[0]?.id === 'explicit.stat_delir',
       ),
     ).toBe(true)
   })
@@ -1158,7 +1611,7 @@ describe('searchTabletsByRegex', () => {
     expect(body.query.filters.type_filters.filters.rarity).toEqual({ option: 'magic' })
     const countGroup = body.query.stats.find((g: { type: string }) => g.type === 'count')
     expect(countGroup).toBeDefined()
-    expect((countGroup as any).value).toEqual({ min: 1 })
+    expect(countGroup?.value).toEqual({ min: 1 })
     expect(body.query.stats.every((g: { type: string }) => g.type !== 'not')).toBe(true)
   })
 

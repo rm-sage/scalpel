@@ -1,4 +1,4 @@
-import { isClusterJewel, SKILL_GEM_CLASSES, splitRuneTier } from '../../../../shared/poe-item'
+import { isClusterJewel, SKILL_GEM_CLASSES, splitRuneTier } from '@shared/poe-item'
 import type { StatFilter } from '../../trade'
 
 type BaseTypeItemInfo = {
@@ -13,7 +13,11 @@ export function buildBaseTypeFilter(itemInfo: BaseTypeItemInfo | undefined): Sta
   if (!itemInfo) return []
 
   const isGemItem = SKILL_GEM_CLASSES.has(itemInfo.itemClass)
-  if (!itemInfo.baseType || itemInfo.rarity === 'Unique' || isGemItem) return []
+  // Waystones share one generic base ("Waystone"); only the tier differs, and that is
+  // pinned by the map_tier filter. The chip would strip to "Waystone" and trade.ts would
+  // send it as query.type -- not a valid trade2 waystone type -- breaking the map.waystone
+  // category search. So no base-type chip for waystones (they search by category).
+  if (!itemInfo.baseType || itemInfo.rarity === 'Unique' || isGemItem || itemInfo.itemClass === 'Waystones') return []
 
   // baseType is already cleaned by the clipboard parser (Superior stripped, magic affixes removed if base was recognized)
   // Special map types that have their own trade API type (not generic "Map")

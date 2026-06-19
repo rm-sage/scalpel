@@ -23,7 +23,7 @@ import {
   processDenseResponse,
   subscribePriceUpdates,
 } from './prices'
-import type { PriceEntry } from '../../shared/types'
+import type { PriceEntry } from '@shared/types'
 import { setPoeVersion } from '../game-state'
 
 const baseItem = (overrides: Record<string, unknown> = {}): Parameters<typeof lookupPriceForItem>[0] => ({
@@ -286,5 +286,39 @@ describe('processDenseResponse price entries', () => {
     const entries: PriceEntry[] = []
     processDenseResponse(resp as never, entries)
     expect(entries.find((e) => e.name === 'Chaos Orb')?.divineValue).toBe(1 / 200)
+  })
+
+  it('synthesizes a Chaos Orb entry when ninja omits the baseline currency', () => {
+    const resp = {
+      currencyOverviews: [{ type: 'Currency', lines: [{ name: 'Divine Orb', chaos: 220 }] }],
+      itemOverviews: [],
+    }
+    const entries: PriceEntry[] = []
+    processDenseResponse(resp as never, entries)
+    expect(lookupPrice('Chaos Orb', 'Chaos Orb')).toMatchObject({ chaosValue: 1, divineValue: 1 / 220 })
+    expect(entries.find((e) => e.name === 'Chaos Orb')).toMatchObject({
+      category: 'currency',
+      chaosValue: 1,
+      divineValue: 1 / 220,
+    })
+  })
+
+  it('does not synthesize a Chaos Orb entry when ninja already lists one', () => {
+    const resp = {
+      currencyOverviews: [
+        {
+          type: 'Currency',
+          lines: [
+            { name: 'Divine Orb', chaos: 220 },
+            { name: 'Chaos Orb', chaos: 1, graph: [0, 1] },
+          ],
+        },
+      ],
+      itemOverviews: [],
+    }
+    const entries: PriceEntry[] = []
+    processDenseResponse(resp as never, entries)
+    expect(entries.filter((e) => e.name === 'Chaos Orb')).toHaveLength(1)
+    expect(lookupPrice('Chaos Orb', 'Chaos Orb')?.graph).toEqual([0, 1])
   })
 })

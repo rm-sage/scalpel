@@ -42,8 +42,18 @@ function formatMMSS(ms: number): string {
 /** Surfaced when the trade API has rate-limited the user for a notable span.
  *  Replaces the usual search-results area with Greg's accusation and a
  *  countdown ring so the user knows exactly when they can retry instead of
- *  staring at a stuck shimmer. */
-export function TradeTimeoutBanner({ until }: { until: number }): JSX.Element | null {
+ *  staring at a stuck shimmer. When the countdown reaches zero, the banner
+ *  flips to an expired "try again" state rather than disappearing -- the
+ *  parent clears it (by setting penaltyUntil to null) when a new search starts. */
+export function TradeTimeoutBanner({
+  until,
+  showLogin,
+  onLogin,
+}: {
+  until: number
+  showLogin?: boolean
+  onLogin?: () => void
+}): JSX.Element {
   const [now, setNow] = useState(Date.now())
   // Remember the starting gap so the ring fraction stays anchored to the
   // original penalty length (not whatever's currently remaining as the user
@@ -51,12 +61,17 @@ export function TradeTimeoutBanner({ until }: { until: number }): JSX.Element | 
   const [totalMs] = useState(() => Math.max(1000, until - Date.now()))
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 500)
+    // Stop ticking once the countdown has expired -- there is nothing left to update.
+    const id = setInterval(() => {
+      const remaining = until - Date.now()
+      setNow(Date.now())
+      if (remaining <= 0) clearInterval(id)
+    }, 500)
     return () => clearInterval(id)
-  }, [])
+  }, [until])
 
   const remainingMs = until - now
-  if (remainingMs <= 0) return null
+  const expired = remainingMs <= 0
 
   const remainingFraction = Math.max(0, Math.min(1, remainingMs / totalMs))
   const color = ringColor(remainingFraction)
@@ -69,16 +84,44 @@ export function TradeTimeoutBanner({ until }: { until: number }): JSX.Element | 
   const circumference = 2 * Math.PI * radius
   const dashOffset = circumference * (1 - remainingFraction)
 
+  // ringColor(0) = lerpColor(GREEN, YELLOW, 0) = GREEN; reuse the helper rather
+  // than hardcoding a second copy of the rgb tuple.
+  const expiredColor = ringColor(0)
+
   return (
     <div className="relative flex items-stretch gap-3 my-2 rounded-lg overflow-visible bg-bg-card">
       <div className="shrink-0 w-[60px] flex items-center justify-center">
         <img src={gregPortrait} alt="" className="w-[38px] pointer-events-none select-none" />
       </div>
       <div className="flex-1 py-3 flex flex-col justify-center">
-        <div className="text-[11px] text-[#ef5350] font-semibold">
-          Looks like the trade API has given you a {formatMMSS(remainingMs)} minute timeout.
-        </div>
-        <div className="text-[10px] text-text-dim">Blame Greg.</div>
+        {expired ? (
+          <>
+            <div className="text-[11px] font-semibold" style={{ color: expiredColor }}>
+              Your trade timeout has expired (probably...)
+            </div>
+            <div className="text-[10px] text-text-dim">Try price checking again. Assuming GGG servers work.</div>
+          </>
+        ) : (
+          <>
+            <div className="text-[11px] text-[#ef5350] font-semibold">
+              Looks like the trade API has given you a {formatMMSS(remainingMs)} timeout.
+            </div>
+            <div className="text-[10px] text-text-dim">
+              {showLogin
+                ? 'Blame Greg. Probably a Cloudflare issue. Logging in to the Trade Site might fix it.'
+                : 'Blame Greg.'}
+            </div>
+          </>
+        )}
+        {showLogin && (
+          <button
+            type="button"
+            onClick={onLogin}
+            className="mt-1 self-start px-2 py-[3px] text-[10px] font-semibold bg-white/[0.08] text-text border-none rounded cursor-pointer whitespace-nowrap hover:bg-white/[0.14]"
+          >
+            Log in to the trade site
+          </button>
+        )}
       </div>
       <div className="flex items-center justify-center pr-4 shrink-0">
         <div className="relative" style={{ width: size, height: size }}>

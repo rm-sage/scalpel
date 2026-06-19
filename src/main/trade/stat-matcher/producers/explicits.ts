@@ -1,9 +1,9 @@
-import { getPoeVersion } from '../../../game-state'
+import { getPoeVersion } from '@main/game-state'
 import { isPremiumMod } from './premium'
 import { attachTierLadder } from './tier-attach'
-import { BENEFICIAL_NEGATIVE_KEYWORDS } from '../../../../shared/data/trade/beneficial-negatives'
-import { isClusterJewel } from '../../../../shared/poe-item'
-import type { ModTier } from '../../../../shared/data/tiers/types'
+import { BENEFICIAL_NEGATIVE_KEYWORDS } from '@shared/data/trade/beneficial-negatives'
+import { isClusterJewel } from '@shared/poe-item'
+import type { ModTier } from '@shared/data/tiers/types'
 import type { StatFilter } from '../../trade'
 import { findAdvMod } from '../adv-mods'
 import { computeValueBounds } from '../bounds'
@@ -11,6 +11,12 @@ import { isDefenseMod, isLocalMod, isLowPriority } from '../classification'
 import type { MatchContext } from '../context'
 import { matchModToStat } from '../mod-matcher'
 import { accumulatePseudo, PSEUDO_CONTRIBUTIONS, type PseudoContribution } from '../pseudo'
+
+// Gem-level gear mods are discrete brackets where +2 listings are far pricier
+// than +1. An open-ended min would lump the item with more expensive listings;
+// without advanced-mod data a +1 roll also floors to 0 (floor(1*0.9)).
+// Pin min=max=value for any mod whose cleaned text starts with "+N to Level of".
+export const GEM_LEVEL_MOD = /^\+\d+ to Level of /i
 
 // Tinctures: disambiguate duplicate stat texts (e.g. "#% increased effect" has two stat IDs)
 const TINCTURE_STAT_REMAP: Record<string, string> = {
@@ -89,6 +95,10 @@ function mergeDuplicateStats(rows: StatFilter[], pct: number): StatFilter[] {
     if (sum == null) mergedMin = null
     else if (sum >= 0) mergedMin = Math.floor(sum * pct)
     else mergedMin = Math.ceil(sum * (2 - pct))
+    // Pinned exact rows (min=max=value per-row) must stay exact through the merge.
+    if (sum != null && group.every((r) => r.value != null && r.min === r.value && r.max === r.value)) {
+      mergedMin = sum
+    }
     const nonNullMaxes = group.map((r) => r.max).filter((m): m is number => m != null)
     const mergedMax = nonNullMaxes.length > 0 ? nonNullMaxes.reduce((a, b) => a + b, 0) : null
     // text is display-only (the query uses value/min/max). The matcher parses the
@@ -164,7 +174,7 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
   // Running either through the explicit matcher risks false or missing matches.
   for (const mod of isGemItem || isRelic || isTablet ? [] : explicits) {
     let isCrafted = /\s*\(crafted\)\s*$/i.test(mod)
-    let cleaned = mod.replace(/\s*\(crafted\)\s*$/i, '').trim()
+    let cleaned = mod.replace(/\s*\((?:crafted|fractured)\)\s*$/i, '').trim()
     // Skip timeless jewel mods handled by the timeless chip system
     if (
       isTimelessJewel &&
@@ -177,7 +187,11 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
     // crafted mods (like "Trigger a Socketed Spell when you Use a Skill") are queried
     // against the crafted.* stat list instead of explicit.* -- matching the wrong list
     // fails silently and the mod disappears from the price checker.
-    let isFractured = false
+    // Basic-copy / chat-linked items have no advanced mod block, so fractured mods
+    // arrive as a plain line with a "(fractured)" suffix instead of a "{ Fractured
+    // Prefix Modifier }" header. Seed isFractured from that suffix (advanced copies
+    // strip it upstream in cleanAdvancedModLine, so this only fires on basic copies). (#444)
+    let isFractured = /\s*\(fractured\)\s*$/i.test(mod)
     let isFoulborn = false
     let isRandomSupport = false
     let advMod: ReturnType<typeof findAdvMod>
@@ -219,6 +233,16 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
         matched.statId = TINCTURE_STAT_REMAP[matched.statId]
       }
 
+      // "# Charm Slot" disambiguation. trade2 indexes the belt explicit charm-slot
+      // affix under explicit.stat_2582079000, but a global grant of charm slots (e.g.
+      // the Elevore helmet) under explicit.stat_554899692 ("# Charm Slot (Global)").
+      // The clipboard text is identical, so the matcher always lands on the belt id --
+      // redirect non-belts to the Global id. Verified on trade2: stat_2582079000 returns
+      // only belts, stat_554899692 only Elevore.
+      if (matched.statId === 'explicit.stat_2582079000' && itemInfo?.itemClass !== 'Belts') {
+        matched.statId = 'explicit.stat_554899692'
+      }
+
       // Determine if this value is fixed or rolled, and capture tier/range for display
       // Fixed values (min === max in tier range, or no range) use exact match
       // Rolled values use percentage-based min
@@ -236,7 +260,7 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
       // NOT mistaken for perfect.
       let perfectRoll = false
       if (advancedMods && matched.value != null) {
-        const rawCleaned = mod.replace(/\s*\(crafted\)\s*$/i, '').trim()
+        const rawCleaned = mod.replace(/\s*\((?:crafted|fractured)\)\s*$/i, '').trim()
         const advMod = findAdvMod(advancedMods, cleaned, 'explicit', rawCleaned)
         if (advMod) {
           const range = advMod.ranges.find((r) => r.value === matched.value || r.value === -(matched.value ?? 0))
@@ -291,7 +315,7 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
       ) {
         minValue = matchedRange.min
       }
-      const maxValue = bounds.max
+      let maxValue = bounds.max
 
       // Skip for cluster jewels -- their mods grant passives, not item stats
       // Skip "X per Y" mods -- they're conditional and shouldn't inflate pseudo totals
@@ -357,13 +381,26 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
         const t1 = tierLadder.find((t) => t.tier === 1)
         if (t1) minValue = Math.floor(t1.range.min)
       }
+      // Gem-level mods: pin min=max=rolled value. The +level brackets are discrete
+      // (a +2 item costs far more than a +1), so an open-ended min merges the item
+      // with strictly-better pricier listings. Placed after T1 widening so T1 logic
+      // cannot undo the exact pin.
+      if (GEM_LEVEL_MOD.test(cleaned) && matched.value != null) {
+        minValue = matched.value
+        maxValue = matched.value
+      }
       const structurallyOff =
         craftedForTrade ||
         suppressesSourceRow ||
         isHybridCompanion ||
         (hasDefenses && isDefenseMod(cleaned)) ||
         useLocal ||
-        itemInfo?.itemClass === 'Maps'
+        itemInfo?.itemClass === 'Maps' ||
+        // PoE2 waystone prefix/suffix affixes are monster-difficulty mods, not price
+        // drivers -- default them off like PoE1 maps. The yield chips (tier, pack size,
+        // rarity, magic/rare monsters) come from buildMapFilters (type 'map'), so they
+        // are unaffected and keep their own enabled-by-default state.
+        itemInfo?.itemClass === 'Waystones'
       const forcedOn = isFractured || isFoulborn
       // A detrimental negative roll (value < 0 and not a beneficial negative like
       // "reduced mana cost") is a downside, not a reason to buy. Default it off,
@@ -419,7 +456,7 @@ export function processExplicits(ctx: MatchContext): StatFilter[] {
           text: cleaned,
           value: matched.value,
           min: minValue,
-          max: null,
+          max: maxValue,
           enabled: false,
           type: 'explicit',
           aggregated: matched.aggregated,

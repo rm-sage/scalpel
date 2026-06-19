@@ -1,10 +1,11 @@
-import type { PoeItem, Zone } from '../../../shared/types'
+import type { PoeItem, Zone } from '@shared/types'
 
 export type PluginContextFactoryDeps = {
   pluginId: string
   pluginVersion: string
   getPoeVersion: () => 1 | 2
   getLeague: () => string
+  getLeagues: (version: 1 | 2) => Promise<readonly string[]>
   getCurrentItem: () => PoeItem | null
   getCurrentZone: () => Zone | null
   subscribeCurrentItem: (h: (i: PoeItem) => void) => () => void
@@ -27,7 +28,7 @@ export type PluginContextFactoryDeps = {
   prices: {
     getPrices: (opts?: {
       category?: string
-    }) => Promise<{ prices: import('../../../shared/types').PriceEntry[]; updatedAt: number | null }>
+    }) => Promise<{ prices: import('@shared/types').PriceEntry[]; updatedAt: number | null }>
     refresh: () => Promise<void>
     onChange: (handler: () => void) => () => void
   }
@@ -41,7 +42,7 @@ export type PluginContextFactoryDeps = {
   ) => void
   registerHotkey: (pluginId: string, opts: { label: string }, handler: () => void) => void
   openTab: (pluginId: string) => void
-  copyAndEvaluateItem: () => Promise<import('../../../shared/types').PoeItem | null>
+  copyAndEvaluateItem: () => Promise<import('@shared/types').PoeItem | null>
   captureGameWindow: (
     region?: import('../../../plugin-sdk/src/types').GameRect,
   ) => Promise<import('../../../plugin-sdk/src/types').GameCapture | null>

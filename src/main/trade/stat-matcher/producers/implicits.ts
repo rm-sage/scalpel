@@ -3,7 +3,7 @@ import { findAdvMod } from '../adv-mods'
 import type { MatchContext } from '../context'
 import { matchModToStat } from '../mod-matcher'
 import { accumulatePseudo, PSEUDO_CONTRIBUTIONS } from '../pseudo'
-import { dropFragmentDuplicates } from './explicits'
+import { dropFragmentDuplicates, GEM_LEVEL_MOD } from './explicits'
 
 export function processImplicits(ctx: MatchContext): StatFilter[] {
   const { implicits, itemInfo, advancedMods, isWeapon, isTablet, pseudoAccumulator } = ctx
@@ -32,12 +32,16 @@ export function processImplicits(ctx: MatchContext): StatFilter[] {
         const advMod = findAdvMod(advancedMods, cleaned, 'implicit')
         if (advMod?.eldritch) _isEldritch = true
       }
+      // Gem-level implicits (e.g. corrupted "+1 to Level of all Skill Gems" on
+      // amulets) are discrete brackets -- pin max to the exact rolled value so
+      // the search doesn't merge with pricier +2 listings.
+      const isGemLevelMod = GEM_LEVEL_MOD.test(cleaned)
       out.push({
         id: matched.statId,
         text: cleaned,
         value: matched.value,
         min: matched.option ? null : matched.value,
-        max: null,
+        max: isGemLevelMod && matched.value != null ? matched.value : null,
         enabled:
           !!itemInfo?.corrupted ||
           !!itemInfo?.synthesised ||

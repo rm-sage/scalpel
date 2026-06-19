@@ -1,6 +1,6 @@
-import { POE_NINJA_POE2_EXCHANGE, POE2_NINJA_PROXY } from '../../shared/endpoints'
-import { getGameFeatures } from '../../shared/game-features'
-import type { PriceEntry, PriceInfo } from '../../shared/types'
+import { POE_NINJA_POE2_EXCHANGE, POE2_NINJA_PROXY } from '@shared/endpoints'
+import { getGameFeatures } from '@shared/game-features'
+import type { PriceEntry, PriceInfo } from '@shared/types'
 
 /**
  * PoE2 ninja price fetching + processing. The PoE2 API has no dense/overviews
@@ -169,13 +169,6 @@ export function applyProxyResponse(
 ): void {
   const exaltedPerPrimary = resp.core.rates?.exalted ?? 0
 
-  if (exaltedPerPrimary > 0) {
-    priceMap.set('divine orb', { chaosValue: exaltedPerPrimary, divineValue: 1, ninjaCategory: 'currency' })
-    priceMap.set('exalted orb', { chaosValue: 1, divineValue: 1 / exaltedPerPrimary, ninjaCategory: 'currency' })
-    entriesOut?.push({ name: 'Divine Orb', category: 'currency', chaosValue: exaltedPerPrimary, divineValue: 1 })
-    entriesOut?.push({ name: 'Exalted Orb', category: 'currency', chaosValue: 1, divineValue: 1 / exaltedPerPrimary })
-  }
-
   for (const overview of resp.itemOverviews ?? []) {
     const ninjaCategory = categoryByType[overview.type]
     for (const line of overview.lines ?? []) {
@@ -197,6 +190,59 @@ export function applyProxyResponse(
         graph: line.sparkline?.data,
       })
     }
+  }
+
+  // Canonical core entries are written last so they win over any Currency
+  // overview line for the same names: the exchange-rate values are exact by
+  // definition, while overview lines roundtrip through primaryValue. Keep any
+  // sparklines the overview lines carried for both divine and exalted - they
+  // are the price-history graphs plugin consumers render.
+  if (exaltedPerPrimary > 0) {
+    const divineGraph = priceMap.get('divine orb')?.graph
+    const exaltedGraph = priceMap.get('exalted orb')?.graph
+    const canonicalDivine: PriceInfo = {
+      chaosValue: exaltedPerPrimary,
+      divineValue: 1,
+      graph: divineGraph,
+      ninjaCategory: 'currency',
+    }
+    const canonicalExalted: PriceInfo = {
+      chaosValue: 1,
+      divineValue: 1 / exaltedPerPrimary,
+      graph: exaltedGraph,
+      ninjaCategory: 'currency',
+    }
+    priceMap.set('divine orb', canonicalDivine)
+    priceMap.set('exalted orb', canonicalExalted)
+    // Sync the variant-keyed map so callers using pricesByVariant see the same
+    // canonical values (the loop may have written drifted values from the
+    // overview line).
+    pricesByVariant?.set('divine orb|', canonicalDivine)
+    pricesByVariant?.set('exalted orb|', canonicalExalted)
+    // Remove any duplicate entries the loop pushed for Divine Orb / Exalted
+    // Orb before appending the canonical ones - the loop writes an entry for
+    // every named line it encounters, so Currency overview lines that mention
+    // them produce stale duplicates.
+    if (entriesOut) {
+      for (let i = entriesOut.length - 1; i >= 0; i--) {
+        const n = entriesOut[i].name
+        if (n === 'Divine Orb' || n === 'Exalted Orb') entriesOut.splice(i, 1)
+      }
+    }
+    entriesOut?.push({
+      name: 'Divine Orb',
+      category: 'currency',
+      chaosValue: exaltedPerPrimary,
+      divineValue: 1,
+      graph: divineGraph,
+    })
+    entriesOut?.push({
+      name: 'Exalted Orb',
+      category: 'currency',
+      chaosValue: 1,
+      divineValue: 1 / exaltedPerPrimary,
+      graph: exaltedGraph,
+    })
   }
 }
 

@@ -1,9 +1,11 @@
-import type { AdvancedMod } from '../../../../shared/types'
+import type { AdvancedMod } from '@shared/types'
 import type { StatFilter } from '../../trade'
+import { SKILL_GEM_CLASSES } from '@shared/poe-item'
 
 type SocketItemInfo = {
   sockets: string
   linkedSockets: number
+  itemClass: string
 }
 
 // Socket chips: rune sockets (PoE2), white sockets, abyssal sockets, links
@@ -12,6 +14,11 @@ export function buildSocketFilters(
   advancedMods: AdvancedMod[] | undefined,
 ): StatFilter[] {
   if (!itemInfo) return []
+
+  // Gems are not socketable items in either game -- PoE1 gems have no sockets;
+  // PoE2 gem sockets are support slots handled by the gems producer. Skip here
+  // to avoid emitting bogus rune-socket chips for support-gem socket lines.
+  if (SKILL_GEM_CLASSES.has(itemInfo.itemClass)) return []
 
   const out: StatFilter[] = []
 

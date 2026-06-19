@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, net } from 'electron'
-import uniqueInfoPoe1 from '../../shared/data/items/unique-info.json'
-import uniqueInfoPoe2 from '../../shared/data/items/unique-info-poe2.json'
-import { POE_NINJA_API } from '../../shared/endpoints'
-import type { NinjaItemRef } from '../../shared/external-link'
-import { deriveItemVariant } from '../../shared/external-link'
-import type { PriceEntry, PriceInfo } from '../../shared/types'
+import uniqueInfoPoe1 from '@shared/data/items/unique-info.json'
+import uniqueInfoPoe2 from '@shared/data/items/unique-info-poe2.json'
+import { POE_NINJA_API } from '@shared/endpoints'
+import type { NinjaItemRef } from '@shared/external-link'
+import { deriveItemVariant } from '@shared/external-link'
+import type { PriceEntry, PriceInfo } from '@shared/types'
 import { getPoeVersion } from '../game-state'
 import { getManifest } from '../manifest'
 import { fetchAndBuildPoe2PriceMap, fetchPoe2PricesFromProxy, type Poe2PriceResult } from './prices.poe2'
@@ -297,6 +297,20 @@ export function processDenseResponse(resp: DenseResponse, entriesOut: PriceEntry
     }
     for (const entry of entriesOut) {
       if (entry.divineValue == null) entry.divineValue = entry.chaosValue / divineRate
+    }
+    // Ninja's dense payload normally includes a Chaos Orb line, but the
+    // baseline currency is the one entry the feed can omit (it IS the unit).
+    // The pair-currency display needs a lookup hit for it, so synthesize one.
+    if (!priceMap.has('chaos orb')) {
+      const info: PriceInfo = { chaosValue: 1, divineValue: 1 / divineRate, ninjaCategory: 'currency' }
+      priceMap.set('chaos orb', info)
+      pricesByVariant.set('chaos orb|', info)
+      entriesOut.push({
+        name: 'Chaos Orb',
+        category: 'currency',
+        chaosValue: info.chaosValue,
+        divineValue: info.divineValue,
+      })
     }
   }
 }

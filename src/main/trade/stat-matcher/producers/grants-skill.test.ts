@@ -14,6 +14,21 @@ const FROST_SHIELD_ENTRY = {
   type: 'skill',
 }
 
+// Two stat ids share the exact text "Grants Skill: Level # Blink": the Sands of
+// Silk body armour searches under skill.blink, amulets under
+// skill.blink_reservation (verified against live trade2 saved searches).
+const BLINK_ENTRY = {
+  id: 'skill.blink',
+  text: 'Grants Skill: Level # Blink',
+  type: 'skill',
+}
+
+const BLINK_RESERVATION_ENTRY = {
+  id: 'skill.blink_reservation',
+  text: 'Grants Skill: Level # Blink',
+  type: 'skill',
+}
+
 beforeEach(() => {
   _setStatEntriesForTests([RUNIC_TEMPERING_ENTRY, FROST_SHIELD_ENTRY])
 })
@@ -66,5 +81,112 @@ describe('buildGrantsSkillFilters', () => {
     })
     expect(filters).toHaveLength(1)
     expect(filters[0].id).toBe('skill.runic_tempering')
+  })
+
+  describe('Blink class disambiguation (two stat ids, identical text)', () => {
+    it('uses skill.blink for the Sands of Silk body armour, keeping the level min', () => {
+      _setStatEntriesForTests([BLINK_ENTRY, BLINK_RESERVATION_ENTRY])
+      const filters = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 18 Blink'],
+        itemClass: 'Body Armours',
+      })
+      expect(filters).toHaveLength(1)
+      expect(filters[0].id).toBe('skill.blink')
+      expect(filters[0].min).toBe(18)
+    })
+
+    it('uses skill.blink_reservation for an amulet, keeping the level min', () => {
+      _setStatEntriesForTests([BLINK_ENTRY, BLINK_RESERVATION_ENTRY])
+      const filters = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 20 Blink'],
+        itemClass: 'Amulets',
+      })
+      expect(filters).toHaveLength(1)
+      expect(filters[0].id).toBe('skill.blink_reservation')
+      expect(filters[0].min).toBe(20)
+    })
+
+    it('pins the stat id regardless of stats-list ordering', () => {
+      // Reservation entry seeded first: a text-only match would return it for
+      // every class. The class table must still route the body armour to
+      // skill.blink and the amulet to skill.blink_reservation.
+      _setStatEntriesForTests([BLINK_RESERVATION_ENTRY, BLINK_ENTRY])
+      const armour = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 18 Blink'],
+        itemClass: 'Body Armours',
+      })
+      expect(armour[0].id).toBe('skill.blink')
+      const amulet = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 20 Blink'],
+        itemClass: 'Amulets',
+      })
+      expect(amulet[0].id).toBe('skill.blink_reservation')
+    })
+
+    it('falls back to skill.blink when item class is unknown', () => {
+      _setStatEntriesForTests([BLINK_RESERVATION_ENTRY, BLINK_ENTRY])
+      const filters = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 20 Blink'],
+      })
+      expect(filters[0].id).toBe('skill.blink')
+    })
+  })
+
+  // Same dual-id collision shape as Blink, verified against live trade2 searches:
+  // the amulet/boots get the "special" id, the staff/wand get the plain id.
+  describe('Lightning Bolt class disambiguation', () => {
+    const LIGHTNING_BOLT = { id: 'skill.lightning_bolt', text: 'Grants Skill: Level # Lightning Bolt', type: 'skill' }
+    const BREACH_LIGHTNING_BOLT = {
+      id: 'skill.unique_breach_lightning_bolt',
+      text: 'Grants Skill: Level # Lightning Bolt',
+      type: 'skill',
+    }
+
+    it('uses skill.unique_breach_lightning_bolt for Choir of the Storm (amulet)', () => {
+      _setStatEntriesForTests([LIGHTNING_BOLT, BREACH_LIGHTNING_BOLT])
+      const filters = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 13 Lightning Bolt'],
+        itemClass: 'Amulets',
+      })
+      expect(filters[0].id).toBe('skill.unique_breach_lightning_bolt')
+      expect(filters[0].min).toBe(13)
+    })
+
+    it('uses skill.lightning_bolt for a Voltaic Staff', () => {
+      _setStatEntriesForTests([BREACH_LIGHTNING_BOLT, LIGHTNING_BOLT])
+      const filters = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 13 Lightning Bolt'],
+        itemClass: 'Staves',
+      })
+      expect(filters[0].id).toBe('skill.lightning_bolt')
+    })
+  })
+
+  describe('Decompose class disambiguation', () => {
+    const CORPSE_CLOUD = { id: 'skill.corpse_cloud', text: 'Grants Skill: Level # Decompose', type: 'skill' }
+    const CORPSE_CLOUD_TRIGGERED = {
+      id: 'skill.corpse_cloud_triggered',
+      text: 'Grants Skill: Level # Decompose',
+      type: 'skill',
+    }
+
+    it('uses skill.corpse_cloud_triggered for Corpsewade (boots)', () => {
+      _setStatEntriesForTests([CORPSE_CLOUD, CORPSE_CLOUD_TRIGGERED])
+      const filters = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 9 Decompose'],
+        itemClass: 'Boots',
+      })
+      expect(filters[0].id).toBe('skill.corpse_cloud_triggered')
+      expect(filters[0].min).toBe(9)
+    })
+
+    it('uses skill.corpse_cloud for an Acrid Wand', () => {
+      _setStatEntriesForTests([CORPSE_CLOUD_TRIGGERED, CORPSE_CLOUD])
+      const filters = buildGrantsSkillFilters({
+        grantedSkills: ['Grants Skill: Level 9 Decompose'],
+        itemClass: 'Wands',
+      })
+      expect(filters[0].id).toBe('skill.corpse_cloud')
+    })
   })
 })

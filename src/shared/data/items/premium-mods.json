@@ -413,13 +413,15 @@
           "id": "explicit.stat_2734787892",
           "text": "Breach Hives in Map have an additional wave of Hiveborn Monsters",
           "tier": "primary",
-          "note": "chase mod (clipboard roll 2-5 additional waves); trade stores it valueless as \"an additional wave\", so it is a presence toggle"
+          "prefill": 1,
+          "note": "chase mod (clipboard roll 2-5 additional waves); exact value"
         },
         {
           "id": "explicit.stat_3762913035",
           "text": "Unstable Breaches in Map spawn an additional Rare Monster when Stabilised",
           "tier": "primary",
-          "note": "chase mod (clipboard roll 2-5 additional Rare Monsters); trade stores it valueless as \"an additional Rare Monster\", so it is a presence toggle"
+          "prefill": 1,
+          "note": "chase mod (clipboard roll 2-5 additional Rare Monsters); exact value"
         },
         {
           "id": "explicit.stat_4104094246",
@@ -433,7 +435,7 @@
           "note": "clipboard prints \"reduced Pack Size\"; trade stores the increased stat with a negative value (drawback)"
         }
       ],
-      "note": "stat_list overrides the generic Unique-Tablet all_explicits rule: the two 2-5-range chase mods are the premium signature; the collapse-time and pack-size drawback rows are shown but off. The chase mods match valueless (trade has no # for \"an additional ...\"), which all_explicits would skip - stat_list flags them premium regardless (issue #417)."
+      "note": "stat_list overrides the generic Unique-Tablet all_explicits rule: the two 2-5-range chase mods are the premium signature; the collapse-time and pack-size drawback rows are shown but off. The chase mods have valueless trade text (no # for \"an additional ...\") but trade2 applies a numeric value filter on them (probe-confirmed: stat_2734787892 min:5 -> 474 vs 1873 unfiltered). tablets.ts adopts the rolled count from advanced-mod data for these stat ids so the prefill:1 can pin the exact roll (issue #417)."
     }
   },
   "itemClassRules": [

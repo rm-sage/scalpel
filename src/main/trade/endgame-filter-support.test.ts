@@ -4,11 +4,21 @@ import { _setIndexedEndgameKeysForTests, isEndgameFilterIndexed } from './endgam
 describe('endgame-filter-support', () => {
   afterEach(() => _setIndexedEndgameKeysForTests(null))
 
-  it('defaults to the bundled allowlist (tier + revives only)', () => {
-    expect(isEndgameFilterIndexed('map.map_tier')).toBe(true)
-    expect(isEndgameFilterIndexed('map.map_revives')).toBe(true)
-    expect(isEndgameFilterIndexed('map.map_packsize')).toBe(false)
-    expect(isEndgameFilterIndexed('map.map_iir')).toBe(false)
+  it('defaults to the bundled allowlist (7 indexed keys; iiq + gold still broken)', () => {
+    for (const key of [
+      'map.map_tier',
+      'map.map_packsize',
+      'map.map_iir',
+      'map.map_revives',
+      'map.map_bonus',
+      'map.map_magic_monsters',
+      'map.map_rare_monsters',
+    ]) {
+      expect(isEndgameFilterIndexed(key), `${key} should be indexed`).toBe(true)
+    }
+    // Live-probed unindexed (map_filter searches still return zero).
+    expect(isEndgameFilterIndexed('map.map_iiq')).toBe(false)
+    expect(isEndgameFilterIndexed('map.map_gold')).toBe(false)
   })
 
   it('adopts an override allowlist', () => {
@@ -21,6 +31,7 @@ describe('endgame-filter-support', () => {
     _setIndexedEndgameKeysForTests(['map.map_iir'])
     _setIndexedEndgameKeysForTests(null)
     expect(isEndgameFilterIndexed('map.map_tier')).toBe(true)
-    expect(isEndgameFilterIndexed('map.map_iir')).toBe(false)
+    // map_iiq stays unindexed in the bundled default, so the reset is observable.
+    expect(isEndgameFilterIndexed('map.map_iiq')).toBe(false)
   })
 })

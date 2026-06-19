@@ -1,11 +1,12 @@
-import type { PriceInfo } from '../../../../shared/types'
-import { getGameFeatures } from '../../../../shared/game-features'
+import type { PriceInfo } from '@shared/types'
+import { getGameFeatures } from '@shared/game-features'
 import { usePoeVersion } from '../../shared/poe-version-context'
 import { IconGlow } from '../../shared/IconGlow'
 import { PriceChip } from '../../shared/PriceChip'
 import { InfoChip } from '../../shared/InfoChip'
 import { ExternalLinkButton } from '../../shared/ExternalLinkButton'
 import { CurrencyIcon } from '../../shared/CurrencyIcon'
+import { NinjaPriceChip } from '../../shared/NinjaPriceChip'
 import dustIcon from '../../assets/currency/thaumaturgic-dust.png'
 
 export function ItemHeader({
@@ -16,6 +17,7 @@ export function ItemHeader({
   isDivCard,
   priceInfo,
   chaosPerDivine,
+  divineGraph,
   stackSize,
   maxStackSize,
   dustInfo,
@@ -32,6 +34,7 @@ export function ItemHeader({
   isDivCard: boolean
   priceInfo?: PriceInfo
   chaosPerDivine?: number
+  divineGraph?: (number | null)[]
   stackSize?: number
   maxStackSize?: number
   dustInfo?: { value: number; upTo?: boolean } | null
@@ -45,6 +48,10 @@ export function ItemHeader({
   const baselineCurrencyKey = version === 2 ? 'exalted' : 'chaos'
   const features = getGameFeatures(version)
   const showDust = features.dustExplorer && dustInfo
+
+  // Measuring-stick currencies get cross-denomination treatment - see
+  // NinjaPriceChip (backed by pair-currency.ts).
+  const showPrice = priceInfo != null && priceInfo.chaosValue > 0
 
   return (
     <div className="bg-bg-card border-b border-border px-[14px] py-[10px] flex gap-[10px] items-center">
@@ -79,7 +86,7 @@ export function ItemHeader({
       </div>
       <div className="flex flex-col gap-1 items-end shrink-0">
         {/* Dust + Ninja price + stack pricing chips */}
-        {((priceInfo && priceInfo.chaosValue > 0) || showDust) && (
+        {(showPrice || showDust) && (
           <div className="flex items-center gap-1 flex-wrap justify-end">
             {showDust && (
               <InfoChip icon={dustIcon}>
@@ -88,12 +95,12 @@ export function ItemHeader({
                 </span>
               </InfoChip>
             )}
-            {priceInfo && priceInfo.chaosValue > 0 && (
-              <PriceChip
-                chaosValue={priceInfo.chaosValue}
-                divineValue={priceInfo.divineValue}
-                graph={priceInfo.graph}
-                showNinja
+            {showPrice && priceInfo && (
+              <NinjaPriceChip
+                baseType={baseType}
+                priceInfo={priceInfo}
+                chaosPerDivine={chaosPerDivine}
+                divineGraph={divineGraph}
               />
             )}
             {priceInfo && stackSize != null && stackSize > 1 && (

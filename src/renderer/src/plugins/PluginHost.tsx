@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PoeItem, Zone } from '../../../shared/types'
+import type { PoeItem, Zone } from '@shared/types'
 import type { PluginActivate, PluginManifest } from '../../../plugin-sdk/src/types'
 import { createPluginContext } from './context'
+import { resolveLeagueOptions } from '@renderer/shared/league-options'
 import { importPluginModule } from './import-plugin-module'
 
 export interface RegisteredTab {
@@ -92,6 +93,9 @@ export function PluginHost(props: PluginHostProps): JSX.Element | null {
         pluginVersion: m.version,
         getPoeVersion: () => poeVersionRef.current,
         getLeague: () => leagueRef.current,
+        // `version` arrives already defaulted to the current game by context.ts,
+        // so it is always concrete here (unlike use-activate-plugin's inline ctx).
+        getLeagues: async (version) => resolveLeagueOptions(await window.api.getSettings().catch(() => null), version),
         getCurrentItem: () => currentItemRef.current,
         getCurrentZone: () => currentZoneRef.current,
         subscribeCurrentItem: (h) => {
