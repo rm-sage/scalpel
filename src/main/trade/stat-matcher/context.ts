@@ -32,6 +32,7 @@ export interface ItemInfo {
   mapRareMonsters?: number
   enchants?: string[]
   imbues?: string[]
+  runes?: string[]
   grantedSkills?: string[]
   memoryStrands?: number
   physDamageMin?: number

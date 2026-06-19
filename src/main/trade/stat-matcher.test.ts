@@ -3189,6 +3189,53 @@ describe('buildEnchantFilters via matchItemMods (weapon corruption enchant, issu
   })
 })
 
+describe('buildRuneFilters via matchItemMods (PoE2 socketed rune mods)', () => {
+  // GGG tags rune stat entries with type "augment" (not "rune"); the pseudo map and
+  // matcher detect runes by the rune.* id prefix. Fixtures use the real "augment" type.
+  it('emits a rune chip matched to the rune.* group, default ON when it feeds no pseudo', () => {
+    _setStatEntriesForTests([{ id: 'rune.stat_3261801346', text: '# to Dexterity', type: 'augment' }])
+    const filters = matchItemMods([], [], undefined, {
+      ...makeItemInfo({ itemClass: 'Helmets', baseType: 'Felt Cap', rarity: 'Rare' }),
+      runes: ['+9 to Dexterity'],
+    })
+    const rune = filters.find((f) => f.type === 'rune')
+    expect(rune?.id).toBe('rune.stat_3261801346')
+    expect(rune?.value).toBe(9)
+    // Dexterity feeds no pseudo, so the rune chip behaves like an enchant (default on).
+    expect(rune?.enabled).toBe(true)
+  })
+
+  it('feeds a rune all-ele-res mod into the Total Elemental Resistance pseudo and defaults the chip off', () => {
+    _setStatEntriesForTests([{ id: 'rune.stat_2901986750', text: '#% to all Elemental Resistances', type: 'augment' }])
+    const filters = matchItemMods([], [], undefined, {
+      ...makeItemInfo({ itemClass: 'Helmets', baseType: 'Felt Cap', rarity: 'Rare' }),
+      runes: ['+34% to all Elemental Resistances'],
+    })
+    const pseudo = filters.find((f) => f.id === 'pseudo.pseudo_total_elemental_resistance')
+    expect(pseudo?.value).toBe(102) // 34 * 3 (all-resistances multiplier)
+    // The rune folds into the pseudo, so its own chip is suppressed (off) like an explicit res mod.
+    const rune = filters.find((f) => f.type === 'rune')
+    expect(rune?.id).toBe('rune.stat_2901986750')
+    expect(rune?.enabled).toBe(false)
+  })
+
+  // The exact Goldrim scenario: a +29% all-res explicit (x3 = 87) plus a +18% fire-res
+  // rune (x1 = 18) must sum to 105 in the Total Elemental Resistance pseudo. Regresses
+  // the bug where rune entries (type "augment") were skipped by buildPseudoMap.
+  it('sums an explicit all-res mod and a fire-res rune into one Total Ele Res pseudo', () => {
+    _setStatEntriesForTests([
+      { id: 'explicit.stat_2901986750', text: '#% to all Elemental Resistances', type: 'explicit' },
+      { id: 'rune.stat_3372524247', text: '#% to Fire Resistance', type: 'augment' },
+    ])
+    const filters = matchItemMods(['+29% to all Elemental Resistances'], [], undefined, {
+      ...makeItemInfo({ itemClass: 'Helmets', baseType: 'Felt Cap', rarity: 'Unique' }),
+      runes: ['+18% to Fire Resistance'],
+    })
+    const pseudo = filters.find((f) => f.id === 'pseudo.pseudo_total_elemental_resistance')
+    expect(pseudo?.value).toBe(105) // 29*3 + 18*1
+  })
+})
+
 describe('matchModToStat (Forbidden Shako indexable_support routing)', () => {
   // The trade API ships TWO stats with identical display text for each Forbidden
   // Shako-style randomized support: a regular `stat_*` ID (which doesn't actually

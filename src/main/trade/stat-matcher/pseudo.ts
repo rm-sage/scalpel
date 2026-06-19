@@ -160,7 +160,12 @@ function buildPseudoMap(): void {
 
   const statEntries = getStatEntries()
   for (const entry of statEntries) {
-    if (entry.type !== 'explicit' && entry.type !== 'implicit' && entry.type !== 'crafted') continue
+    // Runes feed pseudos too (a +res rune counts toward Total Elemental Resistance).
+    // GGG's stats payload gives the rune category id "rune" (so stat ids are
+    // rune.stat_*) but tags each entry's `type` as "augment", not "rune" -- so detect
+    // runes by id prefix, not entry.type.
+    const isRune = entry.id.startsWith('rune.')
+    if (entry.type !== 'explicit' && entry.type !== 'implicit' && entry.type !== 'crafted' && !isRune) continue
     // "Inflict <Ele> Exposure on Hit, applying -#% to <Ele> Resistance" is an
     // enemy debuff, not player resistance. Its text contains "to <Ele>
     // Resistance" so the loose resistance patterns below would otherwise sum

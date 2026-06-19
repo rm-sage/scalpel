@@ -270,6 +270,7 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
       mapMagicMonsters: item.mapMagicMonsters,
       mapRareMonsters: item.mapRareMonsters,
       enchants: item.enchants,
+      runes: item.runes,
       imbues: item.imbues,
       grantedSkills: item.grantedSkills,
       memoryStrands: item.memoryStrands,

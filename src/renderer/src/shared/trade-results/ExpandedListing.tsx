@@ -243,6 +243,15 @@ export function ExpandedListing({ listing: l, itemClass, itemName, itemRarity }:
           </div>
         )}
 
+        {/* Rune mods (PoE2 socketed runes) */}
+        {d.runeMods && d.runeMods.length > 0 && (
+          <div className="mt-1 pt-1 w-full" style={MOD_SEPARATOR}>
+            {d.runeMods.map((mod, mi) => (
+              <ModLine key={mi} text={mod} color={MOD_COLORS.rune} />
+            ))}
+          </div>
+        )}
+
         {/* Granted skills */}
         {d.grantedSkills && d.grantedSkills.length > 0 && (
           <div className="mt-1 pt-1 w-full flex flex-col gap-[2px]" style={MOD_SEPARATOR}>

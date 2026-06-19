@@ -258,6 +258,22 @@ describe('parseFetchedListings', () => {
     expect(data.modTiers?.['10% increased Armour']).toEqual({ tier: 'P6', name: "Oyster's", ranges: '8-12' })
   })
 
+  it('maps PoE2 socketed rune mods into itemData.runeMods (separate from enchants)', () => {
+    const entry: FetchEntry = {
+      id: 'rune1',
+      listing: baseListing,
+      item: {
+        name: 'Goldrim',
+        baseType: 'Felt Cap',
+        typeLine: 'Felt Cap',
+        frameType: 3,
+        runeMods: ['+18% to Fire Resistance'],
+      },
+    }
+    const [listing] = parseFetchedListings([entry])
+    expect(listing.itemData?.runeMods).toEqual(['+18% to Fire Resistance'])
+  })
+
   it('still parses the legacy PoE1 string shape via extended.mods/hashes', () => {
     const entry: FetchEntry = {
       id: 'b2',
@@ -647,6 +663,44 @@ describe('searchTrade filter-group dispatch', () => {
     // Enchant survives the unid drop, regular explicit does not.
     expect(sentIds).toContain('enchant.stat_3086156145')
     expect(sentIds).not.toContain('explicit.stat_2828710986')
+  })
+
+  it('unidentified item still sends an enabled rune filter (rune mods survive id)', async () => {
+    setPoeVersion(2)
+    const unidHelm = {
+      name: '',
+      baseType: 'Felt Cap',
+      itemClass: 'Helmets',
+      rarity: 'Rare',
+    }
+    const filters: StatFilter[] = [
+      { id: 'misc.identified', text: 'Unidentified', type: 'misc', enabled: true, value: null, min: null, max: null },
+      {
+        id: 'rune.stat_2901986750',
+        text: '+34% to all Elemental Resistances',
+        type: 'rune',
+        enabled: true,
+        value: 34,
+        min: 34,
+        max: null,
+      },
+      {
+        id: 'explicit.stat_3261801346',
+        text: '+9 to Dexterity',
+        type: 'explicit',
+        enabled: true,
+        value: 9,
+        min: 9,
+        max: null,
+      },
+    ]
+    await searchTrade('Mirage', unidHelm, filters, { tradeStatus: 'any', tradePriceOption: 'chaos_divine' })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    const sentIds = body.query.stats[0].filters?.map((f) => f.id)
+    // Rune survives the unid drop, regular explicit does not.
+    expect(sentIds).toContain('rune.stat_2901986750')
+    expect(sentIds).not.toContain('explicit.stat_3261801346')
   })
 
   it('non-cluster Jewels still route to plain jewel category', async () => {

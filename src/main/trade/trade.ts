@@ -158,6 +158,7 @@ interface TradeListing {
     baseType?: string
     explicitMods?: string[]
     implicitMods?: string[]
+    runeMods?: string[]
     fracturedMods?: string[]
     foulbornMods?: string[]
     craftedMods?: string[]
@@ -1001,7 +1002,7 @@ export async function searchTrade(
   // filter would never match -- drop those when the unid chip is on. Enchants
   // and imbues survive identification (cluster jewel passive count etc.), so
   // those keep flowing through. `unidEnabled` is computed once near the top.
-  const survivesUnid = (f: StatFilter): boolean => f.type === 'enchant' || f.type === 'imbued'
+  const survivesUnid = (f: StatFilter): boolean => f.type === 'enchant' || f.type === 'imbued' || f.type === 'rune'
   const enabledFilters = statFilters.filter(
     (f) =>
       f.enabled &&
@@ -1210,6 +1211,7 @@ export interface FetchEntry {
     craftedMods?: FetchItemMod[]
     desecratedMods?: FetchItemMod[]
     enchantMods?: FetchItemMod[]
+    runeMods?: FetchItemMod[]
     ilvl?: number
     sockets?: Array<{ group: number; sColour: string }>
     properties?: Array<{ name: string; values: Array<[string, number]>; type?: number }>
@@ -1268,6 +1270,7 @@ export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing
           const explicit = clean(r.item.explicitMods)
           const implicit = clean(r.item.implicitMods)
           const enchant = clean(r.item.enchantMods)
+          const rune = clean(r.item.runeMods)
           const fractured = clean(r.item.fracturedMods)
           const crafted = clean(r.item.craftedMods)
           const foulborn = clean(r.item.mutatedMods)
@@ -1290,6 +1293,7 @@ export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing
             ],
             implicitMods: implicit,
             enchantMods: enchant,
+            runeMods: rune,
             fracturedMods: fractured,
             craftedMods: crafted,
             foulbornMods: foulborn,

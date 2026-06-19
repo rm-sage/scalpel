@@ -121,6 +121,11 @@ function escapeRegex(s: string): string {
 // stat family, so the stat lines beneath these headers belong in enchants[].
 const ENHANCEMENT_HEADER = /^\{\s*(?:Corruption\s+)?Enhancement\b[^}]*\}$/i
 
+// PoE2 socketed-rune mods carry a trailing " (rune)" tag in both basic and
+// advanced clipboard copies (" (added rune)" is an editor-only variant with no
+// trade group; routed the same). Captured into runes[] and kept out of explicits.
+const RUNE_SUFFIX = /\s*\((?:rune|added rune)\)\s*$/i
+
 /** Strip advanced-mod roll-range notation ("41(39-42)%" -> "41%"), variant
  *  alternatives ("Bladefall(Fireball-Divine Blast)" -> "Bladefall"), and the
  *  trailing "Unscalable Value" suffix from a single advanced-mod stat line. */
@@ -479,6 +484,7 @@ export function parseItemText(text: string): PoeItem | null {
   const explicits: string[] = []
   const implicits: string[] = []
   const enchants: string[] = []
+  const runes: string[] = []
   parseModSections(sections, explicits, implicits, itemClass)
 
   // Parse logbook factions and bosses from section text
@@ -576,6 +582,10 @@ export function parseItemText(text: string): PoeItem | null {
         enchants.push(line.replace(/\s*\(enchant\)$/, '').trim())
         continue
       }
+      if (RUNE_SUFFIX.test(line) && !line.startsWith('(')) {
+        runes.push(line.replace(RUNE_SUFFIX, '').trim())
+        continue
+      }
       if (inEnhancement && !line.startsWith('(')) {
         enchants.push(cleanAdvancedModLine(line))
         continue
@@ -655,6 +665,7 @@ export function parseItemText(text: string): PoeItem | null {
     explicits,
     implicits,
     enchants,
+    runes,
     imbues,
     ...(grantedSkills.length > 0 ? { grantedSkills } : {}),
     ...(memoryStrands != null ? { memoryStrands } : {}),
@@ -861,7 +872,9 @@ function parseModSections(sections: string[], explicits: string[], implicits: st
     )
     if (hasRealMods || !isFlavourOrMeta(modSections[i])) {
       lines
-        .filter((l) => !l.endsWith('(implicit)'))
+        // Socketed-rune lines (" (rune)") are captured separately into runes[] and
+        // matched against rune.*, so drop them here the same way implicits are.
+        .filter((l) => !l.endsWith('(implicit)') && !RUNE_SUFFIX.test(l))
         .forEach((l) => {
           // Strip advanced roll range notation: "41(39-42)%" -> "41%"
           explicits.push(l.replace(/(\d+(?:\.\d+)?)\(\d+(?:\.\d+)?-\d+(?:\.\d+)?\)/g, '$1'))

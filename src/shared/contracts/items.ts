@@ -108,6 +108,7 @@ export interface PoeItem {
   explicits: string[]
   implicits: string[]
   enchants: string[]
+  runes?: string[]
   imbues: string[]
   grantedSkills?: string[]
   memoryStrands?: number

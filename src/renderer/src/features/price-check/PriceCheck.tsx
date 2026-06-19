@@ -300,6 +300,12 @@ export function PriceCheck({
       if (baseModeExpandedIndices.current) {
         for (const i of baseModeExpandedIndices.current) enabledIndices.add(i)
       }
+      // Rune rows stay above the fold even when unchecked: a socketed rune is an intrinsic,
+      // visible part of the item (like the trade site shows it), and a resistance rune folds
+      // into a pseudo, so its own chip is off by default yet should still be seen.
+      filters.forEach((f, i) => {
+        if (f.type === 'rune') enabledIndices.add(i)
+      })
       setCollapsedVisibleIndices(enabledIndices)
     }
     lastSearchedSig.current = searchSignature(filters, { listedTime, priceOption, statusOption })
@@ -573,6 +579,7 @@ export function PriceCheck({
                       f.type !== 'heist' &&
                       f.type !== 'implicit' &&
                       f.type !== 'enchant' &&
+                      f.type !== 'rune' &&
                       !f.foulborn &&
                       !isPerfectUniqueRoll(f, item.rarity) &&
                       !f.premium &&

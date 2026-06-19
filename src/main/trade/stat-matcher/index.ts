@@ -20,6 +20,7 @@ import { buildMapFilters } from './producers/maps'
 import { buildMiscFilters } from './producers/misc'
 import { emitPseudoFilters } from './producers/pseudo-emit'
 import { buildRelicFilters } from './producers/relics'
+import { buildRuneFilters } from './producers/rune-mods'
 import { buildSocketFilters } from './producers/sockets'
 import { buildStoredExperienceFilters } from './producers/stored-experience'
 import { buildTabletFilters } from './producers/tablets'
@@ -63,6 +64,8 @@ export function matchItemMods(
   const explicitsFilters = processExplicits(ctx)
   const relicFilters = buildRelicFilters(ctx)
   const tabletFilters = buildTabletFilters(ctx)
+  // Rune mods accumulate pseudo contributions, so build them BEFORE emitPseudoFilters.
+  const runeFilters = buildRuneFilters(ctx)
   const pseudoFilters = emitPseudoFilters(ctx.pseudoAccumulator, ctx.pct)
 
   // Quality normalization: scale stats to 20% quality if item is below 20%
@@ -130,6 +133,7 @@ export function matchItemMods(
     ...timelessFilters,
     ...imbueFilters,
     ...enchantFilters,
+    ...runeFilters,
     ...mapFilters,
     ...socketFilters,
     // Rune chip sits before the base-name chip so they read left-to-right as

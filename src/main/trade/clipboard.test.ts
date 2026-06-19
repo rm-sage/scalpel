@@ -1774,4 +1774,44 @@ describe('parseItemText', () => {
       expect(item.grantedSkills).toBeUndefined()
     })
   })
+
+  describe('PoE2 socketed rune mods', () => {
+    it('extracts a (rune) line into runes[] when it sits in its own section', () => {
+      const text = [
+        'Item Class: Helmets',
+        'Rarity: Unique',
+        'Goldrim',
+        'Felt Cap',
+        '--------',
+        'Item Level: 80',
+        '--------',
+        '+9 to Dexterity (rune)',
+        '--------',
+        '+48 to Evasion Rating',
+        '10% increased Rarity of Items found',
+        '+34% to all Elemental Resistances',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.runes).toEqual(['+9 to Dexterity'])
+      expect(item.explicits).not.toContain('+9 to Dexterity (rune)')
+    })
+
+    it('drops a (rune) line that shares the explicit block, keeping it out of explicits', () => {
+      const text = [
+        'Item Class: Body Armours',
+        'Rarity: Rare',
+        'Sample Armour',
+        'Plate',
+        '--------',
+        'Item Level: 80',
+        '--------',
+        '+9 to Dexterity (rune)',
+        '+48 to Evasion Rating',
+        '+34% to all Elemental Resistances',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.runes).toEqual(['+9 to Dexterity'])
+      expect(item.explicits).toEqual(['+48 to Evasion Rating', '+34% to all Elemental Resistances'])
+    })
+  })
 })

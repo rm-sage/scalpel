@@ -13,6 +13,7 @@ export interface Listing {
     explicitMods?: string[]
     implicitMods?: string[]
     enchantMods?: string[]
+    runeMods?: string[]
     fracturedMods?: string[]
     foulbornMods?: string[]
     craftedMods?: string[]
