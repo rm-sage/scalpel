@@ -39,6 +39,8 @@ import {
   showOverlay,
   getOverlayWindow,
   setCloseOnClickOutside,
+  setRequireGameFocusForChat,
+  mayInjectChatNow,
   setWindowInputFocused,
 } from './overlay'
 import { createAppWindow, showAppWindow, getAppWindow } from './app-window'
@@ -72,6 +74,7 @@ import {
 import { initLearning } from './learning'
 import { initMainLocale } from './locale'
 import { snapshotClipboard } from './clipboard-preserve'
+import { clipboardHoldsInjectedText, REGEX_CLIPBOARD_RESTORE_DELAY_MS } from './chat-inject-guard'
 import { flushAll as flushPluginStorage } from './plugins/storage'
 import { registerCheatSheetProtocol } from './cheat-sheet-protocol'
 import { registerScalpelInternalProtocol, registerScalpelInternalSchemePrivileges } from './plugins/protocol'
@@ -147,6 +150,7 @@ const store = new Store<AppSettings>({
     overlayScale: 1,
     openSide: 'both',
     closeOnClickOutside: false,
+    requireGameFocusForChat: true,
     currencyLabelsAsText: false,
     useCurrentZoneAreaLevel: false,
     reloadOnSave: true,
@@ -183,6 +187,7 @@ const store = new Store<AppSettings>({
 
 // Backfill defaults for keys added after initial release
 if (store.get('reloadOnSave') === undefined) store.set('reloadOnSave', true)
+if (store.get('requireGameFocusForChat') === undefined) store.set('requireGameFocusForChat', true)
 if (store.get('useCurrentZoneAreaLevel') === undefined) store.set('useCurrentZoneAreaLevel', false)
 if (store.get('stashScrollEnabled') === undefined) store.set('stashScrollEnabled', false)
 if (store.get('stashScrollModifier') === undefined) store.set('stashScrollModifier', 'Ctrl')
@@ -323,6 +328,9 @@ app.whenReady().then(() => {
     openRegex: 'regex',
   }
   const pasteRegexToSearch = (regex: string): void => {
+    // Same focus gate as chat injection: never type the regex (or leak a late
+    // clipboard restore) into a window that isn't the focused game.
+    if (!mayInjectChatNow()) return
     const restoreClip = snapshotClipboard()
     clipboard.writeText(regex)
     uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
@@ -331,7 +339,11 @@ app.whenReady().then(() => {
     uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
     uIOhook.keyTap(UiohookKey.V)
     uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
-    setTimeout(restoreClip, 100)
+    // Restore only after a margin long enough for the game to consume the paste, and
+    // only if the clipboard still holds our regex (nothing else changed it meanwhile).
+    setTimeout(() => {
+      if (clipboardHoldsInjectedText(clipboard.readText(), regex)) restoreClip()
+    }, REGEX_CLIPBOARD_RESTORE_DELAY_MS)
   }
 
   const REGEX_REMOTE_FLUSH_EPS = 0.01
@@ -475,6 +487,7 @@ app.whenReady().then(() => {
   setStashScrollEnabled(store.get('stashScrollEnabled') ?? false)
   setStashScrollModifier(store.get('stashScrollModifier') ?? 'Ctrl')
   setOpenSide(store.get('openSide') ?? 'both')
+  setRequireGameFocusForChat(store.get('requireGameFocusForChat') ?? true)
 
   ipcMain.on('suspend-hotkeys', () => suspendHotkeys())
   ipcMain.on('resume-hotkeys', () => resumeHotkeys())
