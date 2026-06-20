@@ -238,6 +238,13 @@ export function ViewTab({ settings, update, updateMany }: Props): JSX.Element {
         checked={settings.closeOnClickOutside}
         onChange={(val) => update('closeOnClickOutside', val)}
       />
+      {/* Refuse to type chat commands / filter reloads into the game unless PoE is
+          focused -- guards against the clipboard leaking into another app or into chat. */}
+      <SettingToggleBox
+        label="Only send chat commands & filter reloads while PoE is focused"
+        checked={settings.requireGameFocusForChat ?? true}
+        onChange={(val) => update('requireGameFocusForChat', val)}
+      />
       <SettingToggleBox
         label={m.settings_currency_names()}
         checked={settings.currencyLabelsAsText}

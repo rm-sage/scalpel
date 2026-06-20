@@ -33,6 +33,10 @@ export interface AppSettings {
   overlayScale: number
   openSide: 'both' | 'right' | 'left'
   closeOnClickOutside: boolean
+  /** Refuse to type chat commands / filter reloads / regex into the game unless PoE is
+   *  the foreground window (defends against pasting the clipboard into another app or
+   *  into chat after a focus/lag race). Defaults to true; read with `?? true`. */
+  requireGameFocusForChat?: boolean
   useCurrentZoneAreaLevel: boolean
   reloadOnSave: boolean
   updateChannel: 'stable' | 'beta' | 'experimental'

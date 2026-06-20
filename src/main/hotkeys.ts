@@ -3,6 +3,11 @@ import { OverlayController } from 'electron-overlay-window'
 import { UiohookKey, uIOhook } from 'uiohook-napi'
 import { appMacroEffectiveScope, chatCommandEffectiveScope, type MacroScope, scopeAppliesTo } from '@shared/macro-scope'
 import { POE_SIDEBAR_RATIO } from '@shared/poe-geometry'
+import {
+  CHAT_CLIPBOARD_RESTORE_DELAY_MS,
+  clipboardHoldsInjectedText,
+  INJECT_SUPPRESS_RELEASE_MS,
+} from './chat-inject-guard'
 import { snapshotClipboard } from './clipboard-preserve'
 import { type KeyCombo, isElectronRegisterable, parseAccelerator } from './hotkey-accelerator'
 import {
@@ -12,7 +17,7 @@ import {
   registerDiagnosticProvider,
 } from './diagnostics'
 import { getPoeVersion } from './game-state'
-import { focusGameWindow, getOverlayWindow, isTypingInOverlay } from './overlay'
+import { focusGameWindow, getOverlayWindow, isTypingInOverlay, mayInjectChatNow } from './overlay'
 import { hideFocusedOrAnyVisibleSecondaryOverlay } from './windowing'
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -500,12 +505,19 @@ const AUTO_CLEAR = [
 let chatLocked = false
 function pasteToPoEChat(text: string, submit: boolean): Promise<void> {
   if (chatLocked) return Promise.resolve()
+  // Focus gate: refuse to inject unless PoE is the foreground window (when enabled).
+  // Otherwise the Enter/Ctrl+V/Enter burst -- and the clipboard restore below -- could
+  // land in a browser, Discord, or a password manager. Programmatic callers (filter
+  // reload/switch) defer in overlay.ts and only reach here once PoE has focus.
+  if (!mayInjectChatNow()) return Promise.resolve()
   chatLocked = true
 
   const restoreClip = snapshotClipboard()
   injecting = true
 
-  // Focus PoE so keystrokes reach the game (only if it doesn't already have focus)
+  // Focus PoE so keystrokes reach the game (only if it doesn't already have focus).
+  // With the focus gate on we are already foreground here; this covers the gate-off
+  // legacy path.
   if (!OverlayController.targetHasFocus) focusGameWindow()
 
   // All keystrokes fire synchronously so the chat window
@@ -547,15 +559,26 @@ function pasteToPoEChat(text: string, submit: boolean): Promise<void> {
     uIOhook.keyTap(UiohookKey.Enter)
   }
 
-  // Restore clipboard and re-register hotkeys after paste completes
-  return new Promise((resolve) =>
+  // Two separate timers:
+  //  - Clear the re-entrancy / hotkey-suppression flags quickly (the synthetic
+  //    keystroke burst is already done) and resolve so sendChatCommand restores the
+  //    user's held modifiers without a long stall.
+  //  - Restore the user's REAL clipboard only after a longer margin, and only if the
+  //    clipboard still holds the command text we wrote (i.e. nothing changed it). This
+  //    closes the race where a laggy game consumes the Ctrl+V after the restore, which
+  //    previously pasted the user's original clipboard (e.g. a password) into chat.
+  //    chatLocked is held across this window so back-to-back chat pastes can't interleave
+  //    their clipboard writes.
+  return new Promise((resolve) => {
     setTimeout(() => {
-      restoreClip()
-      chatLocked = false
       injecting = false
       resolve()
-    }, 50),
-  )
+    }, INJECT_SUPPRESS_RELEASE_MS)
+    setTimeout(() => {
+      if (clipboardHoldsInjectedText(clipboard.readText(), text)) restoreClip()
+      chatLocked = false
+    }, CHAT_CLIPBOARD_RESTORE_DELAY_MS)
+  })
 }
 
 export function sendChatCommand(command: string, autoSubmit = true): Promise<void> {

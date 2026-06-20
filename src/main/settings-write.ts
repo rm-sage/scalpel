@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import type Store from 'electron-store'
-import { getOverlayWindow, setCloseOnClickOutside } from './overlay'
+import { getOverlayWindow, setCloseOnClickOutside, setRequireGameFocusForChat } from './overlay'
 import { withPluginHotkeys } from './app-macros'
 import { getAppWindow } from './app-window'
 import { applyCheatSheetHotkeys, getCheatSheetsOverlay } from './cheat-sheets'
@@ -83,6 +83,8 @@ function sideEffect(setting: ProfileChangedSetting, prevAppSettings?: AppSetting
     setPriceCheckHotkey(value as string)
   } else if (key === 'closeOnClickOutside') {
     setCloseOnClickOutside(value as boolean)
+  } else if (key === 'requireGameFocusForChat') {
+    setRequireGameFocusForChat(value as boolean)
   } else if (key === 'chatCommands') {
     setChatCommands(value as AppSettings['chatCommands'])
   } else if (key === 'appMacros') {
