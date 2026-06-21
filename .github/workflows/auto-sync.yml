@@ -31,7 +31,11 @@ permissions:
 
 jobs:
   sync:
-    runs-on: windows-latest
+    # Pinned: windows-latest rotated to an image where node-gyp can't locate
+    # Visual Studio to rebuild active-win. windows-2022 has the working toolchain.
+    # (ci.yml and release.yml were already pinned; this one was missed, so every
+    # scheduled sync failed at `npm ci` -> postinstall -> electron-rebuild.)
+    runs-on: windows-2022
     steps:
       - name: Checkout fork main
         uses: actions/checkout@v4
