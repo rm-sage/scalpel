@@ -1,5 +1,12 @@
 export const CHANGELOG: { version: string; notes: string[] }[] = [
   {
+    version: '0.9.15-rmsage.2',
+    notes: [
+      'Scalpel now only types chat commands and filter reloads into the game while Path of Exile is focused, so a hotkey can no longer accidentally paste your clipboard into chat or another window. Toggle it in Settings → View.',
+      'Runes now apply to and show on price-checked items.',
+    ],
+  },
+  {
     version: '0.9.15',
     notes: [
       'PoE2 waystone price-check now defaults to yield chips on and difficulty affixes off.',
