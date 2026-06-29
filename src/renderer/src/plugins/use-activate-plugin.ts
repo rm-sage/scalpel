@@ -68,6 +68,16 @@ export function useActivatePlugin(pluginId: string): ActivatedPlugin {
         closeOverlay: () => {
           void window.api.pluginCloseOverlay(pluginId)
         },
+        setInteractiveRegion: (rect) => {
+          // Report the rect (in this window's CSS px) as an interactive panel so
+          // the main-process uiohook hit-test flips THIS overlay window clickable
+          // while the cursor is inside it. Empty array clears (stays click-through).
+          if (rect && rect.width > 0 && rect.height > 0) {
+            window.api.reportPanelRect([{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }])
+          } else {
+            window.api.reportPanelRect([])
+          }
+        },
         openTab: () => {},
         copyAndEvaluateItem: () => window.api.pluginTriggerMainHotkey(),
         captureGameWindow: (region) => window.api.pluginCaptureGameWindow(region),

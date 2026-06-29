@@ -1262,6 +1262,37 @@ describe('parseItemText', () => {
       expect(item.advancedMods?.[0].ranges).toEqual([{ value: 85, min: 75, max: 75 }])
     })
 
+    it("strips signed (+/-) roll-range bounds on hybrid resistance mods (Ventor's Gamble)", () => {
+      // Ventor's res lines roll across negative and positive, so the advanced
+      // clipboard shows a signed upper bound, e.g. "+17(-40-+40)%". The "+40"
+      // bound must be parsed (and stripped) the same as a bare or negative bound.
+      const text = [
+        'Item Class: Rings',
+        'Rarity: Unique',
+        "Ventor's Gamble",
+        'Gold Ring',
+        '--------',
+        'Item Level: 82',
+        '--------',
+        '{ Unique Modifier — Elemental, Fire, Resistance }',
+        '+17(-40-+40)% to Fire Resistance',
+        '{ Unique Modifier — Elemental, Lightning, Resistance }',
+        '-8(-40-+40)% to Lightning Resistance',
+        '{ Unique Modifier }',
+        '20(25--25)% reduced Rarity of Items found',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      // The range notation is stripped from the displayed explicit text
+      expect(item.explicits).toContain('+17% to Fire Resistance')
+      expect(item.explicits).toContain('-8% to Lightning Resistance')
+      expect(item.explicits).toContain('20% reduced Rarity of Items found')
+      // And the signed bounds are captured as numeric ranges
+      expect(item.advancedMods?.[0].ranges).toEqual([{ value: 17, min: -40, max: 40 }])
+      expect(item.advancedMods?.[1].ranges).toEqual([{ value: -8, min: -40, max: 40 }])
+      expect(item.advancedMods?.[2].ranges).toEqual([{ value: 20, min: 25, max: -25 }])
+    })
+
     it('strips variant alternatives like Ghost Reaver()', () => {
       const text = [
         'Item Class: Body Armours',

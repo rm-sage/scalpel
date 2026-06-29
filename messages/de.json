@@ -134,6 +134,8 @@
   "settings_plg_repo": "Repository",
   "settings_plg_requires": "Benötigt Scalpel {version}",
   "settings_plg_installed_heading": "Installiert",
+  "settings_plg_auto_update": "Plugins automatisch aktualisieren",
+  "settings_plg_auto_updated": "{name} auf v{version} aktualisiert",
   "settings_plg_none_installed": "Keine Plugins installiert.",
   "settings_plg_browse": "Durchsuchen",
   "settings_plg_install_failed": "Installation fehlgeschlagen: {error}",

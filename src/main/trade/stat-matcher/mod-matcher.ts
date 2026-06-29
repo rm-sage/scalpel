@@ -87,6 +87,7 @@ function _matchModToStat(
       option?: number
       aggregated?: boolean
       _textLen: number
+      _patternLen: number
     } | null = null
     let localMatch: {
       statId: string
@@ -94,6 +95,7 @@ function _matchModToStat(
       option?: number
       aggregated?: boolean
       _textLen: number
+      _patternLen: number
     } | null = null
     let qualifiedMatch: {
       statId: string
@@ -101,6 +103,7 @@ function _matchModToStat(
       option?: number
       aggregated?: boolean
       _textLen: number
+      _patternLen: number
     } | null = null
 
     for (const entry of statEntries) {
@@ -154,6 +157,11 @@ function _matchModToStat(
           option,
           aggregated: aggregated || undefined,
           _textLen: entry.text.length,
+          // Length of the text actually pattern-matched (the "(Local)"/category
+          // qualifier stripped). Used to compare specificity across the local
+          // and non-local buckets, where _textLen would unfairly credit the
+          // "(Local)" suffix.
+          _patternLen: textForPattern.length,
         }
         if (isLocal) {
           if (!localMatch || entry.text.length > localMatch._textLen) localMatch = result
@@ -170,8 +178,17 @@ function _matchModToStat(
     }
 
     let result = nonLocalMatch
-    if (preferLocal && localMatch) result = localMatch
-    else if (qualifiedMatch) result = qualifiedMatch
+    // preferLocal flips to the "(Local)" twin of a global lookalike (#399), but
+    // only when the local match is at least as specific as the best non-local
+    // one. A strictly more-specific non-local match must win: e.g. the glove
+    // enchant "Break #% increased Armour" vs the local "#% increased Armour",
+    // where the local pattern only matched by letting its "#" swallow the word
+    // "Break" -- preferring local there searches the wrong stat (#449).
+    if (preferLocal && localMatch && (!nonLocalMatch || localMatch._patternLen >= nonLocalMatch._patternLen)) {
+      result = localMatch
+    } else if (qualifiedMatch) {
+      result = qualifiedMatch
+    }
     if (result) return result
   }
 

@@ -32,6 +32,15 @@ function getItemSizes(): Record<string, [number, number]> {
   return _itemSizes
 }
 
+/** Drop the per-version base-type and item-size caches so the next access
+ *  rebuilds from the now-current game's class sheet. Needed only by the
+ *  in-process game switch (experimental multi-window); a relaunch switch
+ *  rebuilds them from scratch in the new process. */
+export function invalidateClipboardCaches(): void {
+  _staticBaseTypes = null
+  _itemSizes = null
+}
+
 /** Add base types extracted from the loaded filter */
 export function registerFilterBaseTypes(baseTypes: string[]): void {
   _filterBaseTypes = new Set(baseTypes)
@@ -131,7 +140,7 @@ const RUNE_SUFFIX = /\s*\((?:rune|added rune)\)\s*$/i
  *  trailing "Unscalable Value" suffix from a single advanced-mod stat line. */
 function cleanAdvancedModLine(line: string): string {
   return line
-    .replace(/(-?\d+(?:\.\d+)?)\(-?\d+(?:\.\d+)?(?:--?\d+(?:\.\d+)?)?\)/g, '$1')
+    .replace(/(-?\d+(?:\.\d+)?)\([-+]?\d+(?:\.\d+)?(?:-[-+]?\d+(?:\.\d+)?)?\)/g, '$1')
     .replace(/([a-zA-Z]\w*)\s*\([^)]*\)/g, '$1')
     .replace(/\s*[—–-]+\s*Unscalable Value$/i, '')
     .trim()
@@ -963,9 +972,11 @@ function parseAdvancedMods(text: string): AdvancedMod[] {
 
       // Parse roll ranges: "41(39-42)%", "+140(130-144)", "-18(-20--10)%", or the
       // single-value form a corruption-overrolled fixed mod uses ("85(75)%" -- the
-      // value exceeds the listed base). The "-max" half is optional; when absent the
-      // base is a single value, so min === max (issue #378).
-      const rangeMatches = line.matchAll(/(-?\d+(?:\.\d+)?)\((-?\d+(?:\.\d+)?)(?:-(-?\d+(?:\.\d+)?))?\)/g)
+      // value exceeds the listed base). Either bound may carry a leading "+" or "-"
+      // sign because hybrid mods roll across zero ("+17(-40-+40)%" on Ventor's res).
+      // The "-max" half is optional; when absent the base is a single value, so
+      // min === max (issue #378).
+      const rangeMatches = line.matchAll(/(-?\d+(?:\.\d+)?)\(([-+]?\d+(?:\.\d+)?)(?:-([-+]?\d+(?:\.\d+)?))?\)/g)
       for (const rm of rangeMatches) {
         const min = parseFloat(rm[2])
         currentMod.ranges.push({

@@ -47,6 +47,7 @@ import { initManifest, getManifest } from '../shared/manifest'
 import { prettyHotkey } from '../components/primitives/hotkey-utils'
 import { createTryHotkey } from '../components/primitives/hotkey-collisions'
 import { PluginErrorBanner } from '../plugins/PluginErrorBanner'
+import { usePluginAutoUpdate } from '../plugins/use-plugin-auto-update'
 import type { BrokenPlugin } from '../plugins/PluginErrorBanner'
 import type { View } from './view'
 
@@ -198,6 +199,17 @@ export default function App(): JSX.Element {
     const ms = tone === 'warn' ? 5000 : 3000
     settingsErrorTimer.current = setTimeout(() => setSettingsError(null), ms)
   }
+
+  usePluginAutoUpdate({
+    enabled: settings?.pluginAutoUpdate ?? false,
+    registryUrl: settings?.pluginRegistryUrl,
+    onApplied: (applied) => {
+      showSettingsError(
+        applied.map((a) => m.settings_plg_auto_updated({ name: a.name, version: a.version })).join(' · '),
+        'warn',
+      )
+    },
+  })
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]): void => {
     window.api.setSetting(key, value)

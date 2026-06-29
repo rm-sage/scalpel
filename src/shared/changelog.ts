@@ -1,5 +1,21 @@
 export const CHANGELOG: { version: string; notes: string[] }[] = [
   {
+    version: '0.9.17',
+    notes: [
+      'Added a live mirror whiteboard element that pins a region of the game window and shows it in real time, with your placement persisted between sessions.',
+      "Plugins you've opted into now update themselves silently in the background, no manual reinstall.",
+      'EXPERIMENTAL: Auto game switching (s/o Dan!)',
+    ],
+  },
+  {
+    version: '0.9.16',
+    notes: [
+      'Plugin developers can now make parts of a click-through annotation overlay clickable via the new ctx.setInteractiveRegion capability.',
+      'PoE2 socketed runes now apply in price-check, including pseudo totals like "Total Elemental Resistance".',
+      'Fixed the "Break increased Armour" glove enchant matching the wrong "increased Armour" stat in price-check.',
+    ],
+  },
+  {
     version: '0.9.15-rmsage.2',
     notes: [
       'Scalpel now only types chat commands and filter reloads into the game while Path of Exile is focused, so a hotkey can no longer accidentally paste your clipboard into chat or another window. Toggle it in Settings → View.',

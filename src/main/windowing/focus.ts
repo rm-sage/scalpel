@@ -41,6 +41,10 @@ export async function aroundNativeDialog<T>(fn: () => Promise<T>): Promise<T> {
         // moveTop forces it to the front of the Z-order.
         w.moveTop()
       }
+      // Keep the eval overlay above the persistent whiteboard layer: it's the
+      // last moveTop, so it ends on top of any annotations.
+      const main = getMainOverlay()
+      if (main && !main.isDestroyed() && main.isVisible()) main.moveTop()
     }
   }
 }
@@ -129,6 +133,10 @@ export function restoreAllOnPoeFocus(): void {
     state.win.show()
     state.win.moveTop()
   }
+  // Keep the main eval overlay above any restored persistent layer (the
+  // passthrough whiteboard) so it doesn't end up buried behind annotations.
+  const main = getMainOverlay()
+  if (main && !main.isDestroyed() && main.isVisible()) main.moveTop()
 }
 
 /** Esc handling: hide the focused overlay if any, else any visible overlay.
@@ -144,6 +152,7 @@ export function hideFocusedOrAnyVisibleSecondaryOverlay(): boolean {
     }
   }
   for (const state of overlays.values()) {
+    if (state.persistOverOthers) continue
     if (state.win && !state.win.isDestroyed() && state.win.isVisible()) {
       hideOverlayState(state)
       return true

@@ -1050,7 +1050,7 @@ describe('matchItemMods', () => {
       expect(baseChip?.enabled).toBe(true)
     })
 
-    it('generates 8-mod chip for 4+4 affix maps', () => {
+    it('generates modifier-count chip for rare map with 4+4 affixes (chip enabled, min=8)', () => {
       const advancedMods: AdvancedMod[] = [
         ...Array.from({ length: 4 }, (_, i) => ({
           type: 'prefix' as const,
@@ -1076,10 +1076,131 @@ describe('matchItemMods', () => {
         makeItemInfo({ itemClass: 'Maps', rarity: 'Rare', sockets: '' }),
         advancedMods,
       )
-      const eightMod = filters.find((f) => f.id === 'pseudo.pseudo_number_of_affix_mods')
-      expect(eightMod).toBeDefined()
-      expect(eightMod?.value).toBe(8)
-      expect(eightMod?.enabled).toBe(true)
+      const chip = filters.find((f) => f.id === 'pseudo.pseudo_number_of_affix_mods')
+      expect(chip).toBeDefined()
+      expect(chip?.text).toBe('Modifiers: 8')
+      expect(chip?.value).toBe(8)
+      expect(chip?.min).toBe(8)
+      expect(chip?.enabled).toBe(true)
+      // type 'map' so the panel renders it as a scrubbable row, not a toggle chip
+      expect(chip?.type).toBe('map')
+    })
+
+    it('generates modifier-count chip for rare map with 3+2 affixes (chip disabled, min=5)', () => {
+      const advancedMods: AdvancedMod[] = [
+        ...Array.from({ length: 3 }, (_, i) => ({
+          type: 'prefix' as const,
+          name: `P${i}`,
+          tier: 1,
+          tags: [],
+          lines: [`prefix ${i}`],
+          ranges: [],
+        })),
+        ...Array.from({ length: 2 }, (_, i) => ({
+          type: 'suffix' as const,
+          name: `S${i}`,
+          tier: 1,
+          tags: [],
+          lines: [`suffix ${i}`],
+          ranges: [],
+        })),
+      ]
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({ itemClass: 'Maps', rarity: 'Rare', sockets: '' }),
+        advancedMods,
+      )
+      const chip = filters.find((f) => f.id === 'pseudo.pseudo_number_of_affix_mods')
+      expect(chip).toBeDefined()
+      expect(chip?.text).toBe('Modifiers: 5')
+      expect(chip?.value).toBe(5)
+      expect(chip?.min).toBe(5)
+      expect(chip?.enabled).toBe(false)
+    })
+
+    it('generates modifier-count chip for rare waystone with prefix/suffix advancedMods', () => {
+      const advancedMods: AdvancedMod[] = [
+        {
+          type: 'prefix',
+          name: 'P0',
+          tier: 1,
+          tags: [],
+          lines: ['prefix 0'],
+          ranges: [],
+        },
+        {
+          type: 'suffix',
+          name: 'S0',
+          tier: 1,
+          tags: [],
+          lines: ['suffix 0'],
+          ranges: [],
+        },
+      ]
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({ itemClass: 'Waystones', rarity: 'Rare', sockets: '' }),
+        advancedMods,
+      )
+      const chip = filters.find((f) => f.id === 'pseudo.pseudo_number_of_affix_mods')
+      expect(chip).toBeDefined()
+      expect(chip?.text).toBe('Modifiers: 2')
+      expect(chip?.min).toBe(2)
+      expect(chip?.enabled).toBe(false)
+    })
+
+    it('does not generate modifier-count chip for non-rare map', () => {
+      const advancedMods: AdvancedMod[] = [
+        {
+          type: 'prefix',
+          name: 'P0',
+          tier: 1,
+          tags: [],
+          lines: ['prefix 0'],
+          ranges: [],
+        },
+      ]
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({ itemClass: 'Maps', rarity: 'Magic', sockets: '' }),
+        advancedMods,
+      )
+      const chip = filters.find((f) => f.id === 'pseudo.pseudo_number_of_affix_mods')
+      expect(chip).toBeUndefined()
+    })
+
+    it('does not generate modifier-count chip for rare map with no advancedMods', () => {
+      const filters = matchItemMods([], [], undefined, makeItemInfo({ itemClass: 'Maps', rarity: 'Rare', sockets: '' }))
+      const chip = filters.find((f) => f.id === 'pseudo.pseudo_number_of_affix_mods')
+      expect(chip).toBeUndefined()
+    })
+
+    it('does not generate modifier-count chip when advancedMods are implicit-only', () => {
+      const advancedMods: AdvancedMod[] = [
+        {
+          type: 'implicit',
+          name: 'Implicit',
+          tier: 0,
+          tags: [],
+          lines: ['Area is inhabited by Demons'],
+          ranges: [],
+        },
+      ]
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({ itemClass: 'Maps', rarity: 'Rare', sockets: '' }),
+        advancedMods,
+      )
+      const chip = filters.find((f) => f.id === 'pseudo.pseudo_number_of_affix_mods')
+      expect(chip).toBeUndefined()
     })
   })
 
@@ -1846,6 +1967,101 @@ describe('matchItemMods', () => {
       const abyss = filters.find((f) => f.id === 'explicit.stat_3490187949')
       expect(abyss).toBeDefined()
       expect(abyss?.value).toBe(2)
+    })
+
+    // GGG splits "increased Experience gain" into TWO trade stats: the generic
+    // explicit.stat_3666934677 (also the rune stat) and the map-scoped
+    // explicit.stat_57434274 -- the id that carries the "...in Map" text variant and
+    // the one tablets/maps are actually indexed under for search. EE2 folds both into
+    // one ref and lists the generic id first, so the [0]-pick build must override the
+    // tablet experience phrasings onto the map-scoped id, or the price check searches
+    // the wrong (generic) stat and misses every experience tablet.
+    it('routes the tablet "increased Experience gain in Map" mod to the map-scoped stat id', () => {
+      _setStatEntriesForTests([])
+      const filters = matchItemMods(
+        ['15% increased Experience gain in Map'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Tablet', baseType: 'Irradiated Tablet' }),
+      )
+      const exp = filters.find((f) => f.text === '15% increased Experience gain in Map')
+      expect(exp?.id).toBe('explicit.stat_57434274')
+    })
+
+    // Same [0]-pick split as Experience: GGG indexes a tablet's "Gold found in Map"
+    // mod under the "(Gold Piles)" stat explicit.stat_1276056105 (which carries the
+    // "...in Map (Gold Piles)" text), NOT the generic explicit.stat_1133965702 ("Gold
+    // found in this Area"). EE2 folds both into map_gold_+% and lists the generic id
+    // first, so the table build must override the tablet gold phrasings onto the
+    // map-scoped id.
+    it('routes the tablet "increased Gold found in Map" mod to the (Gold Piles) map-scoped stat id', () => {
+      _setStatEntriesForTests([])
+      const filters = matchItemMods(
+        ['35% increased Gold found in Map'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Tablet', baseType: 'Irradiated Tablet' }),
+      )
+      const gold = filters.find((f) => f.text === '35% increased Gold found in Map')
+      expect(gold?.id).toBe('explicit.stat_1276056105')
+    })
+
+    // Same singular/numeric split as Abyss: GGG indexes the valueless singular "Map
+    // contains an additional Azmeri Spirit" under its own stat_775597083 (live-probed:
+    // 210 tablet listings), separate from the numeric "# additional Azmeri Spirit"
+    // (stat_358129101). The [0]-pick build sent the singular to the numeric id; the
+    // override routes it to the dedicated singular id, while the numeric roll stays put.
+    it('routes the singular "an additional Azmeri Spirit" tablet mod to its dedicated stat id', () => {
+      _setStatEntriesForTests([])
+      const filters = matchItemMods(
+        ['Map contains an additional Azmeri Spirit'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Tablet', baseType: 'Overseer Tablet' }),
+      )
+      const azmeri = filters.find((f) => f.text === 'Map contains an additional Azmeri Spirit')
+      expect(azmeri?.id).toBe('explicit.stat_775597083')
+    })
+
+    it('keeps the numeric "# additional Azmeri Spirit" tablet mod on the numeric stat id', () => {
+      _setStatEntriesForTests([])
+      const filters = matchItemMods(
+        ['Map contains 2 additional Azmeri Spirit'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Tablet', baseType: 'Overseer Tablet' }),
+      )
+      const azmeri = filters.find((f) => f.text === 'Map contains 2 additional Azmeri Spirit')
+      expect(azmeri?.id).toBe('explicit.stat_358129101')
+    })
+
+    // Strongbox singular/numeric split: the Map/Your-Maps singular "an additional
+    // Strongbox" is stat_3040603554 (live-probed: 234 tablet listings). NOTE the trap:
+    // unlike Abyss, the [0] id (stat_3240183538) genuinely carries the "Area contains an
+    // additional Strongbox" text, so that one phrasing must NOT be re-routed -- only the
+    // Map/Your-Maps singular moves.
+    it('routes the singular "Map contains an additional Strongbox" tablet mod to its dedicated stat id', () => {
+      _setStatEntriesForTests([])
+      const filters = matchItemMods(
+        ['Map contains an additional Strongbox'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Tablet', baseType: 'Overseer Tablet' }),
+      )
+      const strongbox = filters.find((f) => f.text === 'Map contains an additional Strongbox')
+      expect(strongbox?.id).toBe('explicit.stat_3040603554')
+    })
+
+    it('keeps the "Area contains an additional Strongbox" tablet phrasing on its own ([0]) stat id', () => {
+      _setStatEntriesForTests([])
+      const filters = matchItemMods(
+        ['Area contains an additional Strongbox'],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Tablet', baseType: 'Overseer Tablet' }),
+      )
+      const strongbox = filters.find((f) => f.text === 'Area contains an additional Strongbox')
+      expect(strongbox?.id).toBe('explicit.stat_3240183538')
     })
 
     // Unique tablet count-mods (Wraeclast Besieged, issue #417): the clipboard
@@ -2660,6 +2876,29 @@ describe('matchItemMods', () => {
       )
       expect(filters.find((f) => f.id === 'explicit.stat_681332047')).toBeDefined()
       expect(filters.find((f) => f.id === 'explicit.stat_210067635')).toBeUndefined()
+    })
+
+    // #449: a glove corruption enchant "Break #% increased Armour" must not be
+    // hijacked by the local "#% increased Armour (Local)" enchant. preferLocal
+    // (set for armour/weapon items) used to override to the local match even
+    // though the non-local "Break ..." stat is a strictly more-specific match --
+    // the local pattern only matched by letting its "#" swallow the word "Break".
+    it('glove enchant "Break increased Armour" keeps the specific Break stat over the local lookalike', () => {
+      _setStatEntriesForTests([
+        { id: 'enchant.stat_1776411443', text: 'Break #% increased Armour', type: 'enchant' },
+        { id: 'enchant.stat_1062208444', text: '#% increased Armour', type: 'enchant' },
+        { id: 'enchant.stat_2866361420', text: '#% increased Armour (Local)', type: 'enchant' },
+      ])
+      const filters = matchItemMods(
+        [],
+        [],
+        undefined,
+        makeItemInfo({ rarity: 'Rare', itemClass: 'Gloves', enchants: ['Break 50% increased Armour'] }),
+      )
+      const breakFilter = filters.find((f) => f.id === 'enchant.stat_1776411443')
+      expect(breakFilter).toBeDefined()
+      expect(breakFilter?.value).toBe(50)
+      expect(filters.find((f) => f.id === 'enchant.stat_2866361420')).toBeUndefined()
     })
   })
 

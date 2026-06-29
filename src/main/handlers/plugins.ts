@@ -8,6 +8,8 @@ import { getOverlayWindow, showOverlay } from '../overlay'
 import {
   disposePluginOverlay,
   hidePluginOverlay,
+  isPluginOverlayVisible,
+  reloadPluginOverlay,
   registerPluginAnnotationOverlay,
   registerPluginOverlay,
   showPluginOverlay,
@@ -176,10 +178,21 @@ export function register(store: Store<AppSettings>, isElevated: () => boolean = 
     if (result.ok) {
       const installed = getInstalledPlugins().find((p) => p.manifest.id === result.id)
       if (installed) {
-        getOverlayWindow()?.webContents.send(channel, {
+        const payload = {
           manifest: installed.manifest,
           entryUrl: `${pluginEntryUrl(installed.manifest.id)}?v=${installed.manifest.version}`,
-        })
+        }
+        // Broadcast to ALL windows (not just the overlay), the same way
+        // notifyTabsChanged does, so the standalone app-window Plugins tab
+        // refreshes its update badge + installed list after an (auto-)update.
+        // Only the overlay has a PluginHost, so only it hot-swaps; other windows
+        // just refresh their plugin UI.
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send(channel, payload)
+        }
+        // The popped-out window does not listen for plugin-updated; reload it so
+        // it re-imports the new code instead of running stale.
+        if (channel === 'plugin-updated') reloadPluginOverlay(installed.manifest.id)
       }
     }
     return result
@@ -232,6 +245,10 @@ export function register(store: Store<AppSettings>, isElevated: () => boolean = 
   ipcMain.handle('plugins:close-overlay', (_evt, pluginId: string) => {
     if (!PLUGIN_ID_PATTERN.test(pluginId)) throw new Error('invalid plugin id')
     hidePluginOverlay(pluginId)
+  })
+  ipcMain.handle('plugins:overlay-visible', (_evt, pluginId: string): boolean => {
+    if (!PLUGIN_ID_PATTERN.test(pluginId)) throw new Error('invalid plugin id')
+    return isPluginOverlayVisible(pluginId)
   })
 
   ipcMain.handle('plugins:uninstall', async (_evt, pluginId: string) => {
