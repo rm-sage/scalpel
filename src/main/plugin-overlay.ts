@@ -117,6 +117,19 @@ export function hidePluginOverlay(pluginId: string): void {
   overlays.get(pluginId)?.hide()
 }
 
+/** True when the plugin's popped-out overlay window exists and is currently
+ *  visible. Used by auto-update to skip a pop-out the user is looking at. */
+export function isPluginOverlayVisible(pluginId: string): boolean {
+  return overlays.get(pluginId)?.isVisible() ?? false
+}
+
+/** Reload a plugin's popped-out overlay window if one exists, so it re-imports
+ *  the new plugin.js after an update (the pop-out never receives plugin-updated
+ *  and would otherwise run stale code). No-op when there is no pop-out. */
+export function reloadPluginOverlay(pluginId: string): void {
+  overlays.get(pluginId)?.getWindow()?.webContents.reload()
+}
+
 /** Tear down on uninstall: hide the window so it does not linger. The handle
  *  stays in the map (registerSecondaryOverlay throws on re-register of the same
  *  id), which is fine - a reinstall in the same session reuses it. */

@@ -87,20 +87,55 @@ for (const line of lines) {
   }
 }
 
-// GGG splits Abyss into TWO trade stats: the numeric "# additional Abysses"
-// (stat_3490187949) and a dedicated singular "an additional Abyss"
-// (stat_1070816711). Most map-content mods (Strongbox, Essence, Shrine) alias both
-// phrasings under one id, so EE2 folds them into a single ref and the `explicit[0]`
-// pick above is correct -- but for Abyss [0] is the numeric id, which then wrongly
-// covers the valueless singular phrasings too. Re-point those at the singular id so
-// the price check searches the stat the item is actually indexed under (the numeric
-// stat misses every singular-Abyss tablet).
-const SINGULAR_STAT_OVERRIDES = {
+// EE2 folds some logically-single mods that GGG actually splits into TWO trade stats
+// under one ref, listing both ids in trade.ids.explicit. The `explicit[0]` pick above
+// then lands on the wrong id for the tablet/map context. EE2's ndjson does not say
+// which id carries which text variant, so re-point the affected keys explicitly (the
+// correct id is sourced from the live trade2 /data/stats catalog).
+const STAT_ID_OVERRIDES = {
+  // Abyss: [0] is the numeric "# additional Abysses" (stat_3490187949); the dedicated
+  // singular "an additional Abyss" is stat_1070816711. The numeric stat misses every
+  // singular-Abyss tablet, so route the valueless singular phrasings to the singular id.
   'area contains an additional abyss': 'explicit.stat_1070816711',
   'map contains an additional abyss': 'explicit.stat_1070816711',
   'your maps contain an additional abyss': 'explicit.stat_1070816711',
+  // Azmeri Spirit: same singular/numeric split as Abyss. [0] is the numeric "# additional
+  // Azmeri Spirit" (stat_358129101); the singular "an additional Azmeri Spirit" is
+  // stat_775597083 (live-probed: 210 tablet listings). Only the map/boss singular phrasings
+  // move; the numeric "# additional" keys stay on [0]. (No "Area contains an additional
+  // Azmeri Spirit" text exists, so there is no area-singular key to route.)
+  'map contains an additional azmeri spirit': 'explicit.stat_775597083',
+  'areas with powerful map bosses contain an additional azmeri spirit': 'explicit.stat_775597083',
+  // Strongbox: same split. [0]=stat_3240183538 carries the numeric "# additional
+  // Strongboxes" AND the singular "Area contains an additional Strongbox" (so the
+  // area-singular key correctly stays on [0]); the Map/Your-Maps/boss singular is
+  // stat_3040603554 (live-probed: 234 tablet listings).
+  'map contains an additional strongbox': 'explicit.stat_3040603554',
+  'your maps contain an additional strongbox': 'explicit.stat_3040603554',
+  'areas with powerful map bosses contain an additional strongbox': 'explicit.stat_3040603554',
+  // Experience gain: [0] is the generic stat_3666934677 (shared with the rune stat);
+  // the map-scoped variant -- the id that carries the "...in Map" text and is the one
+  // tablets/maps are indexed under -- is stat_57434274. Route every tablet experience
+  // phrasing there so the price check searches the stat the item is actually indexed
+  // under instead of the generic (non-map) one.
+  '#% increased experience gain': 'explicit.stat_57434274',
+  '#% increased experience gain in map': 'explicit.stat_57434274',
+  '#% increased experience gain in your maps': 'explicit.stat_57434274',
+  '#% reduced experience gain': 'explicit.stat_57434274',
+  '#% reduced experience gain in map': 'explicit.stat_57434274',
+  '#% reduced experience gain in your maps': 'explicit.stat_57434274',
+  // Gold found: [0] is the generic stat_1133965702 ("...in this Area"); the map-scoped
+  // "(Gold Piles)" variant -- the id that carries the "...in Map (Gold Piles)" text and
+  // is the one tablets/maps are indexed under -- is stat_1276056105. Route every tablet
+  // gold phrasing there so the price check searches the stat the item is indexed under.
+  '#% increased gold found in map': 'explicit.stat_1276056105',
+  '#% increased gold found in this area': 'explicit.stat_1276056105',
+  '#% increased gold found in your maps': 'explicit.stat_1276056105',
+  '#% reduced gold found in map': 'explicit.stat_1276056105',
+  '#% reduced gold found in this area': 'explicit.stat_1276056105',
+  '#% reduced gold found in your maps': 'explicit.stat_1276056105',
 }
-for (const [key, id] of Object.entries(SINGULAR_STAT_OVERRIDES)) {
+for (const [key, id] of Object.entries(STAT_ID_OVERRIDES)) {
   if (map[key]) map[key] = id
   else console.log(`  override key absent from source (EE2 phrasing changed?): "${key}"`)
 }

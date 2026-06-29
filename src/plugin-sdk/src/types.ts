@@ -204,6 +204,18 @@ export interface ScalpelPluginContext {
   closeOverlay(): void
 
   /**
+   * Annotation overlays only. Declare the screen region (in overlay/game CSS px,
+   * measured from the overlay's top-left) that should receive mouse input. While
+   * the cursor is inside it, Scalpel flips the otherwise click-through overlay
+   * interactive so clicks land on your elements; everywhere else the overlay
+   * stays click-through and clicks pass to the game. Pass null to clear it. Call
+   * this from your overlay's render code (re-call when the region moves or
+   * resizes); it is a no-op for 'window'-mode overlays, which are already
+   * interactive.
+   */
+  setInteractiveRegion(rect: { x: number; y: number; width: number; height: number } | null): void
+
+  /**
    * Trigger the same flow Scalpel's main hotkey runs: send Ctrl+C to PoE,
    * read the clipboard, parse the item, fire onCurrentItem for everyone
    * (other plugins + Scalpel's filter/price-check views), and resolve to

@@ -134,6 +134,8 @@
   "settings_plg_repo": "Repositorio",
   "settings_plg_requires": "Requiere Scalpel {version}",
   "settings_plg_installed_heading": "Instalados",
+  "settings_plg_auto_update": "Actualizar complementos automáticamente",
+  "settings_plg_auto_updated": "{name} actualizado a v{version}",
   "settings_plg_none_installed": "No hay complementos instalados.",
   "settings_plg_browse": "Explorar",
   "settings_plg_install_failed": "Error al instalar: {error}",

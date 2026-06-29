@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { closeAllOverlaysOnPoeExit } from './focus'
+const { focusHolder } = vi.hoisted(() => ({ focusHolder: { current: null as unknown } }))
+vi.mock('electron', () => ({
+  BrowserWindow: { getFocusedWindow: () => focusHolder.current },
+  screen: { getDisplayNearestPoint: () => ({ scaleFactor: 1 }) },
+}))
+import { closeAllOverlaysOnPoeExit, hideFocusedOrAnyVisibleSecondaryOverlay } from './focus'
 import { type OverlayState, overlays } from './state'
 
-function fakeState(opts: { visible: boolean; wasVisible: boolean }): OverlayState {
+function fakeState(opts: { visible: boolean; wasVisible?: boolean; persist?: boolean }): OverlayState {
   return {
     spec: {} as unknown as OverlayState['spec'],
     win: {
@@ -14,7 +19,8 @@ function fakeState(opts: { visible: boolean; wasVisible: boolean }): OverlayStat
     inProgrammaticMove: false,
     programmaticSettleTimer: null,
     isResizing: false,
-    wasVisibleBeforeFocusLoss: opts.wasVisible,
+    wasVisibleBeforeFocusLoss: opts.wasVisible ?? false,
+    persistOverOthers: opts.persist ?? false,
   }
 }
 
@@ -53,6 +59,7 @@ describe('closeAllOverlaysOnPoeExit', () => {
       programmaticSettleTimer: null,
       isResizing: false,
       wasVisibleBeforeFocusLoss: true,
+      persistOverOthers: false,
     }
     overlays.set('destroyed', destroyed)
 
@@ -69,9 +76,44 @@ describe('closeAllOverlaysOnPoeExit', () => {
       programmaticSettleTimer: null,
       isResizing: false,
       wasVisibleBeforeFocusLoss: true,
+      persistOverOthers: false,
     }
     overlays.set('nowin', noWin)
 
     expect(() => closeAllOverlaysOnPoeExit()).not.toThrow()
+  })
+})
+
+describe('hideFocusedOrAnyVisibleSecondaryOverlay - persistOverOthers', () => {
+  beforeEach(() => {
+    overlays.clear()
+    focusHolder.current = null
+  })
+
+  it('does not hide a persistent visible overlay via the any-visible sweep', () => {
+    const wb = fakeState({ visible: true, persist: true })
+    overlays.set('whiteboard', wb)
+    const hid = hideFocusedOrAnyVisibleSecondaryOverlay()
+    expect(hid).toBe(false)
+    expect(wb.win?.hide).not.toHaveBeenCalled()
+  })
+
+  it('still hides a non-persistent visible overlay', () => {
+    const cs = fakeState({ visible: true, persist: false })
+    overlays.set('cheatsheet', cs)
+    const hid = hideFocusedOrAnyVisibleSecondaryOverlay()
+    expect(hid).toBe(true)
+    expect(cs.win?.hide).toHaveBeenCalled()
+  })
+
+  it('hides the non-persistent overlay and leaves the persistent one alone', () => {
+    const wb = fakeState({ visible: true, persist: true })
+    const cs = fakeState({ visible: true, persist: false })
+    overlays.set('whiteboard', wb)
+    overlays.set('cheatsheet', cs)
+    const hid = hideFocusedOrAnyVisibleSecondaryOverlay()
+    expect(hid).toBe(true)
+    expect(cs.win?.hide).toHaveBeenCalled()
+    expect(wb.win?.hide).not.toHaveBeenCalled()
   })
 })

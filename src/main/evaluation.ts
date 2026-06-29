@@ -18,7 +18,7 @@ import {
 import { getCurrentFilter } from './filter-state'
 import { detectFocusedPoeVersion, detectOpenPoeVersions } from './game-detector'
 import { getPoeVersion } from './game-state'
-import { requestGameSwitch } from './game-switch'
+import { requestGameSwitch as stableRequestGameSwitch } from './game-switch'
 import { sendCtrlCToPoE } from './hotkeys'
 import { focusGameWindow, getOverlayAttachedVersion, getOverlayWindow, isTypingInOverlay, showOverlay } from './overlay'
 import { readItemFromClipboard } from './trade/clipboard'
@@ -32,6 +32,16 @@ import {
 } from './trade/prices'
 import { ensureStatsLoaded, matchItemMods } from './trade/trade'
 import { beginSession, decisionsForSession } from './learning'
+
+// ---- Injectable game-switch request ----------------------------------------
+// Defaults to the stable (restart-based) path. The experimental coordinator
+// overrides this at init time so hotkeys route through the in-process switch
+// without evaluation.ts importing from experimental/ (which would cycle).
+let requestGameSwitch: typeof stableRequestGameSwitch = stableRequestGameSwitch
+
+export function setGameSwitchRequest(fn: typeof stableRequestGameSwitch): void {
+  requestGameSwitch = fn
+}
 
 // ---- Tier group builder ----------------------------------------------------
 
@@ -130,6 +140,15 @@ function applyZoneAreaLevel(item: PoeItem): PoeItem {
  *  fresh hotkey press. No-op when no item has been evaluated yet. */
 export function reEvaluateLastItem(): void {
   if (lastEvaluatedItem) evaluateAndSend(lastEvaluatedItem)
+}
+
+/** Forget the last displayed item so a subsequent reEvaluateLastItem() is a
+ *  no-op. A relaunch-based game switch dropped this naturally (fresh process);
+ *  the experimental in-process switch must clear it explicitly, otherwise the
+ *  filter reload that fires on profile activation would re-evaluate the previous
+ *  game's item and pop the (closed) overlay back open on the new game. */
+export function clearLastEvaluatedItem(): void {
+  lastEvaluatedItem = null
 }
 
 export function evaluateAndSend(item: PoeItem): void {
@@ -400,7 +419,7 @@ async function captureItemFromClipboard(isElevated: () => boolean): Promise<Capt
  *  making targetHasFocus true even when the overlay is attached to the wrong game.
  *  Always returns false when a switch is needed: the current press is swallowed,
  *  and the user reopens the overlay from the correct game after restart. */
-async function ensureCorrectGameForHotkey(store: Store<AppSettings>): Promise<boolean> {
+export async function ensureCorrectGameForHotkey(store: Store<AppSettings>): Promise<boolean> {
   // User typing in an overlay text field -- swallow so single-key hotkeys
   // don't stomp the input. Otherwise if the overlay window itself is focused
   // (user clicked into it), refocus PoE so the subsequent Ctrl+C reaches the

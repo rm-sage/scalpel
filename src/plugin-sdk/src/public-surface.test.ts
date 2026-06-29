@@ -105,6 +105,7 @@ const EXPECTED_CONTEXT_KEYS = [
   'registerHotkey',
   'registerOverlay',
   'registerTab',
+  'setInteractiveRegion',
   'storage',
 ].sort()
 

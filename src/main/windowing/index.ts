@@ -108,6 +108,13 @@ export interface SecondaryOverlay {
    *  created lazily so we don't spawn renderers for overlays the user never
    *  touches in a session). */
   getWindow(): BrowserWindow | null
+  /** When true, hide paths that respect this flag leave the overlay visible
+   *  instead of hiding it when another surface opens. Currently honored by the
+   *  Esc "hide any visible secondary" sweep; other hide sites must check it
+   *  explicitly. The owner sets/clears it - the whiteboard sets it true in
+   *  passthrough mode, false in edit. */
+  setPersistOverOthers(value: boolean): void
+  getPersistOverOthers(): boolean
   /** Set window bounds without triggering the anchor-persist callback that
    *  user-driven drags fire. Use for programmatic resize/move flows (minimize
    *  animation, content-driven height) that shouldn't pollute the stored
@@ -269,6 +276,7 @@ export function registerSecondaryOverlay(spec: OverlaySpec): SecondaryOverlay {
     programmaticSettleTimer: null,
     isResizing: false,
     wasVisibleBeforeFocusLoss: false,
+    persistOverOthers: false,
   }
   overlays.set(spec.id, state)
   return makeOverlayApi(state)
@@ -308,6 +316,10 @@ function makeOverlayApi(state: OverlayState): SecondaryOverlay {
       state.win.hide()
     },
     getWindow: () => (state.win && !state.win.isDestroyed() ? state.win : null),
+    setPersistOverOthers: (value) => {
+      state.persistOverOthers = value
+    },
+    getPersistOverOthers: () => state.persistOverOthers,
   }
 }
 

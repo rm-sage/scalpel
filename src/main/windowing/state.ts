@@ -21,6 +21,12 @@ export interface OverlayState {
   // Alt-tab restore memory (PoE blur hides the window if visible; PoE focus
   // restores it from this flag).
   wasVisibleBeforeFocusLoss: boolean
+  // Hide paths that respect this flag leave the overlay visible instead of
+  // hiding it when another surface opens. Currently honored by the Esc "hide
+  // any visible secondary" sweep (focus.ts); other hide sites that should
+  // spare a persisting overlay must check it explicitly. Set and cleared by
+  // the owner (the whiteboard sets it true in passthrough, false in edit).
+  persistOverOthers: boolean
 }
 
 /** All registered secondary overlays, keyed by spec.id. Shared between the

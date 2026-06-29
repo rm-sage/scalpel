@@ -21,6 +21,7 @@ import * as onlineSyncHandlers from '../handlers/online-sync'
 import * as pricesHandlers from '../handlers/prices'
 import { register as registerCheatSheets } from '../handlers/cheat-sheets'
 import { register as registerWhiteboard } from '../handlers/whiteboard'
+import { register as registerScreen } from '../handlers/screen-source'
 import { register as registerClipboard } from '../handlers/clipboard'
 import { register as registerManifest } from '../handlers/manifest'
 import { register as registerPlugins } from '../handlers/plugins'
@@ -51,6 +52,7 @@ export function registerAllIpc(deps: IpcRegistrationDeps): void {
   pricesHandlers.register(store)
   registerCheatSheets()
   registerWhiteboard()
+  registerScreen()
   registerClipboard()
   registerManifest()
   registerPlugins(store, isElevated)
