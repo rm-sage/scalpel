@@ -4,104 +4,26 @@ import type Store from 'electron-store'
 import { craftOfExileUrl } from '@shared/external-link'
 import { isTownOrHideout } from '@shared/is-town-or-hideout'
 import { IPC_CHANNELS } from '@shared/contracts/ipc'
-import type { AppSettings, FilterFile, MatchResult, OverlayData, PoeItem, TierGroup, TierSibling } from '@shared/types'
+import type { AppSettings, OverlayData, PoeItem } from '@shared/types'
+import { buildTierGroup } from './filter/tier-group'
 import { getCurrentZone } from './client-log'
 import { snapshotClipboard } from './clipboard-preserve'
 import { getProfileBackedSetting } from './profiles/profile-settings'
 import {
-  evaluateBlock,
   findMatchingBlocks,
   findQualityBreakpoints,
   findStackSizeBreakpoints,
   findStrandBreakpoints,
 } from './filter/matcher'
 import { getCurrentFilter } from './filter-state'
-import { detectFocusedPoeVersion, detectOpenPoeVersions } from './game-detector'
 import { getPoeVersion } from './game-state'
-import { requestGameSwitch as stableRequestGameSwitch } from './game-switch'
 import { sendCtrlCToPoE } from './hotkeys'
-import { focusGameWindow, getOverlayAttachedVersion, getOverlayWindow, isTypingInOverlay, showOverlay } from './overlay'
+import { focusGameWindow, getOverlayWindow, showOverlay } from './overlay'
+import { advancedCopyTracker } from './trade/advanced-copy'
 import { readItemFromClipboard } from './trade/clipboard'
-import {
-  getUniquesByBase,
-  lookupItemPrice,
-  lookupPrice,
-  lookupPriceForItem,
-  lookupUniquePriceForBase,
-  refreshPrices,
-} from './trade/prices'
+import { buildUnidCandidates, lookupItemPrice, lookupPrice, lookupPriceForItem, refreshPrices } from './trade/prices'
 import { ensureStatsLoaded, matchItemMods } from './trade/trade'
 import { beginSession, decisionsForSession } from './learning'
-
-// ---- Injectable game-switch request ----------------------------------------
-// Defaults to the stable (restart-based) path. The experimental coordinator
-// overrides this at init time so hotkeys route through the in-process switch
-// without evaluation.ts importing from experimental/ (which would cycle).
-let requestGameSwitch: typeof stableRequestGameSwitch = stableRequestGameSwitch
-
-export function setGameSwitchRequest(fn: typeof stableRequestGameSwitch): void {
-  requestGameSwitch = fn
-}
-
-// ---- Tier group builder ----------------------------------------------------
-
-export function buildTierGroup(filter: FilterFile, activeMatch: MatchResult, item: PoeItem): TierGroup | undefined {
-  const tag = activeMatch.block.tierTag
-  if (!tag) return undefined
-
-  const siblings: TierSibling[] = []
-  for (let i = 0; i < filter.blocks.length; i++) {
-    const b = filter.blocks[i]
-    if (b.tierTag && b.tierTag.typePath === tag.typePath) {
-      const evaluation = evaluateBlock(b, item)
-      siblings.push({
-        tier: b.tierTag.tier,
-        visibility: b.visibility,
-        blockIndex: i,
-        block: b,
-        match: {
-          block: b,
-          blockIndex: i,
-          isFirstMatch: i === activeMatch.blockIndex,
-          evaluatedConditions: evaluation.evaluatedConditions,
-          hasUnknowns: evaluation.hasUnknowns,
-        },
-      })
-    }
-  }
-
-  if (siblings.length <= 1) return undefined
-
-  // If siblings with this base type are differentiated only by threshold conditions
-  // (StackSize, Quality, MemoryStrands), the slider handles navigation - hide the dropdown.
-  // But if different tiers have different base type lists, that's normal tiering.
-  const baseType = item.baseType
-  const siblingsWithBaseType = siblings.filter((s) =>
-    s.block.conditions.some((c) => c.type === 'BaseType' && c.values.includes(baseType)),
-  )
-  if (siblingsWithBaseType.length > 1) {
-    // Check if these siblings have the same base type list (threshold-only differentiation)
-    const thresholdTypes = new Set(['StackSize', 'Quality', 'MemoryStrands'])
-    const allSameBaseTypes = siblingsWithBaseType.every((s) => {
-      const btValues = s.block.conditions
-        .filter((c) => c.type === 'BaseType')
-        .flatMap((c) => c.values)
-        .sort()
-        .join(',')
-      const firstBtValues = siblingsWithBaseType[0].block.conditions
-        .filter((c) => c.type === 'BaseType')
-        .flatMap((c) => c.values)
-        .sort()
-        .join(',')
-      return btValues === firstBtValues
-    })
-    const differByThresholdOnly =
-      allSameBaseTypes && siblingsWithBaseType.some((s) => s.block.conditions.some((c) => thresholdTypes.has(c.type)))
-    if (differByThresholdOnly) return undefined
-  }
-
-  return { typePath: tag.typePath, siblings, currentTier: tag.tier }
-}
 
 // ---- Shared evaluation helper ----------------------------------------------
 
@@ -230,25 +152,7 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
   const priceInfo = lookupItemPrice(item)
 
   // For unidentified uniques, find all possible uniques for this base type
-  const unidCandidates: Array<{ name: string; chaosValue: number }> = []
-  if (item.rarity === 'Unique' && !item.identified) {
-    const uniquesByBase = getUniquesByBase()
-    let names = uniquesByBase[item.baseType] ?? []
-    // Unique maps all share "Map" base type
-    if (item.itemClass === 'Maps' && names.length === 0) {
-      names = uniquesByBase.Map ?? []
-    }
-    const isStandard = league.toLowerCase() === 'standard'
-    for (const name of names) {
-      // Disambiguate same-name uniques by the item's base type; falls back
-      // to the name-only entry when no variant key matches.
-      const price = lookupUniquePriceForBase(name, item.baseType)
-      // In non-Standard leagues, skip items with no price (not obtainable this league)
-      if (!isStandard && !price) continue
-      unidCandidates.push({ name, chaosValue: price?.chaosValue ?? 0 })
-    }
-    unidCandidates.sort((a, b) => b.chaosValue - a.chaosValue)
-  }
+  const unidCandidates = item.rarity === 'Unique' && !item.identified ? buildUnidCandidates(item.baseType) : []
 
   await ensureStatsLoaded()
   const statFilters = matchItemMods(
@@ -273,6 +177,7 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
       gemLevel: item.gemLevel,
       corrupted: item.corrupted,
       mirrored: item.mirrored,
+      sanctified: item.sanctified,
       identified: item.identified,
       influence: item.influence,
       mapTier: item.mapTier,
@@ -293,19 +198,24 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
       imbues: item.imbues,
       grantedSkills: item.grantedSkills,
       memoryStrands: item.memoryStrands,
+      intangibility: item.intangibility,
       physDamageMin: item.physDamageMin,
       physDamageMax: item.physDamageMax,
       eleDamageAvg: item.eleDamageAvg,
       chaosDamageAvg: item.chaosDamageAvg,
       attacksPerSecond: item.attacksPerSecond,
       critChance: item.critChance,
-      heistJob: item.heistJob,
+      heistJobs: item.heistJobs,
+      heistTarget: item.heistTarget,
       monsterLevel: item.monsterLevel,
       wingsRevealed: item.wingsRevealed,
       wingsTotal: item.wingsTotal,
       mapReward: item.mapReward,
       transfigured: item.transfigured,
       synthesised: item.synthesised,
+      vestigial: item.vestigial,
+      foulborn: item.foulborn,
+      zanaMemory: item.zanaMemory,
       logbookFactions: item.logbookFactions,
       logbookBosses: item.logbookBosses,
       atzoatlRooms: item.atzoatlRooms,
@@ -316,6 +226,13 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
       ultimatumRequired: item.ultimatumRequired,
       isSynthetic: item.isSynthetic,
       unidentifiedTier: item.unidentifiedItemTier,
+      chartZone: item.chartZone,
+      chartShape: item.chartShape,
+      scryingArea: item.scryingArea,
+      mercenaryBuild: item.mercenaryBuild,
+      mercenaryLevel: item.mercenaryLevel,
+      mercenarySkills: item.mercenarySkills,
+      requiredLevel: item.requiredLevel,
     },
     item.advancedMods,
     store.get('priceCheckDefaultPercent') ?? 90,
@@ -344,14 +261,16 @@ export async function preloadPriceCheck(item: PoeItem, store: Store<AppSettings>
 let hotkeyProcessing = false
 let consecutiveClipboardFailures = 0
 
-/**
- * Capture an item from PoE's clipboard. Sends Ctrl+Alt+C, polls for content,
- * falls back to windowed mode if needed. Returns the parsed item or null.
- *
- * The user's prior clipboard contents are stashed on entry and restored on exit
- * so price-checking an item doesn't stomp whatever they had copied. Explicit
- * "Copy to clipboard" actions (trade whispers, regex copy buttons) bypass this.
- */
+/** Poll the clipboard for a parseable item, giving PoE `tries` x 50ms to land it. */
+async function pollClipboardForItem(tries: number): Promise<PoeItem | null> {
+  for (let i = 0; i < tries; i++) {
+    const item = readItemFromClipboard()
+    if (item) return item
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return null
+}
+
 /** A successful clipboard capture: the parsed item plus the verbatim clipboard
  *  text it was parsed from. The raw text is retained for callers that forward the
  *  exact game item elsewhere (e.g. Craft of Exile's ?eimport=), which a
@@ -361,38 +280,80 @@ interface CapturedItem {
   rawText: string
 }
 
-async function captureItemFromClipboard(isElevated: () => boolean): Promise<CapturedItem | null> {
+/**
+ * Capture an item from PoE's clipboard. Sends Ctrl+C, polls for content,
+ * falls back to windowed mode if needed. Returns the parsed item or null.
+ *
+ * The user's prior clipboard contents are stashed on entry and restored on exit
+ * so price-checking an item doesn't stomp whatever they had copied. Explicit
+ * "Copy to clipboard" actions (trade whispers, regex copy buttons) bypass this.
+ *
+ * On a failed capture, shows the main overlay unless `opts.showOverlay` is
+ * explicitly false - the `elevation-hint` and `no-item-in-clipboard` IPC
+ * messages still fire regardless, so the renderer's state is correct the next
+ * time the overlay opens.
+ */
+async function captureItemFromClipboard(
+  isElevated: () => boolean,
+  opts?: { showOverlay?: boolean },
+): Promise<CapturedItem | null> {
+  const showOverlayFlag = opts?.showOverlay ?? true
+  // Declared out here because it is *returned* after the borrow ends: the raw text
+  // can only be read while the clipboard is borrowed, but the borrow is handed back
+  // in the try's `finally` below (#562) and the return is past that.
+  let rawText = ''
   const restoreClip = snapshotClipboard()
 
-  clipboard.clear()
-  await sendCtrlCToPoE()
-
-  // Poll for clipboard content
   let item: PoeItem | null = null
-  for (let i = 0; i < 3; i++) {
-    item = readItemFromClipboard()
-    if (item) break
-    await new Promise((r) => setTimeout(r, 50))
-  }
-
-  // Fallback for windowed mode
-  if (!item) {
+  // Focusing the game and injecting keys are both native calls that can throw.
+  // The clipboard is borrowed (and cleared) by then, so hand it back on the way
+  // out no matter how we leave - a leaked borrow holds the user's content
+  // hostage and blocks any overlapping flow's restore too (#562).
+  try {
+    // Hotkeys are also valid while a gameplay overlay owns focus. Hand input
+    // back to PoE before copying so that path is as immediate as game focus.
+    if (!OverlayController.targetHasFocus) focusGameWindow()
+    const withAlt = advancedCopyTracker.needsAlt()
     clipboard.clear()
-    focusGameWindow()
-    await new Promise((r) => setTimeout(r, 50))
-    await sendCtrlCToPoE()
-    for (let i = 0; i < 10; i++) {
-      item = readItemFromClipboard()
-      if (item) break
+    await sendCtrlCToPoE({ withAlt })
+
+    item = await pollClipboardForItem(3)
+
+    // Fallback for windowed mode
+    if (!item) {
+      clipboard.clear()
+      focusGameWindow()
       await new Promise((r) => setTimeout(r, 50))
+      await sendCtrlCToPoE({ withAlt })
+      item = await pollClipboardForItem(10)
     }
+
+    // Snapshot the verbatim item text while the borrowed clipboard still holds the copy
+    // that produced `item`. This is the last point it can be read: the `finally` below
+    // hands the user's own contents back (#562). Craft of Exile's ?eimport= needs PoE's
+    // exact wire text, which re-serializing the parsed PoeItem couldn't reproduce.
+    if (item) rawText = clipboard.readText()
+
+    // A modded item that came back without advanced-mod headers means this client
+    // still wants Alt held to emit the advanced description. Confirm with a second
+    // copy before latching -- see advanced-copy.ts. Costs nothing once both games
+    // honour a plain Ctrl+C (#560), since the probe never fires.
+    if (item && advancedCopyTracker.shouldProbe(item)) {
+      clipboard.clear()
+      await sendCtrlCToPoE({ withAlt: true })
+      // Only adopt the Alt copy -- and re-snapshot rawText from it -- when the probe
+      // actually wins. An inconclusive probe keeps the plain `item`, and by then the
+      // clipboard holds the Alt copy or (if it never landed) nothing at all, either of
+      // which would pair `item` with text it wasn't parsed from.
+      const probed = advancedCopyTracker.recordProbe(await pollClipboardForItem(3))
+      if (probed) {
+        item = probed
+        rawText = clipboard.readText()
+      }
+    }
+  } finally {
+    restoreClip()
   }
-
-  // Snapshot the raw item text while it's still on the clipboard, before the
-  // user's prior contents are restored below.
-  const rawText = item ? clipboard.readText() : ''
-
-  restoreClip()
 
   if (!item) {
     consecutiveClipboardFailures++
@@ -400,7 +361,7 @@ async function captureItemFromClipboard(isElevated: () => boolean): Promise<Capt
       getOverlayWindow()?.webContents.send('elevation-hint')
     }
     getOverlayWindow()?.webContents.send('no-item-in-clipboard')
-    showOverlay()
+    if (showOverlayFlag) showOverlay()
     return null
   }
 
@@ -408,82 +369,50 @@ async function captureItemFromClipboard(isElevated: () => boolean): Promise<Capt
   return { item, rawText }
 }
 
-/** Before the hotkey handler does any work, confirm the overlay is attached to the
- *  PoE version that actually has foreground focus. If the other PoE is focused,
- *  show the restart-prompt modal -- electron-overlay-window can only attach once
- *  per process (its native tracker keeps static globals), so switching games
- *  requires an app relaunch.
+/**
+ * Core copy-and-evaluate flow shared by the main hotkey and the plugin IPC handler.
+ * Captures an item from the clipboard and dispatches it to the filter/price-check
+ * pipeline, returning the parsed item (or null when nothing recognisable is on the
+ * clipboard). Shows the main overlay unless `opts.showOverlay` is explicitly false -
+ * a plugin with its own overlay passes that to avoid Scalpel's overlay popping open
+ * on top of it. The suppression also covers a failed clipboard capture (no filter
+ * loaded, nothing recognisable on the clipboard), not just the success path.
+ * Callers that want a specific overlay view should send the appropriate IPC message
+ * before or after calling this.
  *
- *  Detect the focused PoE version *before* the targetHasFocus fast path because
- *  attachByTitle('Path of Exile') may prefix-match 'Path of Exile 2' on Windows,
- *  making targetHasFocus true even when the overlay is attached to the wrong game.
- *  Always returns false when a switch is needed: the current press is swallowed,
- *  and the user reopens the overlay from the correct game after restart. */
-export async function ensureCorrectGameForHotkey(store: Store<AppSettings>): Promise<boolean> {
-  // User typing in an overlay text field -- swallow so single-key hotkeys
-  // don't stomp the input. Otherwise if the overlay window itself is focused
-  // (user clicked into it), refocus PoE so the subsequent Ctrl+C reaches the
-  // game window.
-  if (isTypingInOverlay()) return false
-  if (getOverlayWindow()?.isFocused()) {
-    focusGameWindow()
-    return true
-  }
+ * `opts.dispatch` defaults to true. When explicitly false, this is a private read:
+ * the item is captured and returned to the caller alone. `evaluateAndSend` (which
+ * pushes `overlay-data` and hijacks the main overlay's view to 'item') and
+ * `preloadPriceCheck` (which warms the price-check pipeline) are both skipped, and
+ * since nothing is evaluated against a filter, the no-filter early return does not
+ * apply either - no filter needs to be loaded, and `no-filter-loaded` is not sent.
+ */
+export async function runMainHotkeyFlow(
+  store: Store<AppSettings>,
+  isElevated: () => boolean,
+  opts?: { showOverlay?: boolean; dispatch?: boolean },
+): Promise<PoeItem | null> {
+  const showOverlayFlag = opts?.showOverlay ?? true
+  const dispatchFlag = opts?.dispatch ?? true
 
-  const v = await detectFocusedPoeVersion()
-  if (v) {
-    // Relaunch when the focused game differs from the in-memory version OR from
-    // the version the overlay actually attached to at startup. The attach check
-    // is a backstop for onboarding exits that bypass finish-onboarding (e.g. the
-    // titlebar X): in-memory may already be PoE2 (so the version check passes)
-    // while the overlay is still bound to PoE1, so results never surface until a
-    // relaunch rebinds the native tracker.
-    if (v === getPoeVersion() && v === getOverlayAttachedVersion()) return true
-    requestGameSwitch(store, v).catch((err) => console.error('[game-switch]', err))
-    return false
-  }
-
-  // No PoE window has foreground focus. If the overlay target has focus, the
-  // game we're attached to is in the foreground, so we can proceed.
-  if (OverlayController.targetHasFocus) return true
-
-  // No PoE window has focus at all. Check if exactly one PoE variant has windows
-  // open anywhere on the desktop. If yes and it differs from the current profile,
-  // that's a strong signal the user is on the wrong game version.
-  const runningVersions = await detectOpenPoeVersions()
-  if (runningVersions.size === 1) {
-    const [runningVersion] = [...runningVersions]
-    if (runningVersion !== getPoeVersion()) {
-      requestGameSwitch(store, runningVersion).catch((err) => console.error('[game-switch]', err))
-      return false
+  if (dispatchFlag) {
+    const currentFilter = getCurrentFilter()
+    if (!currentFilter) {
+      getOverlayWindow()?.webContents.send('no-filter-loaded')
+      if (showOverlayFlag) showOverlay()
+      return null
     }
   }
 
-  return false
-}
-
-/**
- * Core copy-and-evaluate flow shared by the main hotkey and the plugin IPC handler.
- * Captures an item from the clipboard, dispatches it to the filter/price-check pipeline,
- * shows the overlay, and returns the parsed item (or null when nothing recognisable is
- * on the clipboard). Callers that want a specific overlay view should send the appropriate
- * IPC message before or after calling this.
- */
-export async function runMainHotkeyFlow(store: Store<AppSettings>, isElevated: () => boolean): Promise<PoeItem | null> {
-  const currentFilter = getCurrentFilter()
-  if (!currentFilter) {
-    getOverlayWindow()?.webContents.send('no-filter-loaded')
-    showOverlay()
-    return null
-  }
-
-  const captured = await captureItemFromClipboard(isElevated)
+  const captured = await captureItemFromClipboard(isElevated, { showOverlay: showOverlayFlag })
   if (!captured) return null
   const { item } = captured
 
-  evaluateAndSend(item)
-  preloadPriceCheck(item, store)
-  showOverlay()
+  if (dispatchFlag) {
+    evaluateAndSend(item)
+    preloadPriceCheck(item, store)
+  }
+  if (showOverlayFlag) showOverlay()
   return item
 }
 
@@ -493,7 +422,6 @@ export function createHotkeyHandler(store: Store<AppSettings>, isElevated: () =>
     hotkeyProcessing = true
 
     try {
-      if (!(await ensureCorrectGameForHotkey(store))) return
       lastCursorX = screen.getCursorScreenPoint().x
 
       // Flag the next overlay-data as "came from the filter hotkey" so the renderer
@@ -524,7 +452,6 @@ export function createPriceCheckHandler(store: Store<AppSettings>, isElevated: (
     hotkeyProcessing = true
 
     try {
-      if (!(await ensureCorrectGameForHotkey(store))) return
       lastCursorX = screen.getCursorScreenPoint().x
 
       const captured = await captureItemFromClipboard(isElevated)
@@ -540,14 +467,22 @@ export function createPriceCheckHandler(store: Store<AppSettings>, isElevated: (
 }
 
 /** Open the hovered item in Craft of Exile. Copies the item the same way a
- *  price-check does -- via Ctrl+Alt+C, so rawText is PoE's advanced-mod format,
- *  which is exactly what CoE's importer requires (it rejects a plain Ctrl+C copy)
- *  -- then opens craftofexile.com with that text pre-imported (?eimport=) and the
+ *  price-check does, so rawText is PoE's advanced-mod format -- exactly what CoE's
+ *  importer requires (it rejects a copy without the `{ ... Modifier }` headers).
+ *  Since #560 that is a plain Ctrl+C, which both games now answer with the advanced
+ *  description; on a client that still needs Alt held, advancedCopyTracker's probe in
+ *  captureItemFromClipboard re-copies with Alt and rawText is re-snapshotted from that
+ *  copy. Then opens craftofexile.com with the text pre-imported (?eimport=) and the
  *  calculator's game set from the active PoE version. Mirrors Exiled Exchange 2 /
  *  Awakened PoE Trade's "Open Craft of Exile" action. When nothing is hovered,
- *  captureItemFromClipboard surfaces the standard no-item hint and we open nothing. */
+ *  captureItemFromClipboard surfaces the standard no-item hint and we open nothing.
+ *
+ *  No focus/game gate here any more: #496 removed ensureCorrectGameForHotkey and made
+ *  hotkeys.ts's hotkeyContextIsActive() the single authority, which every app-macro
+ *  dispatch -- this handler's only entry point, via setAppMacroHandler -- passes
+ *  through. `_store` is kept only for signature symmetry with the sibling factories. */
 export function createOpenCraftOfExileHandler(
-  store: Store<AppSettings>,
+  _store: Store<AppSettings>,
   isElevated: () => boolean,
 ): () => Promise<void> {
   return async function onOpenCraftOfExile(): Promise<void> {
@@ -555,7 +490,6 @@ export function createOpenCraftOfExileHandler(
     hotkeyProcessing = true
 
     try {
-      if (!(await ensureCorrectGameForHotkey(store))) return
       lastCursorX = screen.getCursorScreenPoint().x
 
       const captured = await captureItemFromClipboard(isElevated)

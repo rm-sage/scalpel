@@ -1,5 +1,6 @@
 import type { PoeItem, PriceInfo } from '@shared/types'
 import type { ModTier } from '@shared/data/tiers/types'
+import type { ModSource } from '@shared/data/tiers/mod-sources'
 
 export type { Listing, BulkListing } from '../../shared/trade-types'
 
@@ -28,6 +29,9 @@ export interface StatFilter {
   premium?: boolean
   modTier?: number
   modRange?: { min: number; max: number }
+  /** Where the mod came from (influence, delve, temple, eldritch altar) when it isn't
+   *  an ordinary craftable affix. Renders as a small symbol beside the mod text. */
+  modSource?: ModSource
   /** Resolved tier ladder for scrubbable affixes (single-stat or trade-averaged,
    *  non-Unique). Attached by the main-process matcher; absent when not scrubbable. */
   tierLadder?: ModTier[]
@@ -47,6 +51,15 @@ export interface StatFilter {
   /** True when this mod has a fixed (non-rolled) value: advanced-mod range has min === max,
    *  or no ranges at all. Fixed mods are excluded from direction/bound math in overrides. */
   fixedRoll?: boolean
+  /** True for a Forbidden Shako-style randomized support row (matched into the
+   *  `indexable_support_*` family). Which supports the item rolled -- and how high --
+   *  IS the item's price, so Base mode keeps the producer's enabled state instead of
+   *  blanket-disabling it like an ordinary unique explicit (#564). */
+  randomSupport?: boolean
+  /** Mercenary Warrant support rows only: stat id of the skill this support sits
+   *  on. Set by the main process; the renderer uses it to indent the row under
+   *  its skill. */
+  mercenarySkillId?: string
 }
 
 export interface PriceCheckProps {

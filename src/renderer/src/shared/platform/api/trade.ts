@@ -6,6 +6,7 @@
  * check or trade screens.
  */
 
+import type { ExchangeDetails } from '@shared/contracts/exchange'
 import type { PoeItem } from '@shared/contracts/items'
 import type { PriceInfo } from '@shared/contracts/prices'
 
@@ -112,6 +113,7 @@ export function tradeSearch(
   queryId: string
   remainingIds: string[]
   loginRequiredPseudoIds?: string[]
+  loginRequiredMercenaryIds?: string[]
 }> {
   return window.api.tradeSearch(item, statFilters, searchOptions)
 }
@@ -120,6 +122,7 @@ export function bulkExchange(
   itemName: string,
   baseType: string,
   haveId?: string,
+  zanaMemory?: boolean,
 ): Promise<{
   total: number
   listings: Array<{
@@ -135,7 +138,7 @@ export function bulkExchange(
   }>
   queryId: string
 }> {
-  return window.api.bulkExchange(itemName, baseType, haveId)
+  return window.api.bulkExchange(itemName, baseType, haveId, zanaMemory)
 }
 
 export function checkBulkItem(
@@ -143,8 +146,13 @@ export function checkBulkItem(
   baseType: string,
   itemClass: string,
   rarity?: string,
+  zanaMemory?: boolean,
 ): Promise<boolean> {
-  return window.api.checkBulkItem(itemName, baseType, itemClass, rarity)
+  return window.api.checkBulkItem(itemName, baseType, itemClass, rarity, zanaMemory)
+}
+
+export function exchangeDetails(name: string): Promise<ExchangeDetails | null> {
+  return window.api.exchangeDetails(name)
 }
 
 export function fetchMoreListings(

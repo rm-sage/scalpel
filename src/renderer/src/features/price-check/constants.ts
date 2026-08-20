@@ -2,12 +2,10 @@ import { RARITY_COLORS, iconMap } from '../../shared/constants'
 import { formatPrice, getItemIcon } from '../../shared/utils'
 import { getCurrencyIconMap } from '../../shared/currency-icons'
 import { INFLUENCE_ICONS_BY_NAME, uniqueToBase, getItemSize } from '../../shared/item-display'
-import socketWhite from '../../assets/sockets/socket-white.png'
 import { MOD_COLORS } from '../../shared/trade-results/constants'
 
 export { RARITY_COLORS, iconMap }
 export { formatPrice, getItemIcon }
-export { socketWhite }
 export { getCurrencyIconMap }
 export { INFLUENCE_ICONS_BY_NAME, uniqueToBase, getItemSize }
 export { default as ninjaIcon } from '../../assets/other/poe-ninja.png'
@@ -31,10 +29,20 @@ export const CHIP_COLORS: Record<string, string> = {
   'pseudo.pseudo_number_of_empty_suffix_mods': '#4caf50',
   'misc.corrupted': '#ef5350',
   'misc.mirrored': '#8787FE',
+  'misc.sanctified': '#e7b356',
   'misc.identified': '#ffb74d',
+  'misc.exclude_enchanted': '#81c784',
+  'misc.exclude_elder': '#81c784',
 }
 
-export const TERNARY_CHIP_IDS = new Set(['misc.corrupted', 'misc.mirrored', 'misc.fractured'])
+export const TERNARY_CHIP_IDS = new Set([
+  'misc.corrupted',
+  'misc.mirrored',
+  'misc.fractured',
+  'misc.vestigial',
+  'misc.foulborn',
+  'misc.sanctified',
+])
 export const MINMAX_CHIP_IDS = new Set(['misc.ilvl'])
 
 export function getChipColor(id: string): string {

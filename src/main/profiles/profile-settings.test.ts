@@ -32,9 +32,40 @@ function makeStore(initial: Record<string, unknown>): Store<AppSettings> {
   } as unknown as Store<AppSettings>
 }
 
-function setupProfiles(): ReturnType<typeof initProfileStore> {
-  return initProfileStore(mkdtempSync(join(tmpdir(), 'scalpel-profiles-')))
+function setupProfiles(
+  readLeagues?: (variant: 1 | 2) => readonly string[] | undefined,
+): ReturnType<typeof initProfileStore> {
+  return initProfileStore(mkdtempSync(join(tmpdir(), 'scalpel-profiles-')), readLeagues)
 }
+
+describe('new profile league default', () => {
+  // The launch-time league refresh only migrates profiles that already exist,
+  // so a profile created after a rotation has to be born on the right league or
+  // it stays on the dead one forever.
+  const cached = {
+    1: ['Allflame', 'Hardcore Allflame', 'Ruthless Allflame', 'Standard', 'Hardcore', 'Ruthless'],
+    2: ['Runes of Aldur', 'HC Runes of Aldur', 'Standard', 'Hardcore'],
+  } as const
+
+  it('starts a new profile on the current softcore league from the cached list', () => {
+    setupProfiles((v) => cached[v])
+    const store = makeStore({})
+
+    expect(ensureProfileForGame(store, 1).league).toBe('Allflame')
+    expect(ensureProfileForGame(store, 2).league).toBe('Runes of Aldur')
+  })
+
+  it('uses the bundled list when no refresh has landed yet', () => {
+    const profiles = setupProfiles()
+    expect(profiles.createDefault(1).league).toBe('Allflame')
+    expect(profiles.createDefault(2).league).toBe('Runes of Aldur')
+  })
+
+  it('gives a manually created profile the current league too', () => {
+    const profiles = setupProfiles((v) => cached[v])
+    expect(profiles.createProfile({ name: 'Trade', gameVariant: 1 }).league).toBe('Allflame')
+  })
+})
 
 describe('profile-settings', () => {
   it('writes active profile-backed settings to the profile file with edit reason', () => {
@@ -149,6 +180,27 @@ describe('profile-settings', () => {
       expect(change3.reason).toBe('edit')
     }
     expect(profiles.getProfile(poe1.id)?.league).toBe('Standard')
+  })
+
+  it('prefers the active profile over a stale last-used id for the same variant', () => {
+    const profiles = setupProfiles()
+    const activePoe2 = { ...profiles.createDefault(2), league: 'Runes of Aldur' }
+    const staleLast = { ...profiles.createDefault(2), league: 'Other' }
+    profiles.saveProfile(activePoe2)
+    profiles.saveProfile(staleLast)
+
+    const store = makeStore({
+      [PROFILE_VERSION_KEY]: 1,
+      [ACTIVE_PROFILE_ID_KEY]: activePoe2.id,
+      [LAST_PROFILE_ID_POE2_KEY]: staleLast.id,
+    })
+
+    const changes = writeLastUsedProfileSettingByGameVariant(store, 2, 'league', '')
+
+    expect(changes).toHaveLength(1)
+    expect(profiles.getProfile(activePoe2.id)?.league).toBe('')
+    expect(profiles.getProfile(staleLast.id)?.league).toBe('Other')
+    expect(store.get(LAST_PROFILE_ID_POE2_KEY)).toBe(activePoe2.id)
   })
 
   it('switches game variant with activation reason from target profile', () => {

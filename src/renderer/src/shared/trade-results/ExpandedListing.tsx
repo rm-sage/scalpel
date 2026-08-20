@@ -2,8 +2,9 @@ import { Star } from '@icon-park/react'
 import type { Listing } from '../trade-types'
 import { ATZOATL_KEY_ROOMS } from '@shared/data/trade/atzoatl'
 import { ModLine } from './ModLine'
-import { SOCKET_IMGS, RARITY_COLORS, MOD_COLORS, getItemSize, socketLink, socketWhite } from './constants'
+import { RARITY_COLORS, MOD_COLORS, getItemSize } from './constants'
 import { RuneSocketOverlayPoe2 } from '../../components/sockets/RuneSocketOverlay.poe2'
+import { SocketOverlayPoe1, type SocketSpec } from '../../components/sockets/SocketOverlay.poe1'
 import { usePoeVersion } from '../poe-version-context'
 import { isSkillGem } from '@shared/poe-item'
 
@@ -27,10 +28,20 @@ function copyItemToClipboard(d: Listing['itemData'] & {}, rarity: string, btn: H
   if (d.name && d.name !== d.baseType) lines.push(d.name)
   if (d.baseType) lines.push(d.baseType)
   lines.push('--------')
+  if (d.chartZone) lines.push(d.chartZone)
   if (d.ilvl) lines.push(`Item Level: ${d.ilvl}`)
+  if (d.memoryStrands != null) lines.push(`Memory Strands: ${d.memoryStrands}`)
+  if (d.intangibility != null) lines.push(`Intangibility: ${d.intangibility}%`)
   if (d.grantedSkills?.length) {
     lines.push('--------')
     for (const gs of d.grantedSkills) lines.push(`Grants Skill: ${gs.text}`)
+  }
+  // Warrants print one section per skill, supports beneath it with the tier -- copy
+  // it back the same way so a pasted listing parses like an in-game Ctrl+C.
+  for (const skill of d.mercenarySkills ?? []) {
+    lines.push('--------')
+    lines.push(skill.name)
+    for (const sup of skill.supports) lines.push(sup.tier != null ? `${sup.name} (Tier: ${sup.tier})` : sup.name)
   }
   if (d.implicitMods?.length) {
     lines.push('--------')
@@ -113,6 +124,18 @@ export function ExpandedListing({ listing: l, itemClass, itemName, itemRarity }:
             {d.ilvl ? `${d.name !== d.baseType ? ' ' : ''}(iLvl ${d.ilvl})` : ''}
           </div>
         )}
+        {d.memoryStrands != null && (
+          <div className="text-[10px] text-text-dim">
+            Memory Strands: <span className="text-[#00e0be] font-semibold">{d.memoryStrands}</span>
+          </div>
+        )}
+        {/* Same green the price-check row uses for this filter (MOD_COLORS.gem), so the
+         *  number reads as the same thing in both places. */}
+        {d.intangibility != null && (
+          <div className="text-[10px]" style={{ color: MOD_COLORS.gem }}>
+            Intangibility: <span className="font-semibold">{d.intangibility}%</span>
+          </div>
+        )}
         {/* Map properties (tier, IIQ, pack size, etc.) */}
         {d.mapProperties && d.mapProperties.length > 0 && (
           <div className="mt-1 pt-1 w-full flex flex-col gap-[1px]" style={MOD_SEPARATOR}>
@@ -160,9 +183,10 @@ export function ExpandedListing({ listing: l, itemClass, itemName, itemRarity }:
           </div>
         )}
 
-        {/* Heist contract info */}
-        {(d.areaLevel || d.heistJob) && (
+        {/* Chart zone / Heist contract info */}
+        {(d.chartZone || d.areaLevel || d.heistJob) && (
           <div className="text-[10px] text-text-dim flex gap-2">
+            {d.chartZone && <span className="text-text font-semibold">{d.chartZone}</span>}
             {d.areaLevel && (
               <span>
                 Area Level: <span className="text-text font-semibold">{d.areaLevel}</span>
@@ -252,6 +276,33 @@ export function ExpandedListing({ listing: l, itemClass, itemName, itemRarity }:
           </div>
         )}
 
+        {/* Mercenary Warrant kit: one row per skill (with its game icon), its
+            supports listed under it with the tier that is part of their trade
+            identity. This block IS the item on a warrant -- there are no mods. */}
+        {d.mercenarySkills && d.mercenarySkills.length > 0 && (
+          <div className="mt-1 pt-1 w-full flex flex-col gap-[3px]" style={MOD_SEPARATOR}>
+            {d.mercenarySkills.map((skill, si) => (
+              <div key={si} className="flex flex-col items-center">
+                <div
+                  className="text-[10px] flex items-center justify-center gap-1 font-semibold"
+                  style={{ color: MOD_COLORS.skill }}
+                >
+                  {skill.icon && <img src={skill.icon} alt="" className="w-4 h-4 object-contain" />}
+                  <span>{skill.name}</span>
+                </div>
+                {skill.supports.map((sup, ui) => (
+                  <div key={ui} className="text-[10px] flex items-center justify-center gap-1 text-text-dim">
+                    <span>{sup.name}</span>
+                    {sup.tier != null && (
+                      <span className="rounded-[2px] bg-black/35 px-[3px] text-[9px] leading-[13px]">T{sup.tier}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Granted skills */}
         {d.grantedSkills && d.grantedSkills.length > 0 && (
           <div className="mt-1 pt-1 w-full flex flex-col gap-[2px]" style={MOD_SEPARATOR}>
@@ -317,10 +368,11 @@ export function ExpandedListing({ listing: l, itemClass, itemName, itemRarity }:
         )}
 
         {/* Status flags */}
-        {(d.identified === false || d.corrupted || d.mirrored) && (
+        {(d.identified === false || d.corrupted || d.mirrored || d.sanctified) && (
           <div className="mt-1 pt-1 w-full flex flex-col gap-[2px]" style={MOD_SEPARATOR}>
             {d.identified === false && <div className="text-[10px] text-[#ef5350] font-semibold">Unidentified</div>}
             {d.mirrored && <div className="text-[10px] text-[#8787FE] font-semibold">Mirrored</div>}
+            {d.sanctified && <div className="text-[10px] text-[#e7b356] font-semibold">Sanctified</div>}
             {d.corrupted && <div className="text-[10px] text-[#ef5350] font-semibold">Corrupted</div>}
           </div>
         )}
@@ -335,121 +387,17 @@ function SocketOverlay({
   itemClass,
   itemName,
 }: {
-  sockets: Array<{ group: number; sColour: string }>
+  sockets: SocketSpec[]
   itemClass: string
   itemName: string
-}): JSX.Element {
+}): JSX.Element | null {
   const poeVersion = usePoeVersion()
-  const n = sockets.length
   const sz = 20,
     gap = 5
 
   if (poeVersion === 2) {
-    return <RuneSocketOverlayPoe2 count={n} itemClass={itemClass} itemName={itemName} sz={sz} gap={gap} />
+    return <RuneSocketOverlayPoe2 count={sockets.length} itemClass={itemClass} itemName={itemName} sz={sz} gap={gap} />
   }
 
-  const is1Wide = n <= 3 && !['Helmets', 'Body Armours', 'Gloves', 'Boots', 'Shields'].includes(itemClass)
-
-  if (is1Wide || n <= 1) {
-    return (
-      <>
-        {sockets.map((s, si) => {
-          const linked = si > 0 && sockets[si - 1].group === s.group
-          return (
-            <div key={si} className="flex flex-col items-center">
-              {linked && (
-                <img
-                  src={socketLink}
-                  alt=""
-                  style={{
-                    width: 5,
-                    height: gap,
-                    objectFit: 'fill',
-                    transform: 'rotate(90deg)',
-                    filter: 'brightness(2)',
-                  }}
-                />
-              )}
-              {!linked && si > 0 && <div style={{ height: gap }} />}
-              <img src={SOCKET_IMGS[s.sColour] ?? socketWhite} alt="" style={{ width: sz, height: sz }} />
-            </div>
-          )
-        })}
-      </>
-    )
-  }
-
-  const positions: Array<[number, number]> = []
-  for (let row = 0; row < Math.ceil(n / 2); row++) {
-    if (row % 2 === 0) {
-      positions.push([0, row])
-      if (positions.length < n) positions.push([1, row])
-    } else {
-      positions.push([1, row])
-      if (positions.length < n) positions.push([0, row])
-    }
-  }
-  const cellW = sz + gap * 2,
-    cellH = sz + gap * 2
-  const totalW = cellW * 2,
-    totalH = cellH * Math.ceil(n / 2)
-
-  return (
-    <div className="relative overflow-visible" style={{ width: totalW, height: totalH }}>
-      {sockets.map((s, si) => {
-        const [col, row] = positions[si]
-        const x = col * cellW + gap,
-          y = row * cellH + gap
-        let linkEl = null
-        if (si > 0 && sockets[si - 1].group === s.group) {
-          const [pc, pr] = positions[si - 1]
-          if (pr === row) {
-            linkEl = (
-              <img
-                key={`l${si}`}
-                src={socketLink}
-                alt=""
-                style={{
-                  position: 'absolute',
-                  left: Math.min(col, pc) * cellW + gap + sz,
-                  top: y + (sz - 5) / 2,
-                  width: gap * 2,
-                  height: 5,
-                  objectFit: 'fill',
-                  filter: 'brightness(2)',
-                }}
-              />
-            )
-          } else {
-            linkEl = (
-              <img
-                key={`l${si}`}
-                src={socketLink}
-                alt=""
-                style={{
-                  position: 'absolute',
-                  left: col * cellW + gap + (sz - gap * 2) / 2,
-                  top: Math.min(row, pr) * cellH + gap + sz + (gap * 2 - 5) / 2,
-                  width: gap * 2,
-                  height: 5,
-                  objectFit: 'fill',
-                  transform: 'rotate(90deg)',
-                  filter: 'brightness(2)',
-                }}
-              />
-            )
-          }
-        }
-        return [
-          linkEl,
-          <img
-            key={si}
-            src={SOCKET_IMGS[s.sColour] ?? socketWhite}
-            alt=""
-            style={{ position: 'absolute', left: x, top: y, width: sz, height: sz }}
-          />,
-        ]
-      })}
-    </div>
-  )
+  return <SocketOverlayPoe1 sockets={sockets} itemClass={itemClass} itemName={itemName} sz={sz} gap={gap} linkPx={5} />
 }

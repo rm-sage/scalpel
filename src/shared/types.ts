@@ -13,6 +13,7 @@ export type {
   ConditionResult,
   TradePriceOption,
   AdaptiveMode,
+  AffixesPrechecked,
 } from './contracts/core'
 
 export type {
@@ -25,9 +26,11 @@ export type {
   FilterListEntry,
   AdvancedMod,
   PoeItem,
+  MercenarySkill,
   Zone,
   EvaluatedCondition,
   MatchResult,
+  RemovalPreview,
   TierSibling,
   TierGroup,
   StackSizeBreakpoint,

@@ -172,6 +172,37 @@ function buildPseudoMap(): void {
     // the negative value into the player's Total Elemental Resistance pseudo.
     // Exposure mods never feed any player pseudo, so skip them outright.
     if (/\bExposure\b/i.test(entry.text)) continue
+    // "Minions have +#% to all Elemental Resistances" (and totems/allies/etc.)
+    // is likewise not player resistance. Bone Rings and other minion gear were
+    // folding those rolls into Total Elemental Resistance (e.g. 37 all-res × 3).
+    if (
+      /\b(?:Minions?|Totems?|Spectres?|Allies|Companions?)\b/i.test(entry.text) &&
+      /\bResistances?\b/i.test(entry.text)
+    )
+      continue
+    // "Nearby Enemies have -#% to <Ele> Resistance" (Redeemer "of the Conquest"
+    // and its cold/lightning/chaos twins) is an enemy debuff, not player
+    // resistance. The catalog text prints "+#%" even though the rolled value is
+    // negative, so folding it in both understated the pseudo total and filtered
+    // on resistance the item does not grant (#544). Pattern is "Enemies have"
+    // rather than a bare "Enem" -- "While a Unique Enemy is in your Presence,
+    // +#% to <Ele> Resistance" IS genuine player resistance and must keep
+    // contributing.
+    if (/\bEnemies have\b/i.test(entry.text) && /\bResistances?\b/i.test(entry.text)) continue
+    // PoE1: "Passive Skills in Radius also grant +#% to Chaos Resistance" (The
+    // Light of Meaning) and "Added Small Passive Skills also grant: +#% to
+    // Chaos Resistance" (cluster jewels) put the stat on tree passives, not on
+    // the wearer, so GGG leaves them out of its pseudo totals -- 4517 live
+    // listings carry the cluster chaos-res mod and none of them satisfy
+    // pseudo_total_chaos_resistance >= 1. Folding them in emitted a pseudo chip
+    // that matched nothing AND suppressed the real mod row, so the whole search
+    // came back empty. Same shape hits the life and mana grants.
+    //
+    // PoE2 is deliberately excepted: its pseudos DO count the radius grants (a
+    // Time-Lost Diamond whose only chaos source is +3% in radius satisfies
+    // trade2's pseudo_total_chaos_resistance at min 3 and drops out at min 4),
+    // so excluding them there would understate the total the site computes.
+    if (getPoeVersion() === 1 && /\bPassive Skills\b/i.test(entry.text) && /\bgrants?\b/i.test(entry.text)) continue
     for (const [pattern, pseudoId, pseudoLabel, multiplier, opts] of pseudoMappings) {
       if (pattern.test(entry.text)) {
         if (!PSEUDO_CONTRIBUTIONS[entry.id]) PSEUDO_CONTRIBUTIONS[entry.id] = []

@@ -1,15 +1,18 @@
 import { useState, useMemo, useEffect } from 'react'
 import type { MapCardEntry, Props, TierStyle } from './types'
 import { cards, regularMaps, DROPPOOL_WEIGHT, DROPS_PER_MAP } from './constants'
+import { BUNDLED_WEIGHTS, fetchRemoteWeights, resolveWeights, type CardWeights } from './weights'
 import { computeEvBarRGB } from './utils'
 import { MapInfoBlock } from './MapInfoBlock'
 import { CardChips } from './CardChips'
 import { ExpandedCardList } from './ExpandedCardList'
 import { zebraRowBg } from '../../shared/utils'
+import { WRAECLAST_CARDS_URL } from '@shared/endpoints'
 
 export function DivCardExplorer({ onSelectItem }: Props): JSX.Element {
   const [prices, setPrices] = useState<Record<string, number>>({})
   const [divineRate, setDivineRate] = useState(0)
+  const [weights, setWeights] = useState<CardWeights>(BUNDLED_WEIGHTS)
   const [loading, setLoading] = useState(true)
   const [expandedMap, setExpandedMap] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -27,6 +30,21 @@ export function DivCardExplorer({ onSelectItem }: Props): JSX.Element {
   })
 
   useEffect(() => window.api.onFilterChanged(() => setFilterVersion((v) => v + 1)), [])
+
+  // Live drop weights from wraeclast.cards. Silent on failure -- BUNDLED_WEIGHTS
+  // is a complete dataset, just a snapshot old. Dev skips the remote entirely so
+  // a local edit to div-card-weights.json is authoritative without a sync run,
+  // matching how premium-mods and tier-data treat their bundled copies.
+  useEffect(() => {
+    if (import.meta.env.DEV) return
+    let cancelled = false
+    fetchRemoteWeights().then((remote) => {
+      if (!cancelled && remote) setWeights(remote)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Filter-derived tier/visibility data -- refetched when the filter reloads.
   useEffect(() => {
@@ -78,20 +96,23 @@ export function DivCardExplorer({ onSelectItem }: Props): JSX.Element {
     }
   }, [])
 
+  // wraeclast weights over the Maps of Exile card records
+  const weightedCards = useMemo(() => resolveWeights(cards, weights), [weights])
+
   // Merge live prices into card data
   const pricedCards = useMemo(() => {
     // Hard-coded overrides for cards with unreliable ninja prices
     const priceOverrides: Record<string, (div: number) => number> = {
       "Brother's Gift": (div) => div * 5,
     }
-    return cards.map((c) => {
+    return weightedCards.map((c) => {
       const override = priceOverrides[c.name]
       return {
         ...c,
         price: override ? override(divineRate || 200) : (prices[c.name] ?? c.price),
       }
     })
-  }, [prices, divineRate])
+  }, [weightedCards, prices, divineRate])
 
   // Outlier detection: IQR-based for t3+ tiers
   const outlierCards = useMemo(() => {
@@ -140,10 +161,10 @@ export function DivCardExplorer({ onSelectItem }: Props): JSX.Element {
         if (card.price <= 0) continue
         const dropsHere = card.drop.all_areas || card.drop.areas.some((a) => m.ids.includes(a))
         if (!dropsHere) continue
-        const hasWeight = card.weight != null && card.weight > 0
+        const weight = card.weight ?? 0
         const isFlagged = flaggedCards.has(card.name)
-        const dropRate = hasWeight ? (card.weight / DROPPOOL_WEIGHT) * DROPS_PER_MAP : 0
-        const cardEv = hasWeight && !isFlagged ? card.price * dropRate : 0
+        const dropRate = weight > 0 ? (weight / DROPPOOL_WEIGHT) * DROPS_PER_MAP : 0
+        const cardEv = weight > 0 && !isFlagged ? card.price * dropRate : 0
         mapCards.push({ card, dropRate, cardEv })
       }
       mapCards.sort((a, b) => b.cardEv - a.cardEv)
@@ -191,7 +212,18 @@ export function DivCardExplorer({ onSelectItem }: Props): JSX.Element {
       <div className="bg-bg-card px-3 py-[10px] flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className="section-title">Div Card Explorer</span>
-          {loading && <span className="text-[10px] text-text-dim">Fetching prices...</span>}
+          <div className="flex items-center gap-[8px] text-[10px] text-text-dim">
+            {loading && <span>Fetching prices...</span>}
+            <span>
+              Weights{' '}
+              <span
+                onClick={() => window.api.openExternal(WRAECLAST_CARDS_URL)}
+                className="cursor-pointer hover:underline text-accent"
+              >
+                wraeclast.cards
+              </span>
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-[6px]">
@@ -254,6 +286,7 @@ export function DivCardExplorer({ onSelectItem }: Props): JSX.Element {
                     onSelectItem?.()
                   }}
                   onToggleFlag={toggleFlag}
+                  mapName={entry.map.name}
                 />
               )}
             </div>

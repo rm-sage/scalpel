@@ -1,7 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useRegexTrade } from './useRegexTrade'
 import { MAP_MODS, DANGER_COLORS, DANGER_LABELS, NIGHTMARE_REGROUPED, type Danger } from '@shared/data/regex/map-mods'
+import { DEFAULT_MAP_STATE, sanitizeMapState, type MapStateSettings } from '@shared/data/regex/map-state'
 import { buildMapRegex } from './regex-engine'
+import { buildMapStateRegex } from './map-state-regex'
 import { buildQualifierRegex, QUALIFIERS, QUALIFIER_GROUPS, type QualifierValues } from './Qualifiers'
 import {
   AddOne,
@@ -15,15 +17,16 @@ import {
   Search,
   CloseSmall,
 } from '@icon-park/react'
-import { TAB_COLORS, loadSet, loadStorage, useRegexKey } from './mapmods-helpers'
+import { TAB_COLORS, RegexCheckbox, loadSet, loadStorage, useRegexKey } from './mapmods-helpers'
 import { FilterChip } from '../../components/primitives/FilterChip'
+import { PoeReImportPanel } from './PoeReImportPanel'
+import poereIconTight from '../../assets/other/poere-logo-tight.svg'
 import { TradeResults } from './TradeResults'
 import { MAP_TIER_ICONS, ORIGINATOR_TIER_ICONS, TierPicker } from './TierPicker'
 import { ModList } from './ModList'
 import { ScrubInput } from '../../components/primitives/ScrubInput'
 import { generatePresetTags } from './preset-tags'
 import { InfoChip } from '../../shared/InfoChip'
-import { useAuth } from '../../shared/use-auth'
 import type { RegexPreset } from '@shared/types'
 import type { GeneratorHandle, GeneratorProps } from './generator-types'
 import { zebraRowBg } from '../../shared/utils'
@@ -35,7 +38,7 @@ type WantMode = 'any' | 'all'
 
 /** Maps-scoped panel state -- mutually exclusive with the container's save/load panels
  *  via the shared-panel plumbing. */
-type MapsPanel = 'search' | 'tier' | 'trade' | null
+type MapsPanel = 'search' | 'tier' | 'trade' | 'import' | null
 
 export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(function MapsGenerator(
   {
@@ -59,6 +62,9 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
     loadStorage(key('map-want-mode'), 'any' as WantMode, (s) => s as WantMode),
   )
   const [qualifiers, setQualifiers] = useState<QualifierValues>(() => loadStorage(key('qualifiers'), {}))
+  const [mapState, setMapState] = useState<MapStateSettings>(() =>
+    loadStorage(key('map-state'), DEFAULT_MAP_STATE, (s) => sanitizeMapState(JSON.parse(s))),
+  )
   const [optimizeNumbers, setOptimizeNumbers] = useState(() => loadStorage(key('optimize'), true, (s) => s !== 'false'))
   const [showNightmare, setShowNightmare] = useState(() => loadStorage(key('nightmare'), false, (s) => s === 'true'))
 
@@ -75,6 +81,9 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
     localStorage.setItem(key('qualifiers'), JSON.stringify(qualifiers))
   }, [qualifiers, key])
   useEffect(() => {
+    localStorage.setItem(key('map-state'), JSON.stringify(mapState))
+  }, [mapState, key])
+  useEffect(() => {
     localStorage.setItem(key('nightmare'), String(showNightmare))
   }, [showNightmare, key])
   useEffect(() => {
@@ -86,6 +95,7 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
   const searchOpen = panel === 'search'
   const showTierPicker = panel === 'tier'
   const showTradeResults = panel === 'trade'
+  const showImport = panel === 'import'
   // Tell the container to collapse Save/Load whenever one of this generator's own
   // panels opens, so only one chip is open at a time across the row. Ref keeps the
   // callback identity out of the effect deps.
@@ -111,8 +121,6 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
   // ---- Trade state ---------------------------------------------------------
   const trade = useRegexTrade()
   const [expandedListing, setExpandedListing] = useState<string | null>(null)
-  const [actionStatus, setActionStatus] = useState<Record<string, 'pending' | 'success' | 'failed'>>({})
-  const { loggedIn } = useAuth()
   const [tradeOriginator, setTradeOriginator] = useState(false)
   const [tradeCorrupted8mod, setTradeCorrupted8mod] = useState(false)
 
@@ -164,7 +172,8 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
   const wantMods = MAP_MODS.filter((m) => want.has(m.id))
   const qualifierRegex = buildQualifierRegex(qualifiers)
   const modRegex = buildMapRegex(avoidMods, wantMods, wantMode)
-  const regex = [qualifierRegex, modRegex].filter(Boolean).join(' ')
+  const mapStateRegex = buildMapStateRegex(mapState)
+  const regex = [qualifierRegex, modRegex, mapStateRegex].filter(Boolean).join(' ')
   const qualifierCount = QUALIFIERS.filter((q) => qualifiers[q.id] != null && qualifiers[q.id]! > 0).length
   const hasMoreQualifier = ['morecurrency', 'morescarabs', 'moremaps'].some(
     (k) => qualifiers[k] != null && qualifiers[k]! > 0,
@@ -184,13 +193,12 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
   }, [onAutoTagsChange])
 
   useEffect(() => {
-    onAutoTagsChangeRef.current(generatePresetTags({ avoid, want, qualifiers }))
-  }, [avoid, want, qualifiers])
+    onAutoTagsChangeRef.current(generatePresetTags({ avoid, want, qualifiers, mapState }))
+  }, [avoid, want, qualifiers, mapState])
 
   // ---- Trade search --------------------------------------------------------
   const searchMapTrade = async (tier: number, nightmare: boolean): Promise<void> => {
     setExpandedListing(null)
-    setActionStatus({})
     const avoidTexts = MAP_MODS.filter((m) => avoid.has(m.id)).map((m) => m.text)
     const wantTexts = MAP_MODS.filter((m) => want.has(m.id)).map((m) => m.text)
     const qualObj: Record<string, number> = {}
@@ -212,6 +220,17 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
     setPanel('trade')
   }
 
+  // Hydrate every piece of Maps state a preset carries. Shared by the container's
+  // load-a-saved-preset path and the poe.re import, which builds the same shape.
+  const hydrate = (preset: RegexPreset): void => {
+    setAvoid(new Set(preset.avoid))
+    setWant(new Set(preset.want))
+    setWantMode(preset.wantMode)
+    setQualifiers(preset.qualifiers)
+    setShowNightmare(preset.nightmare)
+    setMapState(sanitizeMapState(preset.mapState))
+  }
+
   // ---- Imperative handle ---------------------------------------------------
   useImperativeHandle(
     ref,
@@ -226,18 +245,13 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
           number
         >,
         nightmare: showNightmare,
+        mapState,
       }),
-      applyPreset: (preset: RegexPreset) => {
-        setAvoid(new Set(preset.avoid))
-        setWant(new Set(preset.want))
-        setWantMode(preset.wantMode)
-        setQualifiers(preset.qualifiers)
-        setShowNightmare(preset.nightmare)
-      },
+      applyPreset: hydrate,
       // Maps presets match on sorted auto-tag text set (ignoring user custom tags).
       matchesPreset: (preset: RegexPreset) => {
         if ((preset.generator ?? 'maps') !== 'maps') return false
-        const fresh = generatePresetTags({ avoid, want, qualifiers })
+        const fresh = generatePresetTags({ avoid, want, qualifiers, mapState })
           .map((t) => t.text)
           .sort()
           .join('|')
@@ -249,7 +263,7 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
         return fresh === saved
       },
     }),
-    [avoid, want, wantMode, qualifiers, showNightmare],
+    [avoid, want, wantMode, qualifiers, showNightmare, mapState],
   )
 
   // ---- Collapse helpers ----------------------------------------------------
@@ -298,12 +312,20 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
           {sharedSaveChip}
           {sharedLoadChip}
           <FilterChip
+            label="Import"
+            icon={poereIconTight}
+            active={showImport}
+            solidInactive
+            onClick={() => openPanel('import')}
+          />
+          <FilterChip
             label={
               <>
                 <Buy size={12} theme="outline" fill="currentColor" /> {trade.searching ? 'Searching...' : 'Trade'}
               </>
             }
             active={showTierPicker || showTradeResults}
+            solidInactive={!showTierPicker && !showTradeResults && regex.trim().length > 0}
             onClick={() => {
               if (showTradeResults) {
                 setPanel(null)
@@ -339,6 +361,11 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
             )}
           </div>
         </div>
+
+        {/* poe.re profile import drawer. Applies straight to Maps state rather than
+            going through the container's loadPreset, so pasting an export does not
+            open an editing session against a preset id that was never saved. */}
+        <PoeReImportPanel open={showImport} onImport={hydrate} />
 
         {/* Shared save panel (collapsible). */}
         {sharedSavePanel}
@@ -379,6 +406,8 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
         wantMode={wantMode}
         setWantMode={setWantMode}
         qualifiers={qualifiers}
+        mapState={mapState}
+        setMapState={setMapState}
         search={search}
         qualCollapsed={qualCollapsed}
         setQualCollapsed={setQualCollapsed}
@@ -399,9 +428,6 @@ export const MapsGenerator = forwardRef<GeneratorHandle, GeneratorProps>(functio
           expandedListing,
           setExpandedListing,
           priceChipMinWidth,
-          loggedIn,
-          actionStatus,
-          setActionStatus,
           rateLimitTiers: trade.rateLimitTiers,
         }}
       />
@@ -429,6 +455,8 @@ interface MapsGeneratorBodyProps {
   wantMode: WantMode
   setWantMode: React.Dispatch<React.SetStateAction<WantMode>>
   qualifiers: QualifierValues
+  mapState: MapStateSettings
+  setMapState: React.Dispatch<React.SetStateAction<MapStateSettings>>
   search: string
   qualCollapsed: Set<string>
   setQualCollapsed: React.Dispatch<React.SetStateAction<Set<string>>>
@@ -455,6 +483,8 @@ function MapsGeneratorBody({
   wantMode,
   setWantMode,
   qualifiers,
+  mapState,
+  setMapState,
   search,
   qualCollapsed,
   setQualCollapsed,
@@ -688,6 +718,12 @@ function MapsGeneratorBody({
               </div>
             )
           })}
+          <MapStateGroup
+            mapState={mapState}
+            setMapState={setMapState}
+            collapsed={qualCollapsed.has('Map State')}
+            setQualCollapsed={setQualCollapsed}
+          />
         </div>
       )}
 
@@ -712,5 +748,174 @@ function MapsGeneratorBody({
         />
       )}
     </>
+  )
+}
+
+// ============================================================================
+// Map State group -- poe.re's rarity/corrupted/unidentified filters. Small local
+// row helpers modeled on WaystonesGenerator.tsx's ToggleRow, using this file's own
+// zebraRowBg striping (rather than an `alt` boolean) to match its neighboring
+// qualifier rows.
+// ============================================================================
+
+interface MapStateGroupProps {
+  mapState: MapStateSettings
+  setMapState: React.Dispatch<React.SetStateAction<MapStateSettings>>
+  collapsed: boolean
+  setQualCollapsed: React.Dispatch<React.SetStateAction<Set<string>>>
+}
+
+function MapStateGroup({ mapState, setMapState, collapsed, setQualCollapsed }: MapStateGroupProps): JSX.Element {
+  const rarityCount = [mapState.rarityNormal, mapState.rarityMagic, mapState.rarityRare].filter(Boolean).length
+  const rarityActive = rarityCount > 0 && !(rarityCount === 3 && mapState.rarityInclude)
+  const activeCount =
+    (mapState.corrupted !== 'off' ? 1 : 0) + (mapState.unidentified !== 'off' ? 1 : 0) + (rarityActive ? 1 : 0)
+
+  return (
+    <div>
+      <div
+        className="flex items-center gap-2 px-3 py-[8px] sticky-group-header cursor-pointer select-none sticky top-0 z-[1]"
+        style={{ height: 39, boxSizing: 'border-box' }}
+        onClick={() =>
+          setQualCollapsed((prev) => {
+            const next = new Set(prev)
+            if (next.has('Map State')) next.delete('Map State')
+            else next.add('Map State')
+            return next
+          })
+        }
+      >
+        <span className="text-[10px] uppercase tracking-wider font-bold flex-1 text-text">Map State</span>
+        {activeCount > 0 && (
+          <InfoChip color={TAB_COLORS.qualifiers}>
+            <span className="font-bold">{activeCount}</span>
+          </InfoChip>
+        )}
+        {collapsed ? (
+          <Right size={12} theme="two-tone" fill={['currentColor', 'currentColor']} className="text-text-dim" />
+        ) : (
+          <Down size={12} theme="two-tone" fill={['currentColor', 'currentColor']} className="text-text-dim" />
+        )}
+      </div>
+      {!collapsed && (
+        <>
+          <MapStateFilterRow
+            index={0}
+            label="Filter corrupted"
+            active={mapState.corrupted !== 'off'}
+            onToggle={() =>
+              setMapState((prev) => ({ ...prev, corrupted: prev.corrupted === 'off' ? 'include' : 'off' }))
+            }
+            includeActive={mapState.corrupted === 'include'}
+            excludeActive={mapState.corrupted === 'exclude'}
+            onInclude={() => setMapState((prev) => ({ ...prev, corrupted: 'include' }))}
+            onExclude={() => setMapState((prev) => ({ ...prev, corrupted: 'exclude' }))}
+          />
+          <ToggleRow
+            index={1}
+            label="Normal Maps"
+            checked={mapState.rarityNormal}
+            onChange={() => setMapState((prev) => ({ ...prev, rarityNormal: !prev.rarityNormal }))}
+          />
+          <ToggleRow
+            index={2}
+            label="Magic Maps"
+            checked={mapState.rarityMagic}
+            onChange={() => setMapState((prev) => ({ ...prev, rarityMagic: !prev.rarityMagic }))}
+          />
+          <ToggleRow
+            index={3}
+            label="Rare Maps"
+            checked={mapState.rarityRare}
+            onChange={() => setMapState((prev) => ({ ...prev, rarityRare: !prev.rarityRare }))}
+          />
+          <div className="flex items-center gap-2 px-3 py-[6px]" style={{ background: zebraRowBg(4) }}>
+            <span className="text-[11px] flex-1 text-text-dim">Rarity match</span>
+            <FilterChip
+              label="Include"
+              active={mapState.rarityInclude}
+              onClick={() => setMapState((prev) => ({ ...prev, rarityInclude: true }))}
+              color={TAB_COLORS.qualifiers}
+            />
+            <FilterChip
+              label="Exclude"
+              active={!mapState.rarityInclude}
+              onClick={() => setMapState((prev) => ({ ...prev, rarityInclude: false }))}
+              color={TAB_COLORS.qualifiers}
+            />
+          </div>
+          <MapStateFilterRow
+            index={5}
+            label="Filter unidentified"
+            active={mapState.unidentified !== 'off'}
+            onToggle={() =>
+              setMapState((prev) => ({ ...prev, unidentified: prev.unidentified === 'off' ? 'exclude' : 'off' }))
+            }
+            includeActive={mapState.unidentified === 'include'}
+            excludeActive={mapState.unidentified === 'exclude'}
+            onInclude={() => setMapState((prev) => ({ ...prev, unidentified: 'include' }))}
+            onExclude={() => setMapState((prev) => ({ ...prev, unidentified: 'exclude' }))}
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+function ToggleRow({
+  index,
+  label,
+  checked,
+  onChange,
+}: {
+  index: number
+  label: string
+  checked: boolean
+  onChange: () => void
+}): JSX.Element {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-[6px] cursor-pointer select-none"
+      style={{ background: zebraRowBg(index) }}
+      onClick={onChange}
+    >
+      <RegexCheckbox checked={checked} color={TAB_COLORS.qualifiers} />
+      <span className="text-[11px] flex-1" style={{ color: checked ? 'var(--text)' : 'var(--text-dim)' }}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function MapStateFilterRow({
+  index,
+  label,
+  active,
+  onToggle,
+  includeActive,
+  excludeActive,
+  onInclude,
+  onExclude,
+}: {
+  index: number
+  label: string
+  active: boolean
+  onToggle: () => void
+  includeActive: boolean
+  excludeActive: boolean
+  onInclude: () => void
+  onExclude: () => void
+}): JSX.Element {
+  return (
+    <div className="flex items-center gap-2 px-3 py-[6px]" style={{ background: zebraRowBg(index) }}>
+      <div className="flex items-center gap-2 flex-1 cursor-pointer select-none" onClick={onToggle}>
+        <RegexCheckbox checked={active} color={TAB_COLORS.qualifiers} />
+        <span className="text-[11px]" style={{ color: active ? 'var(--text)' : 'var(--text-dim)' }}>
+          {label}
+        </span>
+      </div>
+      <FilterChip label="Include" active={includeActive} onClick={onInclude} color={TAB_COLORS.qualifiers} />
+      <FilterChip label="Exclude" active={excludeActive} onClick={onExclude} color={TAB_COLORS.qualifiers} />
+    </div>
   )
 }

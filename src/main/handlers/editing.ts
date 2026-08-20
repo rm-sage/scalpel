@@ -1,11 +1,24 @@
 import { ipcMain } from 'electron'
 import type Store from 'electron-store'
-import type { AppSettings, FilterAction, FilterBlock, FilterChange, PoeItem } from '@shared/types'
+import type {
+  AppSettings,
+  FilterAction,
+  FilterBlock,
+  FilterChange,
+  FilterFile,
+  PoeItem,
+  RemovalPreview,
+} from '@shared/types'
+import { destinationBlocked, planBatchMove, sourceLockFor } from '@shared/filter-move'
 import { evaluateAndSend } from '../evaluation'
+import { planHide, planRemoval } from '../filter/removal-plan'
+import { evaluateBlock, findMatchingBlocks } from '../filter/matcher'
 import { describeIntent } from '../filter/intent-describe'
 import { getIntents, record } from '../filter/intent-recorder'
 import {
   moveBaseTypeBetweenTiers,
+  addBaseTypeToTier,
+  removeBaseTypeFromTiers,
   updateQualityThresholds,
   updateStackThresholds,
   updateStrandThresholds,
@@ -74,6 +87,60 @@ function describeBlockEdit(oldBlock: FilterBlock, newBlock: FilterBlock): string
   // Capitalize first change, join with commas
   const desc = changes.join(', ')
   return desc.charAt(0).toUpperCase() + desc.slice(1)
+}
+
+// ---- Tier move guard -------------------------------------------------------
+
+/**
+ * Why this tier move must not be written, or `null` when it is safe.
+ *
+ * A move only takes effect when the destination ends up winning the first-match
+ * race, and it is only safe when neither end changes what it catches beyond this
+ * one base. Three ways that fails, all of them silent before this guard existed:
+ *
+ * 1. The destination's other conditions rule the item out. FilterBlade's PoE2
+ *    trial-coin tiers are `ItemLevel` bands over one base, so an ilvl 83 Djinn
+ *    Barya cannot be caught by the 60-79 tier however it is named there.
+ * 2. The destination lists no bases -- a class-rules tier. Writing a `BaseType`
+ *    line onto it narrows it to this single base.
+ * 3. The source cannot give the base up (it is the last one named, or a substring
+ *    token catches the item) and sits earlier in the file, so it keeps winning.
+ *    Stripping it anyway is what deleted the `BaseType` line from
+ *    `trialkeysanctumtop` and turned it into "show every ilvl 80+ item".
+ */
+function checkTierMove(
+  filter: FilterFile,
+  baseType: string,
+  fromBlockIndex: number,
+  toBlockIndex: number,
+  itemJson: string,
+  fromTier: string,
+  toTier: string,
+): string | null {
+  const fromBlock = filter.blocks[fromBlockIndex]
+  const toBlock = filter.blocks[toBlockIndex]
+  if (!fromBlock || !toBlock) return 'That tier no longer exists - reload the filter and try again.'
+  if (fromBlockIndex === toBlockIndex) return null
+
+  if (itemJson) {
+    const item = JSON.parse(itemJson) as PoeItem
+    const blocked = destinationBlocked(toBlock, (conds) => evaluateBlock({ conditions: conds }, item).matches)
+    if (blocked === 'conditions') {
+      return `${toTier} would not catch this ${baseType} - its other conditions rule the item out.`
+    }
+    if (blocked === 'no-basetype') {
+      return `${toTier} lists no base types - adding one would narrow it to just ${baseType}.`
+    }
+  }
+
+  const lock = sourceLockFor(fromBlock, baseType)
+  if (lock && toBlockIndex > fromBlockIndex) {
+    return lock === 'last-base'
+      ? `${baseType} is the only base ${fromTier} names, so it cannot be given up without widening that tier, and ${fromTier} is matched first.`
+      : `${fromTier} catches ${baseType} by a partial name, so it keeps matching first.`
+  }
+
+  return null
 }
 
 // ---- IPC handlers ----------------------------------------------------------
@@ -166,6 +233,14 @@ export function register(store: Store<AppSettings>): void {
       try {
         const fromTier = currentFilter.blocks[fromBlockIndex]?.tierTag?.tier ?? `block #${fromBlockIndex + 1}`
         const toTier = currentFilter.blocks[toBlockIndex]?.tierTag?.tier ?? `block #${toBlockIndex + 1}`
+
+        // Re-checked main-side rather than trusted from the dropdown's disabled
+        // state: the renderer's copy of the filter goes stale on any out-of-band
+        // reload, and a refused move must fail loudly instead of writing a change
+        // that silently reverts (or, worse, widens the tier it came from).
+        const refusal = checkTierMove(currentFilter, baseType, fromBlockIndex, toBlockIndex, itemJson, fromTier, toTier)
+        if (refusal) return { ok: false, error: refusal }
+
         captureSnapshot(currentFilter.path, 'tier-move', `Moved "${baseType}" from ${fromTier} to ${toTier}`, baseType)
         // Record intent
         const fromBlock = currentFilter.blocks[fromBlockIndex]
@@ -199,6 +274,195 @@ export function register(store: Store<AppSettings>): void {
     },
   )
 
+  // What a removal would do: which tiers it strips, which it cannot, and where the
+  // item ends up. The renderer cannot work any of this out -- its match list stops
+  // at the active block and it has no view of the rest of the filter.
+  ipcMain.handle('preview-fall-through', (_event, _blockIndex: number, itemJson: string): RemovalPreview => {
+    const empty: RemovalPreview = {
+      landsOn: null,
+      tierCount: 0,
+      skipped: [],
+      hideDestination: null,
+      alreadyHidden: false,
+      flipTier: null,
+    }
+    const currentFilter = getCurrentFilter()
+    if (!currentFilter || !itemJson) return empty
+    try {
+      const item = JSON.parse(itemJson) as PoeItem
+      const active = findMatchingBlocks(currentFilter, item).find((m) => m.isFirstMatch)
+      const typePath = active?.block.tierTag?.typePath
+      const plan = typePath
+        ? planHide(currentFilter, item, item.baseType, typePath)
+        : { ...planRemoval(currentFilter, item, item.baseType), alreadyHidden: false, destination: null, flip: null }
+      return {
+        landsOn: plan.landsOn,
+        tierCount: plan.targets.length,
+        skipped: plan.skipped.map((s) => ({ tier: s.tierTag?.tier ?? `block #${s.blockIndex + 1}`, reason: s.reason })),
+        hideDestination: plan.destination?.tierTag?.tier ?? null,
+        alreadyHidden: plan.alreadyHidden,
+        flipTier: plan.flip?.tierTag?.tier ?? (plan.flip ? `block #${plan.flip.blockIndex + 1}` : null),
+      }
+    } catch {
+      return empty
+    }
+  })
+
+  /**
+   * Hide an item outright.
+   *
+   * Two routes. When the tier the item is on names this base and nothing else,
+   * the tier *is* the item and hiding it is a visibility flip -- no base moves,
+   * nothing else is touched. Otherwise the base is stripped from every tier that
+   * names it and added to the nearest Hide tier; the strip is required, because
+   * appending alone would not work while an earlier tier still names the base.
+   */
+  ipcMain.handle('hide-item', (_event, baseType: string, itemJson: string) => {
+    const currentFilter = getCurrentFilter()
+    if (!currentFilter) return { ok: false, error: 'No filter loaded' }
+    if (!itemJson) return { ok: false, error: 'No item supplied' }
+    try {
+      const item: PoeItem = JSON.parse(itemJson)
+      const active = findMatchingBlocks(currentFilter, item).find((m) => m.isFirstMatch)
+      const typePath = active?.block.tierTag?.typePath
+      if (!typePath) return { ok: false, error: 'Active tier has no type path' }
+
+      const plan = planHide(currentFilter, item, baseType, typePath)
+
+      if (plan.flip) {
+        const block = currentFilter.blocks[plan.flip.blockIndex]
+        const tier = plan.flip.tierTag?.tier ?? `block #${plan.flip.blockIndex + 1}`
+        captureSnapshot(currentFilter.path, 'block-edit', `Hid the ${tier} tier`, baseType)
+        if (plan.flip.tierTag) {
+          record({
+            type: 'set-visibility',
+            target: { typePath: plan.flip.tierTag.typePath, tier: plan.flip.tierTag.tier },
+            payload: { visibility: 'Hide' },
+            timestamp: Date.now(),
+          })
+        }
+        writeBlockEdit(currentFilter, plan.flip.blockIndex, { ...block, visibility: 'Hide' })
+
+        const path = getProfileBackedSetting(store, 'filterPath')
+        if (path) loadFilter(path)
+        if (getCurrentFilter()) evaluateAndSend(item)
+        if (store.get('reloadOnSave') !== false) reloadFilterInGame()
+
+        return { ok: true, hiddenIn: tier, removedFrom: [] }
+      }
+
+      const destination = plan.destination
+      if (!plan.alreadyHidden && !destination?.tierTag) {
+        return { ok: false, error: `No hidden tier available for "${baseType}"` }
+      }
+      if (plan.targets.length === 0 && plan.alreadyHidden) {
+        return { ok: false, error: `"${baseType}" is already hidden` }
+      }
+
+      // Never strip the destination itself, in case it already names the base.
+      const targets = plan.targets.filter((t) => t.blockIndex !== destination?.blockIndex)
+
+      const tiers = targets.map((t) => t.tierTag?.tier ?? `block #${t.blockIndex + 1}`)
+      const where = destination?.tierTag ? ` in ${destination.tierTag.tier}` : ''
+      captureSnapshot(currentFilter.path, 'basetype-remove', `Hid "${baseType}"${where}`, baseType)
+
+      const now = Date.now()
+      for (const target of targets) {
+        if (!target.tierTag) continue
+        record({
+          type: 'remove-basetype',
+          target: { typePath: target.tierTag.typePath, tier: target.tierTag.tier },
+          payload: { value: baseType },
+          timestamp: now,
+        })
+      }
+      // No destination when the strip alone leaves the item on a Hide block.
+      if (destination?.tierTag) {
+        record({
+          type: 'add-basetype',
+          target: { typePath: destination.tierTag.typePath, tier: destination.tierTag.tier },
+          payload: { value: baseType },
+          timestamp: now + 1,
+        })
+      }
+
+      // Add first, then strip: removing an emptied BaseType line shifts later line
+      // numbers, and removeBaseTypeFromTiers already orders its own writes.
+      if (destination) addBaseTypeToTier(currentFilter, baseType, destination.blockIndex)
+      removeBaseTypeFromTiers(
+        currentFilter,
+        baseType,
+        targets.map((t) => t.blockIndex),
+      )
+
+      const path = getProfileBackedSetting(store, 'filterPath')
+      if (path) loadFilter(path)
+      if (getCurrentFilter()) evaluateAndSend(item)
+      if (store.get('reloadOnSave') !== false) reloadFilterInGame()
+
+      return { ok: true, hiddenIn: destination?.tierTag?.tier ?? null, removedFrom: tiers }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  })
+
+  ipcMain.handle('remove-item-from-tier', (_event, baseType: string, _blockIndex: number, itemJson: string) => {
+    const currentFilter = getCurrentFilter()
+    if (!currentFilter) return { ok: false, error: 'No filter loaded' }
+    if (!itemJson) return { ok: false, error: 'No item supplied' }
+    try {
+      const item: PoeItem = JSON.parse(itemJson)
+      // Re-planned main-side: the renderer's copy can be stale after an out-of-band
+      // reload, and the guard must not live only in the button's disabled state.
+      const plan = planRemoval(currentFilter, item, baseType)
+      if (plan.targets.length === 0) {
+        // Name why, so the failure is diagnosable from a log or a bug report.
+        const why = plan.skipped.length
+          ? plan.skipped.map((s) => `${s.tierTag?.tier ?? `block #${s.blockIndex + 1}`} (${s.reason})`).join(', ')
+          : 'no tier names it'
+        return { ok: false, error: `Cannot remove "${baseType}" from any tier that catches it: ${why}` }
+      }
+
+      const tiers = plan.targets.map((t) => t.tierTag?.tier ?? `block #${t.blockIndex + 1}`)
+      captureSnapshot(currentFilter.path, 'basetype-remove', `Removed "${baseType}" from ${tiers.join(', ')}`, baseType)
+
+      // One intent per tier, so each replays independently through the existing
+      // tier -> typePath -> conflict ladder on the next sync.
+      const now = Date.now()
+      for (const target of plan.targets) {
+        if (!target.tierTag) continue
+        record({
+          type: 'remove-basetype',
+          target: { typePath: target.tierTag.typePath, tier: target.tierTag.tier },
+          payload: { value: baseType },
+          timestamp: now,
+        })
+      }
+
+      removeBaseTypeFromTiers(
+        currentFilter,
+        baseType,
+        plan.targets.map((t) => t.blockIndex),
+      )
+
+      const path = getProfileBackedSetting(store, 'filterPath')
+      if (path) loadFilter(path)
+
+      const freshFilter = getCurrentFilter()
+      if (freshFilter) evaluateAndSend(item)
+
+      if (store.get('reloadOnSave') !== false) reloadFilterInGame()
+
+      return {
+        ok: true,
+        removedFrom: tiers,
+        skipped: plan.skipped.map((s) => ({ tier: s.tierTag?.tier ?? `block #${s.blockIndex + 1}`, reason: s.reason })),
+      }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  })
+
   ipcMain.handle(
     'batch-move-item-tier',
     (_event, baseTypes: string[], fromBlockIndex: number, toBlockIndex: number, itemJson: string) => {
@@ -207,12 +471,21 @@ export function register(store: Store<AppSettings>): void {
       try {
         const fromTier = currentFilter.blocks[fromBlockIndex]?.tierTag?.tier ?? `block #${fromBlockIndex + 1}`
         const toTier = currentFilter.blocks[toBlockIndex]?.tierTag?.tier ?? `block #${toBlockIndex + 1}`
-        captureSnapshot(
-          currentFilter.path,
-          'tier-move',
-          `Moved ${baseTypes.length} items from ${fromTier} to ${toTier}`,
-        )
-        for (const bt of baseTypes) {
+        if (!currentFilter.blocks[toBlockIndex]?.conditions.some((c) => c.type === 'BaseType')) {
+          return { ok: false, error: `${toTier} lists no base types - adding one would narrow it.` }
+        }
+
+        const { movable, stranded } = planBatchMove(currentFilter.blocks[fromBlockIndex], baseTypes)
+        if (movable.length === 0) {
+          return { ok: false, error: `${fromTier} cannot give up its last base type.` }
+        }
+
+        captureSnapshot(currentFilter.path, 'tier-move', `Moved ${movable.length} items from ${fromTier} to ${toTier}`)
+        // A base the source cannot give up is left behind rather than stripped:
+        // deleting the last name off a tier widens it to everything its remaining
+        // conditions allow. Emptying a tier by moving every base out therefore
+        // strands the last one, and the caller is told which.
+        for (const bt of movable) {
           // Record intent
           const fromBlock = currentFilter.blocks[fromBlockIndex]
           const toBlock = currentFilter.blocks[toBlockIndex]
@@ -241,7 +514,7 @@ export function register(store: Store<AppSettings>): void {
 
         if (store.get('reloadOnSave') !== false) reloadFilterInGame()
 
-        return { ok: true }
+        return { ok: true, moved: movable.length, stranded }
       } catch (err) {
         return { ok: false, error: String(err) }
       }

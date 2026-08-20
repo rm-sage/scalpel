@@ -52,13 +52,34 @@ export const POE_NINJA_POE2_EXCHANGE = 'https://poe.ninja/poe2/api/economy/excha
  *  best-effort path with the direct-ninja path retained as fallback. */
 export const POE2_NINJA_PROXY = 'https://api.exiledexchange2.dev/proxy'
 
+/** poe.ninja PoE1 stash overview. The only current endpoint that returns
+ *  `listingCount`, which the Beasts regex tab needs to drop price-fixed
+ *  listings: the dense feed's top beast entries are routinely 100k+ chaos on
+ *  fewer than 5 listings, and one of those would eat the entire 100-character
+ *  menagerie budget. Append `?league=<league>&type=Beast`. */
+export const POE_NINJA_STASH_OVERVIEW = 'https://poe.ninja/poe1/api/economy/stash/current/item/overview'
+
+/** poe.ninja's per-item Currency Exchange detail endpoint, keyed by game
+ *  version. Undocumented, and the only source for real exchange rates plus
+ *  traded volume/hour and league-length daily history. Append
+ *  `?league=<league>&type=<ninjaType>&id=<slug>`, where ninjaType is poe.ninja's
+ *  raw overview type ('DivinationCard' -- the kebab category slug 404s) and slug
+ *  comes from ninjaSlug() in external-link.ts. */
+export const POE_NINJA_EXCHANGE_DETAILS: Record<1 | 2, string> = {
+  1: 'https://poe.ninja/poe1/api/economy/exchange/current/details',
+  2: 'https://poe.ninja/poe2/api/economy/exchange/current/details',
+}
+
 /** Scalpel's GitHub repo home. Base for the issue URL and the Support
  *  Development link in Settings. Kept on UPSTREAM so bug reports and the
- *  support link land on the original project, not this personal fork. */
+ *  support link land on the original project, not this personal fork.
+ *  NOT the base for the release URLs -- those hang off FORK_RELEASES_REPO
+ *  below; re-deriving them from here would repoint the auto-update feed at
+ *  upstream, which fork-invariants.test.ts fails on. */
 export const GITHUB_REPO_URL = 'https://github.com/scalpelpoe/scalpel'
 
 // --- Fork update feed -------------------------------------------------------
-// This is a personal fork (rm-sage/scalpel) carrying an iCUE focus-restore fix.
+// This is a personal fork (rm-sage/scalpel) carrying an Open Craft of Exile hotkey.
 // It self-updates from its OWN GitHub releases, so ONLY the auto-update feed and
 // its manual-download fallback are repointed to the fork. Every other endpoint —
 // the issue/support links above and all live game-data/CDN URLs below — stays on
@@ -93,6 +114,11 @@ export const KOFI_URL = 'https://ko-fi.com/scalpelpoe'
  *  Settings -> Sheets. */
 export const CHEAT_SHEET_PREFAB_BASE_URL =
   'https://raw.githubusercontent.com/scalpelpoe/scalpel/main/cheat-sheet-prefabs/'
+
+/** Cyclon's Definitiv Guide - source of the PoE1 act starter-pack layout
+ *  images (used with permission). Linked from the attribution line under
+ *  the starter packs in Settings -> Sheets. */
+export const DEFINITIV_GUIDE_URL = 'https://www.definitivguide.com/'
 
 /** Runtime-fetched manifest of values that may change between releases (e.g.
  *  ninja league slugs). Fetched on app start; bundled copy in the repo root
@@ -151,3 +177,10 @@ export function pluginReleaseAssetUrl(repo: string, version: string, file: strin
   if (base) return `${base}/${file}`
   return `https://github.com/${repo}/releases/download/v${version}/${file}`
 }
+
+/** wraeclast.cards -- community stacked-deck drop tracker, reconciled against
+ *  the fateweaver datamine and regenerated daily. Powers Div Card Explorer
+ *  weights. Served CORS-open behind Cloudflare, so the renderer fetches it
+ *  directly rather than through the main process. */
+export const WRAECLAST_CARDS_URL = 'https://wraeclast.cards'
+export const WRAECLAST_DROP_RATES_INDEX = `${WRAECLAST_CARDS_URL}/data/drop-rates/index.json`

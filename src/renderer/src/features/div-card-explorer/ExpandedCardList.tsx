@@ -3,6 +3,7 @@ import { IconGlow } from '../../shared/IconGlow'
 import type { MapCardEntry } from './types'
 import { formatEv } from './utils'
 import { DivCardPriceChip } from './DivCardPriceChip'
+import { ScryingOrbButton } from './ScryingOrbButton'
 import { zebraRowBg } from '../../shared/utils'
 
 interface ExpandedCardListProps {
@@ -15,6 +16,7 @@ interface ExpandedCardListProps {
   hiddenCards: Record<string, boolean>
   onSelectCard: (cardName: string) => void
   onToggleFlag: (cardName: string) => void
+  mapName: string
 }
 
 export function ExpandedCardList({
@@ -27,15 +29,21 @@ export function ExpandedCardList({
   hiddenCards,
   onSelectCard,
   onToggleFlag,
+  mapName,
 }: ExpandedCardListProps): JSX.Element {
   const flaggedCount = cards.filter((c) => flaggedCards.has(c.card.name)).length
 
   return (
     <div className="bg-bg-card" style={{ borderLeft: `3px solid rgba(${r},${g},40,0.5)` }}>
-      {/* Card list header */}
+      {/* Card list header. The Scrying Orb button rides in the Card column's
+          slack rather than in a strip of its own -- a second full-width bar above
+          this one doubled the panel's chrome to ~59px before the first card row. */}
       <div className="flex items-center gap-[10px] py-[6px] pr-[14px] pl-0 text-[10px] font-bold text-text-dim uppercase tracking-[0.5px] border-b border-border bg-[rgba(0,0,0,0.3)]">
         <div style={{ width: Math.round(34 * (237 / 170)) }} className="shrink-0" />
-        <span className="flex-1">Card</span>
+        <span className="flex-1 flex items-center gap-[10px]">
+          Card
+          <ScryingOrbButton mapName={mapName} />
+        </span>
         <span className="w-[55px] text-right">Weight</span>
         <span className="w-[65px] text-right">Price</span>
         <span className="w-[55px] text-right">EV/Map</span>
@@ -84,9 +92,16 @@ export function ExpandedCardList({
                 <span className="text-text-dim text-[10px] font-normal ml-[6px]">{cardTiers[c.card.name]}</span>
               )}
             </span>
-            <span className="text-[11px] text-text-dim relative z-[2] font-mono w-[55px] text-right">
-              {Math.round(c.card.weight)}
-              {c.card.weightEstimated ? '*' : ''}
+            <span
+              className="text-[11px] text-text-dim relative z-[2] font-mono w-[55px] text-right"
+              title={
+                c.card.weightSource === 'mapsofexile'
+                  ? 'Not in the stacked deck pool - weight from Maps of Exile'
+                  : undefined
+              }
+            >
+              {Math.round(c.card.weight ?? 0)}
+              {c.card.weightSource === 'mapsofexile' ? '*' : ''}
             </span>
             <span
               className={`text-[11px] text-text-dim relative z-[2] font-mono w-[65px] text-right ${isFlagged ? 'line-through' : ''}`}
@@ -97,7 +112,7 @@ export function ExpandedCardList({
               className={`text-[11px] font-mono relative z-[2] w-[55px] text-right flex items-center justify-end gap-[3px] ${isFlagged ? 'text-[#ef9a3f]' : 'text-text-dim'}`}
             >
               {isFlagged ? '--' : formatEv(c.cardEv)}
-              {!isFlagged && c.card.weightEstimated ? '*' : ''}
+              {!isFlagged && c.card.weightSource === 'mapsofexile' ? '*' : ''}
               {!isFlagged && <img src={chaosIcon} alt="" className="w-3 h-3" />}
             </span>
             <span

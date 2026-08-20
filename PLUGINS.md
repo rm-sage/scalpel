@@ -120,7 +120,7 @@ interface ScalpelPluginContext {
   // 'annotation' (transparent, click-through, full-game-window surface).
   // See "Overlay windows" below.
   registerOverlay(
-    opts: { title: string; icon?: string; hotkeyLabel?: string; defaultSize?: { width: number; height: number }; mode?: 'window' | 'annotation' },
+    opts: { title: string; icon?: string; hotkeyLabel?: string; defaultSize?: { width: number; height: number }; defaultPosition?: { fracX: number; fracY: number }; mode?: 'window' | 'annotation' },
     render: (container: HTMLElement) => (() => void) | void,
   ): void
   openOverlay(): void   // show the overlay window
@@ -163,6 +163,11 @@ interface ScalpelPluginContext {
 
   // Screen capture - returns null when PoE is not focused
   captureGameWindow(region?: GameRect): Promise<GameCapture | null>
+
+  // Cursor position in game CSS px from the game window's top-left, or null
+  // when there's no game window yet / the cursor is outside the window. Same
+  // space as setInteractiveRegion, so annotation overlays can place against it.
+  getCursorPosition(): Promise<{ x: number; y: number } | null>
 
   // Utilities
   fetch: typeof fetch                  // standard browser fetch
@@ -371,6 +376,14 @@ machine only if your own code sends them. There is no runtime permission prompt.
 Registry curation is the gate - the Scalpel plugin registry requires review
 before a plugin is listed publicly.
 
+**Windows only.** `captureGameWindow` and `ctx.getCursorPosition` both read window
+geometry through Electron screen APIs that are only implemented on Windows. On
+Linux they resolve `null` unconditionally, the same value `captureGameWindow`
+returns when PoE isn't focused - a plugin can't tell the two cases apart from
+the return value alone. `getCursorPosition` is not focus-gated, so on Windows a
+`null` from it means only that the cursor is outside the game window (or the
+window has no bounds yet).
+
 ### Overlay windows
 
 A tab lives inside Scalpel's main overlay. `registerOverlay` instead gives your plugin its own **separate window** - the same kind of chrome'd, draggable, game-anchored window Scalpel uses for the whiteboard and cheat sheets. A plugin can register a tab, an overlay, or both (each at most once).
@@ -397,6 +410,8 @@ export default function activate(ctx) {
 ```
 
 Launch it three ways: the **Pop out** button on the plugin's tab, the dedicated **hotkey** (when you set `hotkeyLabel`; it is a separate Settings > Macros row from your `registerHotkey` action hotkey), or programmatically via `ctx.openOverlay()` / `ctx.closeOverlay()`.
+
+**Window position persists.** A window-mode overlay remembers where the user drags it, across restarts, once they've moved it. `defaultPosition` sets where it first appears - as fractions of the game window, from the window's top-left corner - and doubles as the window's drag-snap home. It stops applying once the user has moved the window; from then on the remembered position wins. Each fraction is clamped so the window stays fully on the game window.
 
 **The render runs in a separate process.** Each window is its own renderer process, so the `render` you pass to `registerOverlay` cannot be the same live function object your tab uses - Scalpel loads (imports and runs) your plugin module a *second time* inside the overlay window and calls your `registerOverlay` render there. Two consequences:
 
@@ -426,7 +441,7 @@ ctx.registerOverlay(
 
 Key differences from `mode: 'window'` (the default):
 
-- The surface locks to the game window and cannot be moved or resized - `defaultSize` is ignored.
+- The surface locks to the game window and cannot be moved or resized - `defaultSize` and `defaultPosition` are ignored. Annotation overlays never persist a position either, since they always span the whole game window.
 - The root `container` is always `position:absolute; inset:0; pointer-events:none`, sized to the full game window in CSS px. Position your child elements absolutely within it.
 - The entire surface passes mouse events through to the game by default. To make a specific child element interactive, set `pointer-events: auto` on that element only.
 - There is no title bar, border, or window chrome.
@@ -481,6 +496,10 @@ The SDK re-exports utilities Scalpel uses internally so you don't have to reimpl
 - `getDustInfo(item)` - dust value for a unique, including bonuses
 - `findRelated(itemName)` - curated related-items list lookup
 - `RARITY_COLORS` - hex tokens for rarity text colors
+
+**Map mods**
+
+- `MAP_MODS` - Scalpel's map-mod danger dataset (`id`, `regex`, `text`, `danger`, `nightmare`); `DANGER_COLORS` and `DANGER_LABELS` map a `Danger` to a hex color and a display label. The export names are locked by the SDK contract, but the dataset's *content* is resynced from an upstream vendor feed by `scripts/sync-regex-data.js` every league - don't hard-code specific `MapMod.id` values across league boundaries. This is PoE1 map mod data only; PoE2 waystones and tablets use separate datasets that aren't exposed to plugins yet. `MAP_MODS` still returns its full PoE1 list regardless of the running game, so a `poeVersions: [2]` plugin that reads it gets real-looking data that will never match a PoE2 item - not an empty array or an error.
 
 **Trend**
 

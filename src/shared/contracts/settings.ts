@@ -1,7 +1,7 @@
 import type { MacroScope } from '../macro-scope'
 import type { ThemePalette } from '../theme/palette'
-import type { AppLocale, TradePriceOption, AdaptiveMode } from './core'
-import type { CheatSheetsSettings } from './overlay'
+import type { AppLocale, TradePriceOption, AdaptiveMode, AffixesPrechecked } from './core'
+import type { CheatSheetsSettings, OverlayAnchor } from './overlay'
 import type { RegexPreset } from './regex'
 import type { PoeProfile } from './profiles'
 import type { HideableTabKey } from './items'
@@ -34,10 +34,6 @@ export interface AppSettings {
   overlayScale: number
   openSide: 'both' | 'right' | 'left'
   closeOnClickOutside: boolean
-  /** Refuse to type chat commands / filter reloads / regex into the game unless PoE is
-   *  the foreground window (defends against pasting the clipboard into another app or
-   *  into chat after a focus/lag race). Defaults to true; read with `?? true`. */
-  requireGameFocusForChat?: boolean
   useCurrentZoneAreaLevel: boolean
   reloadOnSave: boolean
   updateChannel: 'stable' | 'beta' | 'experimental'
@@ -57,7 +53,7 @@ export interface AppSettings {
     | '2months'
   tradeResultsView?: 'default' | 'open-all' | 'shrinkydink'
   priceCheckDefaultPercent: number
-  tradeDefaultToBase: boolean
+  tradeAffixesPrechecked: AffixesPrechecked
   tradePoe2CraftingReadyDefault?: boolean
   tradeKeepUncheckedVisible?: boolean
   tradeNeverAutoSearch?: boolean
@@ -84,6 +80,12 @@ export interface AppSettings {
   lastProfileIdPoe2: string
   startInTray: boolean
   appWindowPosition?: { x: number; y: number }
+  /** Per-plugin overlay window geometry, keyed by plugin id. Written when the
+   *  user moves or resizes a plugin's overlay window, read back when the plugin
+   *  registers it. An absent entry means "use the plugin's declared default
+   *  anchor". Top-level rather than profile-backed: window geometry is a
+   *  per-machine preference, not part of a filter profile. */
+  pluginOverlayAnchors?: Record<string, OverlayAnchor>
   onboardingCompleted: boolean
   onboardingStep?: string
   onboardingSelectedGames?: { poe1: boolean; poe2: boolean }
@@ -91,7 +93,23 @@ export interface AppSettings {
   currencyLabelsAsText: boolean
 }
 
+// Spelled out instead of `NodeJS.Platform`: the plugin-sdk build compiles
+// this file with `types: []` (no Node ambients in scope), so the namespace
+// reference would fail to resolve there. Members mirror Node's Platform type.
+export type NodePlatform =
+  | 'aix'
+  | 'android'
+  | 'darwin'
+  | 'freebsd'
+  | 'haiku'
+  | 'linux'
+  | 'openbsd'
+  | 'sunos'
+  | 'win32'
+  | 'cygwin'
+  | 'netbsd'
+
 export interface RuntimeSettings extends AppSettings {
   activeProfile: PoeProfile | null
-  platform: NodeJS.Platform
+  platform: NodePlatform
 }

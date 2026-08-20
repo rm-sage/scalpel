@@ -14,7 +14,7 @@ import { useReportInputFocus } from '../shared/use-report-input-focus'
 import { useCurrentZone } from '../shared/use-current-zone'
 import { FilterPanel } from '../features/filter/FilterPanel'
 import { SettingsPanel } from '../features/settings/SettingsPanel'
-import { SocketRecolor } from '../components/SocketRecolor'
+import { SocketRecolor } from '../features/socket-recolor'
 import { DustExplorer } from '../features/dust-explorer'
 import { DivCardExplorer } from '../features/div-card-explorer'
 import { RegexTool } from '../features/regex'
@@ -32,7 +32,7 @@ import { SisterOverlay } from './SisterOverlay'
 import { TierItemsSister } from './TierItemsSister'
 import { getActiveMatch } from '../shared/activeMatch'
 import { ItemSearchCombobox } from '../components/ItemSearchCombobox'
-import { Clipboard } from '@icon-park/react'
+import { Search } from '@icon-park/react'
 import {
   IP,
   iconMap,
@@ -44,7 +44,6 @@ import {
   mergeIconCache,
 } from '../shared/constants'
 import { initManifest, getManifest } from '../shared/manifest'
-import { prettyHotkey } from '../components/primitives/hotkey-utils'
 import { createTryHotkey } from '../components/primitives/hotkey-collisions'
 import { PluginErrorBanner } from '../plugins/PluginErrorBanner'
 import { usePluginAutoUpdate } from '../plugins/use-plugin-auto-update'
@@ -517,6 +516,9 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (isHidden) {
       window.api.reportPanelRect([])
+      // Dock ghost is a sibling of the panel, so it survives panel hide. Clear it
+      // so a stuck snapTarget can't leave a faded dashed box over the game.
+      setSnapTarget(null)
       return
     }
     const tick = (): void => {
@@ -538,6 +540,15 @@ export default function App(): JSX.Element {
           width: tierSister.width,
           height: tierSister.height,
         })
+      }
+      // Context menus portal to document.body to escape the wrapper's transform,
+      // which also removes them from the rects above - collect them so an open
+      // menu stays clickable even where it juts past the panel edge.
+      for (const el of document.querySelectorAll('[data-context-menu]')) {
+        const r = el.getBoundingClientRect()
+        if (r.width > 0 && r.height > 0) {
+          rects.push({ left: r.left, top: r.top, width: r.width, height: r.height })
+        }
       }
       window.api.reportPanelRect(rects)
     }
@@ -636,8 +647,12 @@ export default function App(): JSX.Element {
           sEl.style.transition = 'transform 0.2s ease-out'
           setTranslate(sEl, targetDx, 0)
         }
-        const onEnd = (): void => {
+        let settled = false
+        const settle = (): void => {
+          if (settled) return
+          settled = true
           el.removeEventListener('transitionend', onEnd)
+          window.clearTimeout(settleTimer)
           // Set final position directly on the DOM - React may skip the
           // transform update if the value matches what it last rendered
           el.style.left = `${targetMountX}px`
@@ -649,13 +664,32 @@ export default function App(): JSX.Element {
           if (snap !== cursorSide) {
             setCursorSide(snap)
           }
+          // Always clear the dock ghost — transitionend can miss when the view
+          // remounts mid-snap (e.g. price-check opening), which left a faded
+          // dashed box stuck over the game.
           setSnapTarget(null)
           skipAnimRef.current = true
         }
+        const onEnd = (ev: TransitionEvent): void => {
+          // Only the wrapper's own transform settles the snap. transitionend
+          // bubbles, so any transition-* inside the panel (hover colors flip as
+          // the panel slides under a stationary cursor) would otherwise settle
+          // us mid-slide and cut the animation short.
+          if (ev.target !== el || ev.propertyName !== 'transform') return
+          settle()
+        }
         el.addEventListener('transitionend', onEnd)
+        // Fallback if transitionend never fires (0-distance snap, remount, etc.).
+        // Comfortably longer than the 200ms transition: firing this early would
+        // clear the transition mid-slide and visibly jump the panel, and being
+        // late costs nothing since it only runs when the event was already lost.
+        const settleTimer = window.setTimeout(settle, 400)
       } else {
         panelRef.current?.classList.remove('panel-unmounted')
         setDragOffset({ ...dragOffsetRef.current })
+        // Clear even when not snapping / wrapper missing — otherwise a prior
+        // in-range hover leaves the ghost visible after mouseup.
+        setSnapTarget(null)
       }
     }
     window.addEventListener('mousemove', onMove)
@@ -798,8 +832,8 @@ export default function App(): JSX.Element {
           rightMountX={rightMountX}
           panelTop={PANEL_TOP}
           panelWidth={PANEL_WIDTH}
-          panelHeight={panelRef.current?.offsetHeight ?? 0}
-          snapTarget={snapTarget}
+          panelHeight={isHidden ? 0 : (panelRef.current?.offsetHeight ?? 0)}
+          snapTarget={isHidden ? null : snapTarget}
           overlayScale={settings?.overlayScale}
         />
         <div
@@ -958,11 +992,7 @@ export default function App(): JSX.Element {
                 )}
                 {view === 'no-item' && (
                   <>
-                    <Notice
-                      icon={<Clipboard size={32} {...IP} />}
-                      title={m.overlay_no_item_title()}
-                      body={m.overlay_no_item_body({ hotkey: prettyHotkey(settings?.hotkey) || 'Ctrl+Shift+F' })}
-                    />
+                    <Notice icon={<Search size={32} {...IP} />} title={m.overlay_no_item_title()} />
                     <div className="px-6 pb-6">
                       <ItemSearchCombobox />
                     </div>
@@ -999,6 +1029,7 @@ export default function App(): JSX.Element {
                 )}
                 {view === 'tools' && overlayData && features.socketRecolor && (
                   <SocketRecolor
+                    key={`${overlayData.item.name}|${overlayData.item.baseType}|${overlayData.item.sockets}|${overlayData.item.itemLevel}|${overlayData.item.quality}`}
                     item={overlayData.item}
                     priceInfo={overlayData.priceInfo}
                     chaosPerDivine={overlayData.chaosPerDivine}
@@ -1113,7 +1144,7 @@ export default function App(): JSX.Element {
             setView(`plugin:${pluginId}` as View)
             void window.api.pluginShowOverlay()
           }}
-          onCopyAndEvaluateItem={() => window.api.pluginTriggerMainHotkey()}
+          onCopyAndEvaluateItem={(opts) => window.api.pluginTriggerMainHotkey(opts)}
           onPluginError={handlePluginError}
           onPluginUnloaded={(pluginId) => {
             if (view === `plugin:${pluginId}`) setView('idle')

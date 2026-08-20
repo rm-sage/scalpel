@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Github } from '@icon-park/react'
+import { useEffect, useRef, useState } from 'react'
+import { Github, Refresh } from '@icon-park/react'
 import type { AppSettings, ProfileSettingValue, RuntimeSettings } from '@shared/types'
 import { GITHUB_REPO_URL, KOFI_URL } from '@shared/endpoints'
 import { reportDiagnosticError } from '@renderer/shared/diagnostics'
@@ -10,15 +10,24 @@ import { SettingToggleBox } from '@renderer/components/primitives/SettingToggleB
 import { LOCALE_LABELS, setAppLocale, SUPPORTED_LOCALES, useCurrentLocale } from '@renderer/shared/locale'
 import { m } from '@shared/paraglide/messages.js'
 
+const LEAGUE_PERSIST_MS = 250
+
 interface Props {
   settings: RuntimeSettings
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   updateProfile: <K extends 'league'>(key: K, value: ProfileSettingValue<K>) => Promise<void>
+  onSettingsChange: (s: RuntimeSettings) => void
   /** Dev-only: re-enter the onboarding flow to review it. Present in app mode only. */
   onShowOnboarding?: () => void
 }
 
-export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }: Props): JSX.Element {
+export function GeneralTab({
+  settings,
+  update,
+  updateProfile,
+  onSettingsChange,
+  onShowOnboarding,
+}: Props): JSX.Element {
   const locale = useCurrentLocale()
   const [reportMessage, setReportMessage] = useState<string | null>(null)
   const [reporting, setReporting] = useState(false)
@@ -30,8 +39,92 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
   useEffect(() => {
     loadDebugLog()
   }, [])
+  const [refreshingLeagues, setRefreshingLeagues] = useState(false)
   const leagueOptions = resolveLeagueOptions(settings, settings.poeVersion)
   const activeLeague = settings.activeProfile?.league ?? ''
+  const isListedLeague = (league: string): boolean => leagueOptions.includes(league)
+
+  // Only the act of picking "Private League" is latched: it writes '' via async
+  // IPC, and a stale settings snapshot still holding the old challenge league
+  // would otherwise flip the row straight back off (flicker). Whether the league
+  // *is* private is derived. Latching that too was the bug behind the row still
+  // reading "Mirage" after the league refresh had already migrated the profile
+  // to Allflame: the new list and the migrated profile arrive in separate
+  // broadcasts, so the row briefly saw a league that wasn't on the new list,
+  // latched private mode, and never let go once the real name landed.
+  const [privatePicked, setPrivatePicked] = useState(false)
+  const [draftLeague, setDraftLeague] = useState(() => (isListedLeague(activeLeague) ? '' : activeLeague))
+  const privateMode = privatePicked || !isListedLeague(activeLeague)
+  const leaguePersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    // Adopt a custom league that arrived from settings (another window, a
+    // restored profile) so the text box shows it.
+    if (activeLeague && !isListedLeague(activeLeague)) setDraftLeague(activeLeague)
+  }, [activeLeague, leagueOptions])
+
+  useEffect(() => {
+    return () => {
+      if (leaguePersistTimer.current) clearTimeout(leaguePersistTimer.current)
+    }
+  }, [])
+
+  const persistLeague = (value: string, immediate = false): void => {
+    if (leaguePersistTimer.current) {
+      clearTimeout(leaguePersistTimer.current)
+      leaguePersistTimer.current = null
+    }
+    const write = (): void => {
+      void updateProfile('league', value)
+    }
+    if (immediate) {
+      write()
+      return
+    }
+    leaguePersistTimer.current = setTimeout(write, LEAGUE_PERSIST_MS)
+  }
+
+  const selectPrivateLeague = (): void => {
+    setPrivatePicked(true)
+    setDraftLeague('')
+    // Optimistic local update so parent settings don't briefly re-show the old
+    // challenge league while IPC is in flight.
+    if (settings.activeProfile) {
+      onSettingsChange({
+        ...settings,
+        activeProfile: { ...settings.activeProfile, league: '' },
+      })
+    }
+    void updateProfile('league', '')
+  }
+
+  const selectListedLeague = (league: string): void => {
+    setPrivatePicked(false)
+    setDraftLeague('')
+    if (settings.activeProfile) {
+      onSettingsChange({
+        ...settings,
+        activeProfile: { ...settings.activeProfile, league },
+      })
+    }
+    void updateProfile('league', league)
+  }
+
+  // Forced so it ignores the hourly cooldown. The main process broadcasts
+  // setting updates to every window except the sender, so this window has to
+  // pull the result back itself - a full re-read also picks up a profile that
+  // got migrated off a league the fetch says is gone.
+  const refreshLeagues = async (): Promise<void> => {
+    setRefreshingLeagues(true)
+    try {
+      await window.api.refreshLeagues(true)
+      onSettingsChange(await window.api.getSettings())
+    } catch {
+      /* keep the cached list on screen */
+    } finally {
+      setRefreshingLeagues(false)
+    }
+  }
 
   const reportBug = async (): Promise<void> => {
     setReporting(true)
@@ -94,12 +187,15 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
       {/* League */}
       {(() => {
         const PRIVATE_LEAGUE_LABEL = m.settings_private_league()
-        const isPrivate = !leagueOptions.includes(activeLeague)
+        const shownLeague = privateMode ? draftLeague || PRIVATE_LEAGUE_LABEL : activeLeague
         return (
           <section>
             <label>{m.settings_league_label()}</label>
             <div className="setting-box mt-[6px] relative">
-              <span className="value">{activeLeague || PRIVATE_LEAGUE_LABEL}</span>
+              {/* flex-1 so the value eats the free space and both buttons sit
+                  together on the right; without it justify-between strands
+                  Change in the middle of the row. */}
+              <span className="value flex-1 min-w-0">{shownLeague}</span>
               <button
                 className="primary"
                 onClick={() => {
@@ -110,14 +206,25 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
               >
                 {m.common_change()}
               </button>
+              {/* Sits above the full-box <select> overlay so the click lands
+                  on the button instead of opening the picker. */}
+              <button
+                className="primary relative z-10 flex items-center disabled:opacity-50"
+                onClick={refreshLeagues}
+                disabled={refreshingLeagues}
+                title={m.settings_league_refresh_title()}
+                aria-label={m.common_refresh()}
+              >
+                <Refresh theme="outline" size="13" fill="currentColor" spin={refreshingLeagues} className="flex" />
+              </button>
               <select
                 id="league-select-unified"
-                value={isPrivate ? PRIVATE_LEAGUE_LABEL : activeLeague}
+                value={privateMode ? PRIVATE_LEAGUE_LABEL : activeLeague}
                 onChange={(e) => {
                   if (e.target.value === PRIVATE_LEAGUE_LABEL) {
-                    if (!isPrivate) updateProfile('league', '')
+                    selectPrivateLeague()
                   } else {
-                    updateProfile('league', e.target.value)
+                    selectListedLeague(e.target.value)
                   }
                 }}
                 className="absolute inset-0 opacity-0 cursor-pointer"
@@ -130,13 +237,25 @@ export function GeneralTab({ settings, update, updateProfile, onShowOnboarding }
                 <option value={PRIVATE_LEAGUE_LABEL}>{PRIVATE_LEAGUE_LABEL}</option>
               </select>
             </div>
-            {isPrivate && (
+            {privateMode && (
               <input
                 type="text"
-                value={activeLeague}
-                onChange={(e) => updateProfile('league', e.target.value)}
+                value={draftLeague}
+                onChange={(e) => {
+                  setDraftLeague(e.target.value)
+                  persistLeague(e.target.value)
+                }}
+                onBlur={() => {
+                  if (leaguePersistTimer.current) {
+                    clearTimeout(leaguePersistTimer.current)
+                    leaguePersistTimer.current = null
+                  }
+                  void updateProfile('league', draftLeague)
+                }}
                 placeholder={m.settings_private_league_placeholder()}
                 className="mt-[6px] w-full text-[11px] bg-black/30 rounded px-2 py-[5px] border-none"
+                autoComplete="off"
+                spellCheck={false}
               />
             )}
           </section>

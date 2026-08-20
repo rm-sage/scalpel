@@ -65,17 +65,24 @@ function collectScalpelWindows(): BrowserWindow[] {
   return result
 }
 
-/** True iff focus is currently on any Scalpel-owned window: the main overlay
- *  or any registered secondary overlay. The single source of truth for "did
- *  the user actually leave the app?" - every blur/hide decision should defer
- *  to this so clicking from one Scalpel window to another doesn't trigger
- *  cross-overlay hides. Native dialogs count as Scalpel-active too. */
-export function isAnyScalpelWindowFocused(): boolean {
-  if (nativeDialogCount > 0) return true
+/** True iff an actual Scalpel BrowserWindow currently owns focus. Native OS
+ *  dialogs are intentionally excluded: callers that authorize keyboard input
+ *  must not treat a file picker as an injection target. */
+export function isAnyScalpelBrowserWindowFocused(): boolean {
   const focused = BrowserWindow.getFocusedWindow()
   if (!focused || focused.isDestroyed()) return false
   if (focused === getMainOverlay()) return true
   return isSecondaryOverlayWindow(focused)
+}
+
+/** True iff focus is currently within the logical Scalpel task. The single
+ *  source of truth for "did the user actually leave the app?" - every
+ *  blur/hide decision should defer to this so clicking from one Scalpel window
+ *  to another doesn't trigger cross-overlay hides. Native dialogs count as
+ *  Scalpel-active here so their owner is not hidden while they are open. */
+export function isAnyScalpelWindowFocused(): boolean {
+  if (nativeDialogCount > 0) return true
+  return isAnyScalpelBrowserWindowFocused()
 }
 
 /** True if the screen point lies inside any visible secondary overlay window.
@@ -112,6 +119,10 @@ export function hideAllOnPoeBlur(): void {
     if (!state.win || state.win.isDestroyed()) continue
     state.wasVisibleBeforeFocusLoss = state.win.isVisible()
     if (state.wasVisibleBeforeFocusLoss) state.win.hide()
+    // Drop any pending snap along with the window. A drag still waiting on
+    // 'moved' loses its snap here (the raw drop position persists instead) -
+    // accepted, because a ghost with no owner on screen is the worse outcome.
+    state.snapGhostActive = false
   }
   setSnapGhost(null)
   // Let auxiliary windows (cheat-sheet hover preview) clear themselves so
@@ -130,6 +141,7 @@ export function restoreAllOnPoeFocus(): void {
   for (const state of overlays.values()) {
     if (!state.wasVisibleBeforeFocusLoss) continue
     if (!state.win || state.win.isDestroyed()) continue
+    if (state.spec.gateShow && !state.spec.gateShow()) continue
     state.win.show()
     state.win.moveTop()
   }
@@ -142,17 +154,21 @@ export function restoreAllOnPoeFocus(): void {
 /** Esc handling: hide the focused overlay if any, else any visible overlay.
  *  Returns true if an overlay was hidden so the caller can short-circuit (we
  *  don't want Esc to also dismiss the main overlay when a secondary was up).
+ *  Overlays flagged `persistOverOthers` or pinned by the user (`userPinned`)
+ *  are exempt from both branches - they are pinned/persistent surfaces Esc
+ *  must not dismiss, whether or not they currently hold focus.
  *  Called from the kernel-level Esc handler in hotkeys.ts. */
 export function hideFocusedOrAnyVisibleSecondaryOverlay(): boolean {
   const focused = BrowserWindow.getFocusedWindow()
   for (const state of overlays.values()) {
+    if (state.persistOverOthers || state.userPinned) continue
     if (state.win && state.win === focused && state.win.isVisible()) {
       hideOverlayState(state)
       return true
     }
   }
   for (const state of overlays.values()) {
-    if (state.persistOverOthers) continue
+    if (state.persistOverOthers || state.userPinned) continue
     if (state.win && !state.win.isDestroyed() && state.win.isVisible()) {
       hideOverlayState(state)
       return true
@@ -164,7 +180,14 @@ export function hideFocusedOrAnyVisibleSecondaryOverlay(): boolean {
 function hideOverlayState(state: import('./state').OverlayState): void {
   if (!state.win || state.win.isDestroyed()) return
   state.wasVisibleBeforeFocusLoss = false
+  // Same deliberate-hide notification showState/hideState do: an Esc sweep is
+  // the user closing the window, so an overlay that resets itself on close
+  // must hear about it. hideAllOnPoeBlur stays silent by contrast - it hides
+  // in place and expects to restore. Guarded on the transition so an
+  // already-hidden overlay caught by the sweep doesn't re-notify.
+  const wasVisible = state.win.isVisible()
   state.win.hide()
+  if (wasVisible) state.spec.onVisibilityChange?.(false)
 }
 
 /** Hide every secondary overlay because PoE itself exited. Used by the
@@ -175,8 +198,13 @@ function hideOverlayState(state: import('./state').OverlayState): void {
  *  is no PoE focus event coming back to restore from. */
 export function closeAllOverlaysOnPoeExit(): void {
   for (const state of overlays.values()) {
+    state.snapGhostActive = false
     hideOverlayState(state)
   }
+  // The snap canvas is never hidden, only its rect cleared, so a ghost left up
+  // when PoE exits keeps painting on the bare desktop with nothing alive to
+  // clear it - every other path that hides overlays clears it too.
+  setSnapGhost(null)
   // Auxiliary windows (preview) need to clear too - they're not in the
   // overlays map but the user shouldn't see leftover content after PoE exits.
   firePoeLeaveHooks()

@@ -3,10 +3,12 @@ import type { StatFilter } from './types'
 import {
   BASE_DEFAULT_ITEM_CLASSES,
   CRAFTING_READY_EXCLUDED_CLASSES,
+  applyAllModsToFilters,
   applyBaseModeToFilters,
   applyCraftingReadyToFilters,
   isCraftingReadyState,
   isPerfectUniqueRoll,
+  resolveDefaultPreset,
   shouldIncludeImplicitsInBase,
 } from './base-mode'
 
@@ -49,6 +51,16 @@ describe('shouldIncludeImplicitsInBase', () => {
 
   it('includes implicits for corrupted uniques', () => {
     expect(shouldIncludeImplicitsInBase('Unique', true)).toBe(true)
+  })
+
+  it('includes implicits for a non-corrupted vestigial unique', () => {
+    // The vestigial implicit replaces the base implicit and is the item's custom
+    // mod, not a fixed base roll -- it stays enabled even without corruption.
+    expect(shouldIncludeImplicitsInBase('Unique', false, true)).toBe(true)
+  })
+
+  it('excludes implicits for a non-corrupted non-vestigial unique (regression guard)', () => {
+    expect(shouldIncludeImplicitsInBase('Unique', false, false)).toBe(false)
   })
 })
 
@@ -115,6 +127,18 @@ describe('applyBaseModeToFilters', () => {
     expect(result.find((x) => x.type === 'implicit')!.enabled).toBe(true)
   })
 
+  it('keeps implicit rows enabled through Base mode for a non-corrupted vestigial unique', () => {
+    const input = [f({ id: 'implicit.x', type: 'implicit', enabled: false })]
+    const result = applyBaseModeToFilters(input, 'Unique', false, { vestigial: true })
+    expect(result.find((x) => x.type === 'implicit')!.enabled).toBe(true)
+  })
+
+  it('still disables implicit rows for a non-corrupted non-vestigial unique (regression guard)', () => {
+    const input = [f({ id: 'implicit.x', type: 'implicit', enabled: true })]
+    const result = applyBaseModeToFilters(input, 'Unique', false)
+    expect(result.find((x) => x.type === 'implicit')!.enabled).toBe(false)
+  })
+
   it('enables foulborn mods on uniques', () => {
     const input = [f({ id: 'explicit.stat_x', type: 'explicit', foulborn: true, enabled: false })]
     const result = applyBaseModeToFilters(input, 'Unique', false)
@@ -129,6 +153,36 @@ describe('applyBaseModeToFilters', () => {
     const result = applyBaseModeToFilters(input, 'Unique', false)
     expect(result.find((r) => r.id === 'explicit.stat_premium')?.enabled).toBe(true)
     expect(result.find((r) => r.id === 'explicit.stat_other')?.enabled).toBe(false)
+  })
+
+  it('keeps the Mageblood Duplicates chip on by default (premium survives Base mode)', () => {
+    const input = [
+      f({ id: 'mageblood-duplicates', type: 'mageblood-dup', premium: true, enabled: true, value: 1, min: 1 }),
+    ]
+    const result = applyBaseModeToFilters(input, 'Unique', false)
+    expect(result.find((r) => r.id === 'mageblood-duplicates')?.enabled).toBe(true)
+  })
+
+  it("keeps a Forbidden Shako's randomized supports exactly as the producer left them (#564)", () => {
+    // A Shako's price IS its two rolled supports; Base mode dropping them prices a GG
+    // Shako like a vendor one. The producer owns the pair's state: the higher of two
+    // same-support rolls searchable, its twin off (two filters on one indexable id
+    // match nothing on trade).
+    const input = [
+      f({ id: 'explicit.indexable_support_30', type: 'explicit', randomSupport: true, enabled: true, value: 31 }),
+      f({ id: 'explicit.indexable_support_30', type: 'explicit', randomSupport: true, enabled: false, value: 8 }),
+      f({ id: 'explicit.stat_attributes', type: 'explicit', enabled: true, value: 26 }),
+    ]
+    const result = applyBaseModeToFilters(input, 'Unique', false)
+    expect(result[0].enabled).toBe(true)
+    expect(result[1].enabled).toBe(false)
+    expect(result[2].enabled).toBe(false)
+  })
+
+  it('does not special-case randomized supports on non-uniques', () => {
+    const input = [f({ id: 'explicit.indexable_support_30', type: 'explicit', randomSupport: true, enabled: true })]
+    const result = applyBaseModeToFilters(input, 'Rare', false)
+    expect(result[0].enabled).toBe(false)
   })
 
   it('enables a perfect-or-over-rolled unique explicit pinned to the exact roll', () => {
@@ -183,6 +237,37 @@ describe('applyBaseModeToFilters', () => {
     for (let i = 0; i < input.length; i++) {
       expect(result[i].enabled).toBe(input[i].enabled)
     }
+  })
+
+  it('enables an over-20% quality chip on a rare (#586)', () => {
+    // A 28% quality rare is a 28% quality BASE -- past the 20% cap the buyer cannot add it
+    // themselves, so a base search must keep the floor instead of pricing against 0% copies.
+    const input = [f({ id: 'misc.quality', type: 'misc', enabled: false, value: 28, min: 28 })]
+    const result = applyBaseModeToFilters(input, 'Rare', false)
+    expect(result[0].enabled).toBe(true)
+    expect(result[0].min).toBe(28)
+    expect(result[0].max).toBeNull()
+  })
+
+  it('enables an over-20% quality chip on a unique', () => {
+    const input = [f({ id: 'misc.quality', type: 'misc', enabled: false, value: 30, min: 30 })]
+    expect(applyBaseModeToFilters(input, 'Unique', false)[0].enabled).toBe(true)
+  })
+
+  it('leaves a 20%-or-under quality chip at the producer state', () => {
+    // Any whetstone reaches 20%, so the row carries no price signal for a base search.
+    const input = [
+      f({ id: 'misc.quality', type: 'misc', enabled: false, value: 20, min: 20 }),
+      f({ id: 'misc.quality', type: 'misc', enabled: false, value: 6, min: 6 }),
+    ]
+    const result = applyBaseModeToFilters(input, 'Rare', false)
+    expect(result[0].enabled).toBe(false)
+    expect(result[1].enabled).toBe(false)
+  })
+
+  it('leaves an over-20% GEM quality chip at the gem producer state', () => {
+    const input = [f({ id: 'misc.quality', type: 'gem', enabled: false, value: 23, min: 23 })]
+    expect(applyBaseModeToFilters(input, 'Rare', false)[0].enabled).toBe(false)
   })
 
   it('preserves gem chips so base search on a transfigured gem still finds transfigured gems', () => {
@@ -519,5 +604,155 @@ describe('isCraftingReadyState', () => {
     const result = applyCraftingReadyToFilters(input, 'Magic', false)
     expect(result.find((x) => x.id === 'explicit.stat_dex')!.enabled).toBe(false)
     expect(isCraftingReadyState(result, true)).toBe(true)
+  })
+})
+
+describe('applyAllModsToFilters', () => {
+  it('enables every explicit, implicit, enchant and fractured row', () => {
+    const input = [
+      f({ id: 'explicit.stat_a', type: 'explicit', enabled: false }),
+      f({ id: 'implicit.stat_b', type: 'implicit', enabled: false }),
+      f({ id: 'enchant.stat_c', type: 'enchant', enabled: false }),
+      f({ id: 'fractured.stat_d', type: 'fractured', enabled: false }),
+    ]
+    const out = applyAllModsToFilters(input, 'Rare', false)
+    expect(out.every((x) => x.enabled)).toBe(true)
+  })
+
+  it('leaves pseudo aggregates at the producer state', () => {
+    const input = [
+      f({ id: 'pseudo.pseudo_total_life', type: 'pseudo', enabled: false }),
+      f({ id: 'pseudo.pseudo_total_res', type: 'pseudo', enabled: true }),
+    ]
+    const out = applyAllModsToFilters(input, 'Rare', false)
+    expect(out[0].enabled).toBe(false)
+    expect(out[1].enabled).toBe(true)
+  })
+
+  it('enables basetype, and ilvl only for non-uniques', () => {
+    const input = [
+      f({ id: 'misc.basetype', type: 'misc', enabled: false }),
+      f({ id: 'misc.ilvl', type: 'misc', enabled: false }),
+    ]
+    const rare = applyAllModsToFilters(input, 'Rare', false)
+    expect(rare[0].enabled).toBe(true)
+    expect(rare[1].enabled).toBe(true)
+    const unique = applyAllModsToFilters(input, 'Unique', false)
+    expect(unique[0].enabled).toBe(true)
+    expect(unique[1].enabled).toBe(false)
+  })
+
+  it('leaves learned chips alone', () => {
+    const input = [f({ id: 'explicit.stat_a', type: 'explicit', enabled: false, learned: true })]
+    expect(applyAllModsToFilters(input, 'Rare', false)[0].enabled).toBe(false)
+  })
+
+  it('keeps the producer split on Shako-style randomSupport twins (#564)', () => {
+    const input = [
+      f({ id: 'explicit.support_hi', type: 'explicit', enabled: true, randomSupport: true }),
+      f({ id: 'explicit.support_lo', type: 'explicit', enabled: false, randomSupport: true }),
+    ]
+    const out = applyAllModsToFilters(input, 'Unique', false)
+    expect(out[0].enabled).toBe(true)
+    expect(out[1].enabled).toBe(false)
+  })
+
+  it('pins a perfect unique roll to its exact value (#378)', () => {
+    const input = [
+      f({ id: 'explicit.stat_a', type: 'explicit', enabled: false, value: 42, min: null, perfectRoll: true }),
+    ]
+    const out = applyAllModsToFilters(input, 'Unique', false)
+    expect(out[0].enabled).toBe(true)
+    expect(out[0].min).toBe(42)
+    expect(out[0].max).toBeNull()
+  })
+
+  it('keeps a producer-enabled weapon DPS row ticked', () => {
+    // weapon.dps ("Total DPS") ships enabled: true and is the single most price-defining
+    // weapon filter -- "All" must not force it off.
+    const input = [f({ id: 'weapon.dps', type: 'weapon', enabled: true })]
+    const out = applyAllModsToFilters(input, 'Rare', false)
+    expect(out[0].enabled).toBe(true)
+  })
+
+  it('keeps a producer-enabled map yield row ticked', () => {
+    const input = [f({ id: 'map.map_iir', type: 'map', enabled: true })]
+    const out = applyAllModsToFilters(input, 'Rare', false)
+    expect(out[0].enabled).toBe(true)
+  })
+
+  it('leaves a producer-disabled non-affix row disabled ("All" restores, does not blanket-enable)', () => {
+    const input = [f({ id: 'weapon.damage', type: 'weapon', enabled: false })]
+    const out = applyAllModsToFilters(input, 'Rare', false)
+    expect(out[0].enabled).toBe(false)
+  })
+
+  it('still disables misc.ilvl on a unique even when the producer shipped it enabled (BASE_OWNED_IDS)', () => {
+    // Regression guard: Base owns ilvl outright for uniques (fixed roll pool regardless of
+    // drop level), so "All" must not hand it back to the producer's state.
+    const input = [f({ id: 'misc.ilvl', type: 'misc', enabled: true })]
+    const out = applyAllModsToFilters(input, 'Unique', false)
+    expect(out[0].enabled).toBe(false)
+  })
+
+  it('keeps the over-20% quality pin instead of handing it back to the producer (#586)', () => {
+    // "All" is Base plus every affix, so the basetype chip is still on and the quality
+    // floor belongs with it -- the non-affix restore must not undo Base's decision.
+    const input = [f({ id: 'misc.quality', type: 'misc', enabled: false, value: 28, min: 28 })]
+    expect(applyAllModsToFilters(input, 'Rare', false)[0].enabled).toBe(true)
+  })
+
+  it('keeps foulborn and premium unique rows enabled', () => {
+    const input = [
+      f({ id: 'explicit.stat_foulborn', type: 'explicit', foulborn: true, enabled: false }),
+      f({ id: 'explicit.stat_premium', type: 'explicit', premium: true, enabled: false }),
+    ]
+    const out = applyAllModsToFilters(input, 'Unique', false)
+    expect(out[0].enabled).toBe(true)
+    expect(out[1].enabled).toBe(true)
+  })
+})
+
+describe('resolveDefaultPreset', () => {
+  const base = { mode: 'default' as const, craftingReadyDefault: false, isClassDefault: false, isUnique: false }
+
+  it('lets Crafting Ready win over every mode', () => {
+    for (const mode of ['default', 'base', 'all'] as const) {
+      expect(resolveDefaultPreset({ ...base, mode, craftingReadyDefault: true }).preset).toBe('crafting-ready')
+    }
+  })
+
+  it('force-Bases the always-Base item classes in every mode', () => {
+    for (const mode of ['default', 'base', 'all'] as const) {
+      expect(resolveDefaultPreset({ ...base, mode, isClassDefault: true }).preset).toBe('base')
+    }
+  })
+
+  it('default mode: Base for uniques, producer state for everything else', () => {
+    expect(resolveDefaultPreset({ ...base, isUnique: true }).preset).toBe('base')
+    expect(resolveDefaultPreset(base).preset).toBe('none')
+  })
+
+  it('base and all modes apply to uniques too', () => {
+    expect(resolveDefaultPreset({ ...base, mode: 'base', isUnique: true }).preset).toBe('base')
+    expect(resolveDefaultPreset({ ...base, mode: 'all', isUnique: true }).preset).toBe('all')
+    expect(resolveDefaultPreset({ ...base, mode: 'all' }).preset).toBe('all')
+  })
+
+  it('keeps rows visible for uniques, Crafting Ready, and any non-default mode', () => {
+    expect(resolveDefaultPreset(base).keepRowsVisible).toBe(false)
+    expect(resolveDefaultPreset({ ...base, isClassDefault: true }).keepRowsVisible).toBe(false)
+    expect(resolveDefaultPreset({ ...base, isUnique: true }).keepRowsVisible).toBe(true)
+    expect(resolveDefaultPreset({ ...base, craftingReadyDefault: true }).keepRowsVisible).toBe(true)
+    expect(resolveDefaultPreset({ ...base, mode: 'base' }).keepRowsVisible).toBe(true)
+    expect(resolveDefaultPreset({ ...base, mode: 'all' }).keepRowsVisible).toBe(true)
+  })
+
+  it('keeps rows visible for the always-Base item classes when the user explicitly chose base/all', () => {
+    // isClassDefault forces the always-Base item classes (Blueprints/Contracts). Under
+    // mode 'default' the rows stay collapsed (never a user choice), but under 'base'/'all'
+    // the user's explicit choice expands the rows even for those classes.
+    expect(resolveDefaultPreset({ ...base, isClassDefault: true, mode: 'base' }).keepRowsVisible).toBe(true)
+    expect(resolveDefaultPreset({ ...base, isClassDefault: true, mode: 'all' }).keepRowsVisible).toBe(true)
   })
 })
