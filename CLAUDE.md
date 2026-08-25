@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Scalpel is an Electron overlay for Path of Exile 1 & 2 — a transparent window drawn on top of the game that does filter editing, price checking, regex generation, economy auditing, online filter sync, macros, cheat sheets, and an art-mode whiteboard. It uses native modules to hook global input (`uiohook-napi`), track the focused window (`active-win`), and clamp the overlay to the game window (`electron-overlay-window`).
 
-This is the **rmsage fork**. Versioning is `0.9.12-rmsage.N` — bump `N` on every release. Releases ship by pushing a `v<version>` git tag (CI builds the installer). Do not bump the upstream version base.
+This is the **rmsage fork** of `scalpelpoe/scalpel`. Versioning is `<upstream major.minor.patch>-rmsage.N` (currently `1.0.3-rmsage.1`). **Do not hand-edit the version** — `scripts/set-fork-version.js` derives it on every sync: it takes the base from `upstream/main:package.json`, strips upstream's `-rcN`/`-beta` (so the build lands on the updater's stable channel), and picks `N` from existing `v<base>-rmsage.*` tags, resetting to 1 when the base changes. Releases ship by pushing a `v<version>` git tag (CI builds the installer).
+
+See **`FORK-SETUP.md`** for the full fork story. The fork-specific files are `.github/workflows/auto-sync.yml` (daily upstream merge → verify → auto-tag), `scripts/set-fork-version.js`, and `src/shared/fork-invariants.test.ts` — a tripwire that reds CI if a merge ever reverts the update-feed repoint, drops the Craft of Exile macro, or leaves a non-`-rmsage` version. If it fails after a sync, re-apply the reverted change; don't relax the assertion.
 
 ## Commands
 
@@ -31,7 +33,7 @@ npm run storybook      # component dev at :6006
 
 **Node ^22 is required** (`.nvmrc` = 22). Node 26 breaks the `electron` install (`extract-zip` fails) — stay on 22.
 
-The pre-commit hook (`.husky/pre-commit`) runs `lint-staged` (biome check --write), then `tsc --noEmit`, then the full test suite. All three must pass to commit.
+The pre-commit hook (`.husky/pre-commit`) runs four steps: `npm run build:i18n` (regenerates the gitignored Paraglide runtime so tsc/vitest see bindings matching the current `messages/*.json`), then `lint-staged` (biome check --write), then `tsc --noEmit`, then the full test suite. All four must pass to commit.
 
 Biome (not ESLint/Prettier): 2-space indent, 120 col, LF, `recommended: false` with a hand-picked rule set in `biome.json`. Vendored data under `src/shared/data/regex/vendor` is excluded.
 
@@ -46,11 +48,13 @@ Standard Electron three-process split (`electron.vite.config.ts` builds each sep
 
 ### Multiple renderer windows
 
-The overlay is not one window. `electron.vite.config.ts` declares a separate rollup input + HTML file per surface: `overlay` (the main in-game overlay), `app` (the standalone settings/app window), `cheatSheetsGrid`, `cheatSheetPreview`, `secondaryOverlayCanvas`, `whiteboard`, `regexRemote`, `pinnedZone`, `pluginOverlay`. Each has its own React root under `src/renderer/src/`. The main process creates and positions these BrowserWindows; `src/main/windowing/` and `src/main/overlay.ts` handle focus, snapping, and clamping to the game.
+The overlay is not one window. `electron.vite.config.ts` declares a separate rollup input + HTML file per surface: `overlay` (the main in-game overlay), `app` (the standalone settings/app window), `cheatSheetsGrid`, `cheatSheetPreview`, `secondaryOverlayCanvas`, `whiteboard`, `regexRemote`, `pinnedZone`, `pluginOverlay`, `pluginAnnotationOverlay`. Each has its own React root under `src/renderer/src/`. The main process creates and positions these BrowserWindows; `src/main/windowing/` and `src/main/overlay.ts` handle focus, snapping, and clamping to the game.
 
 ### IPC handler registration
 
-Handlers live in `src/main/handlers/*.ts`, each exporting a `register(store)` function. `src/main/index.ts` imports them all and calls `*.register(store)` once at startup (around line 326+). To add an IPC channel: add the `ipcMain.handle` in the appropriate handler module (or a new one wired into `index.ts`), then expose it in `preload/index.ts`.
+Handlers live in `src/main/handlers/*.ts`, each exporting a registration function — either `register(store)` or a named `registerXxxHandlers()` when it needs no store. They are **not** wired up in `index.ts`: they are all called from `registerAllIpc()` in **`src/main/app/register-ipc.ts`**, which `src/main/index.ts` invokes once at startup (one call, `index.ts:280`). Anything a handler needs beyond the store is threaded through the `IpcRegistrationDeps` object (`isElevated`, `getAppWindow`, `showAppWindow`, `hideOverlay`).
+
+To add an IPC channel: add the `ipcMain.handle` in the appropriate handler module (or a new module), call its registration function from `register-ipc.ts`, then expose it in `preload/index.ts`.
 
 ### Persistence
 

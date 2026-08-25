@@ -89,15 +89,29 @@ export const GITHUB_REPO_URL = 'https://github.com/scalpelpoe/scalpel'
 export const FORK_RELEASES_REPO = 'rm-sage/scalpel'
 
 /** GitHub releases page (user-facing, for manual download links in banners).
- *  Repointed to the fork so the manual-download fallback also carries the fix. */
-export const GITHUB_RELEASES_PAGE = `https://github.com/${FORK_RELEASES_REPO}/releases/latest`
+ *  Repointed to the fork so the manual-download fallback also carries the fix.
+ *
+ *  Written out in full rather than interpolating FORK_RELEASES_REPO -- see the
+ *  note on GITHUB_RELEASES_API below for why the literal has to survive bundling. */
+export const GITHUB_RELEASES_PAGE = 'https://github.com/rm-sage/scalpel/releases/latest'
 
 /** GitHub new-issue page, opened (with a prefilled body) by the bug reporter.
  *  Intentionally left on UPSTREAM. */
 export const GITHUB_NEW_ISSUE_URL = `${GITHUB_REPO_URL}/issues/new`
 
-/** GitHub API for update checks — THE auto-update feed, repointed to the fork. */
-export const GITHUB_RELEASES_API = `https://api.github.com/repos/${FORK_RELEASES_REPO}/releases/latest`
+/** GitHub API for update checks — THE auto-update feed, repointed to the fork.
+ *
+ *  KEEP THIS A PLAIN STRING LITERAL. `scripts/update-smoke.mjs` rewrites this URL
+ *  inside the *built* bundle (out/main/index.js) to point the updater at a loopback
+ *  release server. Rollup does not constant-fold a template literal that reads an
+ *  imported binding -- it emits
+ *      const GITHUB_RELEASES_API = `https://api.github.com/repos/${FORK_RELEASES_REPO}/releases/latest`
+ *  verbatim -- so interpolating FORK_RELEASES_REPO here leaves no full URL in the
+ *  bundle for the smoke test to find, and `npm run test:update` dies at its
+ *  "found the releases API literal" assertion before it ever exercises the
+ *  asar-swap applier. FORK_RELEASES_REPO stays exported as the documented
+ *  single source of truth (fork-invariants.test.ts asserts both agree). */
+export const GITHUB_RELEASES_API = 'https://api.github.com/repos/rm-sage/scalpel/releases/latest'
 
 /** GitHub for Electron binary downloads (only during full version upgrades) */
 export const ELECTRON_RELEASES = 'https://github.com/electron/electron/releases/download'

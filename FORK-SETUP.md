@@ -18,7 +18,7 @@ small. Three things diverge:
 
 | Area | Change |
 |------|--------|
-| **The macro** | `src/shared/external-link.ts` (`craftOfExileUrl`), `src/main/evaluation.ts` (`createOpenCraftOfExileHandler`), `src/main/index.ts` (wiring + the `openCraftOfExile` action), `src/renderer/src/components/settings/utils.ts` (the macro list entry), plus tests. |
+| **The macro** | `src/shared/external-link.ts` (`craftOfExileUrl`), `src/main/evaluation.ts` (`createOpenCraftOfExileHandler`), `src/main/index.ts` (wiring + the `openCraftOfExile` action), `src/renderer/src/features/settings/tabs/utils.ts` (the macro list entry), plus tests. |
 | **Update feed** | `src/shared/endpoints.ts`: **only** the auto-update feed (`GITHUB_RELEASES_API`) and its manual-download fallback (`GITHUB_RELEASES_PAGE`) point at this fork. All game-data, issue, and support endpoints stay on upstream. |
 | **Version** | `package.json` carries a `-rmsage.N` suffix (see below). |
 

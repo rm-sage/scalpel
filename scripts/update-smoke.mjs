@@ -44,8 +44,15 @@ const MAIN_BUNDLE = join(ROOT, 'out', 'main', 'index.js')
 const SMOKE_APP_NAME = 'scalpel-update-smoke'
 const OLD_VERSION = '0.0.1-smoke'
 const PORT = 45737
-const REAL_API = 'https://api.github.com/repos/scalpelpoe/scalpel/releases/latest'
-const FAKE_API = `http://127.0.0.1:${PORT}/repos/scalpelpoe/scalpel/releases/latest`
+// The fork repoints the auto-update feed at its own releases (src/shared/endpoints.ts),
+// so this harness can't hardcode upstream's URL -- it would find nothing in the bundle
+// and assert out before testing the applier. Read the repo back out of endpoints.ts so
+// the smoke test follows the feed instead of drifting from it. `FORK_RELEASES_REPO` is
+// the single source of truth; fork-invariants.test.ts pins the URL literals to it.
+const ENDPOINTS_SRC = readFileSync(join(ROOT, 'src/shared/endpoints.ts'), 'utf8')
+const RELEASES_REPO = ENDPOINTS_SRC.match(/FORK_RELEASES_REPO\s*=\s*'([^']+)'/)?.[1] ?? 'scalpelpoe/scalpel'
+const REAL_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`
+const FAKE_API = `http://127.0.0.1:${PORT}/repos/${RELEASES_REPO}/releases/latest`
 
 const argOf = (flag) => {
   const hit = process.argv.find((a) => a.startsWith(`--${flag}=`))

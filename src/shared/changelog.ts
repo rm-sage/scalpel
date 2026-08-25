@@ -179,6 +179,12 @@ export const CHANGELOG: { version: string; notes: string[] }[] = [
       'Fixed the "Break increased Armour" glove enchant matching the wrong "increased Armour" stat in price-check.',
     ],
   },
+  // Fork entry. Both of these later landed upstream independently -- the focus gate
+  // is upstream's 0.9.17 "hotkeys sometimes firing while the game wasn't focused"
+  // and the rune fix is upstream's 0.9.16 "PoE2 socketed runes now apply" -- so the
+  // same two fixes appear under several headings. That is correct release history,
+  // not a duplicate to clean up: fork users genuinely received them in this build,
+  // before upstream shipped its versions. Leave it.
   {
     version: '0.9.15-rmsage.2',
     notes: [
