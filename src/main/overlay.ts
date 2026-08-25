@@ -2,7 +2,6 @@ import { join } from 'node:path'
 import { BrowserWindow, ipcMain, screen, webContents } from 'electron'
 import { OVERLAY_WINDOW_OPTS, OverlayController } from 'electron-overlay-window'
 import { uIOhook } from 'uiohook-napi'
-import { shouldInjectChat } from './chat-inject-guard'
 import { startClientLogWatcher } from './client-log'
 import { guardNativeListener, registerDiagnosticProvider } from './diagnostics'
 import { getPoeVersion, setPoeVersion } from './game-state'
@@ -13,6 +12,7 @@ import { closeAllOverlaysOnPoeExit, isAnyScalpelWindowFocused, isInsideAnySecond
 import { getWhiteboardOverlay } from './whiteboard'
 import { POE_SIDEBAR_RATIO } from '@shared/poe-geometry'
 import { GAME_TITLES } from '@shared/contracts/game-variant'
+import { IPC_CHANNELS } from '@shared/contracts/ipc'
 
 let overlayWindow: BrowserWindow | null = null
 let overlayVisible = false
@@ -37,53 +37,17 @@ let retargetWatchdog: ReturnType<typeof setTimeout> | null = null
 const RETARGET_WATCHDOG_MS = 2000
 let multiTitleMode = false
 
+let overlayVisibilityListener: ((visible: boolean) => void) | null = null
+
+/** Notified with the current `overlayVisible` state on every showOverlay/hideOverlay
+ *  call, so other modules (hotkeys.ts's Escape globalShortcut sync) can react without
+ *  polling. Single slot - only one consumer today (hotkeys.ts). */
+export function setOverlayVisibilityListener(cb: ((visible: boolean) => void) | null): void {
+  overlayVisibilityListener = cb
+}
+
 export function setCloseOnClickOutside(enabled: boolean): void {
   closeOnClickOutside = enabled
-}
-
-// ─── Chat/filter injection focus gate ───────────────────────────────────────────
-//
-// pasteToPoEChat / pasteRegexToSearch type into the game by injecting Ctrl+V. If they
-// fire while PoE isn't the foreground window, the keystrokes (and a late clipboard
-// restore) can leak into a browser / Discord / password manager. The gate refuses to
-// inject unless PoE is foreground; programmatic injections (filter reload-on-save,
-// online-sync filter switch) are instead *deferred* until PoE next regains focus, so
-// they still apply when the user returns to the game rather than typing into the
-// overlay. User-default ON; toggleable via the requireGameFocusForChat setting.
-let requireGameFocusForChat = true
-let pendingChatInjection: (() => void) | null = null
-
-export function setRequireGameFocusForChat(enabled: boolean): void {
-  requireGameFocusForChat = enabled
-  // Turning the gate off un-strands anything we were holding back.
-  if (!enabled) flushPendingChatInjection()
-}
-
-export function isGameFocusRequiredForChat(): boolean {
-  return requireGameFocusForChat
-}
-
-/** True when a chat/filter keystroke injection may fire right now (PoE is the
- *  foreground window, or the gate is disabled). */
-export function mayInjectChatNow(): boolean {
-  return shouldInjectChat(requireGameFocusForChat, OverlayController.targetHasFocus)
-}
-
-function flushPendingChatInjection(): void {
-  if (!pendingChatInjection) return
-  const fn = pendingChatInjection
-  pendingChatInjection = null
-  fn()
-}
-
-/** Run a chat/filter injection now if PoE is foreground, otherwise hold it until PoE
- *  next gains focus. Latest pending wins (we only care about the final filter state). */
-function runOrDeferChatInjection(fn: () => void): void {
-  if (mayInjectChatNow()) {
-    fn()
-    return
-  }
-  pendingChatInjection = fn
 }
 
 // Panel bounds in physical screen coordinates (for uiohook mouse hit testing).
@@ -460,7 +424,7 @@ export function createOverlayWindow(version: 1 | 2 = 1, options?: CreateOverlayO
       sendGameBounds(ev.width, ev.height)
       // A fresh game window means a new desktopCapturer source id; tell the
       // whiteboard to re-resolve and re-open its live-mirror stream.
-      getWhiteboardOverlay()?.send('screen:source-invalidated')
+      getWhiteboardOverlay()?.send(IPC_CHANNELS.SCREEN.SOURCE_INVALIDATED_EVENT)
       mouseOverPanel = false
       if (overlayVisible && overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow.setIgnoreMouseEvents(true)
@@ -485,7 +449,7 @@ export function createOverlayWindow(version: 1 | 2 = 1, options?: CreateOverlayO
       // clear our renderer-side overlay state and hide every secondary
       // overlay using the same paths the Esc handler uses.
       hideOverlay()
-      getWhiteboardOverlay()?.send('screen:source-invalidated')
+      getWhiteboardOverlay()?.send(IPC_CHANNELS.SCREEN.SOURCE_INVALIDATED_EVENT)
       closeAllOverlaysOnPoeExit()
     } catch (err) {
       lastOverlayError = String(err)
@@ -501,10 +465,11 @@ export function createOverlayWindow(version: 1 | 2 = 1, options?: CreateOverlayO
       // This prevents the overlay from appearing on top of other windows during rapid alt-tab
       if (!OverlayController.targetHasFocus) return
 
-      // PoE just regained foreground focus -- flush any chat/filter injection we held
-      // back (e.g. a reload-on-save that fired while the overlay was focused). Small
-      // settle delay so the keystrokes land after focus has fully transferred.
-      if (pendingChatInjection) setTimeout(flushPendingChatInjection, 150)
+      // A refocused game may be a NEW window since the whiteboard's live-mirror
+      // stream last opened (game restarted while the board sat hidden, so the
+      // one-shot 'detach' invalidation never fired against it). Renderer-side
+      // no-op when the stream is already healthy, so per-alt-tab cost is one IPC.
+      getWhiteboardOverlay()?.send(IPC_CHANNELS.SCREEN.SOURCE_MAYBE_STALE_EVENT)
 
       const tb = OverlayController.targetBounds
       if (tb?.width) sendGameBounds(tb.width, tb.height)
@@ -610,6 +575,7 @@ export function showOverlay(): void {
     lastOverlayError = String(err)
     console.error('[overlay] Error in showOverlay:', err)
   }
+  overlayVisibilityListener?.(true)
 }
 
 export function hideOverlay(): void {
@@ -623,45 +589,29 @@ export function hideOverlay(): void {
   // OverlayController manages window visibility and would re-show it, causing flicker)
   overlayWindow.webContents.send('overlay-hide')
   OverlayController.focusTarget()
+  overlayVisibilityListener?.(false)
 }
 
-/** Send reload command to PoE, then re-apply interactive state so overlay stays usable.
- *  Deferred until PoE has focus when the focus gate is on (reload-on-save fires while the
- *  overlay, not the game, is focused). */
+/** Send reload command to PoE, then re-apply interactive state so overlay stays usable */
 export function reloadFilterInGame(): void {
-  runOrDeferChatInjection(() => {
-    import('./hotkeys').then(({ sendReloadFilterToPoE }) => {
-      sendReloadFilterToPoE()
-        .then(() => {
-          if (overlayVisible && overlayWindow && mouseOverPanel) {
-            overlayWindow.setIgnoreMouseEvents(false)
-          }
-        })
-        .catch((e) => console.error('[FilterScalpel] reload filter failed:', e))
-    })
+  import('./hotkeys').then(({ sendReloadFilterToPoE }) => {
+    sendReloadFilterToPoE()
+      .then(() => {
+        if (overlayVisible && overlayWindow && mouseOverPanel) {
+          overlayWindow.setIgnoreMouseEvents(false)
+        }
+      })
+      .catch((e) => console.error('[FilterScalpel] reload filter failed:', e))
   })
 }
 
-/** Send /itemfilter command to PoE, then re-apply interactive state. When PoE has focus
- *  this awaits the in-game switch as before; when it doesn't (focus gate on), the switch
- *  is deferred until PoE regains focus and the call resolves once scheduled. */
+/** Send /itemfilter command to PoE, then re-apply interactive state */
 export async function switchFilterInGame(filterName: string, currentFilter?: string): Promise<void> {
-  const doSwitch = async (): Promise<void> => {
-    const { sendItemFilterCommand } = await import('./hotkeys')
-    await sendItemFilterCommand(filterName, currentFilter)
-    if (overlayVisible && overlayWindow) {
-      overlayWindow.setIgnoreMouseEvents(false)
-      mouseOverPanel = true
-    }
-  }
-  if (mayInjectChatNow()) {
-    await doSwitch()
-    return
-  }
-  // PoE isn't foreground: hold the switch until it is rather than typing /itemfilter
-  // into the overlay or another app. Latest pending wins.
-  pendingChatInjection = () => {
-    doSwitch().catch((e) => console.error('[FilterScalpel] switch filter failed:', e))
+  const { sendItemFilterCommand } = await import('./hotkeys')
+  await sendItemFilterCommand(filterName, currentFilter)
+  if (overlayVisible && overlayWindow) {
+    overlayWindow.setIgnoreMouseEvents(false)
+    mouseOverPanel = true
   }
 }
 

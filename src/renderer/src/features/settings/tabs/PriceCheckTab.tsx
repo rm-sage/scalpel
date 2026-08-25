@@ -3,8 +3,10 @@ import { PoeLoginButton } from './PoeLoginButton'
 import { HotkeyField } from '@renderer/components/primitives/HotkeyField'
 import {
   ADAPTIVE_MODE_OPTIONS,
+  AFFIXES_PRECHECKED_OPTIONS,
   LISTED_TIME_OPTIONS,
   getPriceOptions,
+  normalizePriceOption,
   RESULTS_VIEW_OPTIONS,
   STATUS_OPTIONS,
 } from '@renderer/shared/trade-settings'
@@ -57,9 +59,7 @@ export function PriceCheckTab({ settings, update, updateProfile, tryHotkey }: Pr
         />
         <SettingSelectBox
           label={m.settings_pc_buyout_currency()}
-          value={
-            settings.activeProfile?.tradePriceOption ?? (settings.poeVersion === 2 ? 'exalted_divine' : 'chaos_divine')
-          }
+          value={normalizePriceOption(settings.activeProfile?.tradePriceOption, settings.poeVersion ?? 1)}
           options={getPriceOptions(settings.poeVersion ?? 1)}
           onChange={(v) => updateProfile('tradePriceOption', v)}
         />
@@ -103,17 +103,18 @@ export function PriceCheckTab({ settings, update, updateProfile, tryHotkey }: Pr
           options={ADAPTIVE_MODE_OPTIONS}
           onChange={(v) => update('adaptiveDefaultsMode', v)}
         />
+        <SettingSelectBox
+          label={m.settings_pc_affixes_prechecked()}
+          value={settings.tradeAffixesPrechecked ?? 'default'}
+          options={AFFIXES_PRECHECKED_OPTIONS}
+          onChange={(v) => update('tradeAffixesPrechecked', v)}
+        />
       </div>
 
       <div className="settings-section-title mt-3">{m.settings_pc_additional()}</div>
 
       {/* Tighten the toggle group; outer fragment gap is for top-level sections, too sparse for stacked rows. */}
       <div className="flex flex-col gap-[10px]">
-        <SettingToggleBox
-          label={m.settings_pc_default_base()}
-          checked={settings.tradeDefaultToBase ?? false}
-          onChange={(val) => update('tradeDefaultToBase', val)}
-        />
         <SettingToggleBox
           label={m.settings_pc_crafting_ready()}
           checked={settings.tradePoe2CraftingReadyDefault ?? true}

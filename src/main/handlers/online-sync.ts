@@ -88,17 +88,27 @@ export function register(store: Store<AppSettings>): void {
     },
   )
 
+  // The in-game switch aborts rather than injecting when PoE isn't focused or
+  // the clipboard isn't ours, so every caller reports that instead of throwing.
   ipcMain.handle('switch-ingame-filter', async (_event, filterName: string, currentFilter?: string) => {
-    await switchFilterInGame(filterName, currentFilter)
-    return { ok: true }
+    try {
+      await switchFilterInGame(filterName, currentFilter)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
   })
 
   ipcMain.handle('check-online-update', async (): Promise<{ ok: boolean; error?: string }> => {
     const result = findOnlineFilter(store)
     if ('error' in result) return { ok: false, error: result.error }
 
-    // Switch to online filter (triggers PoE to download latest), then switch back to local
-    await switchFilterInGame(result.localFileName, result.onlineFilterName)
+    try {
+      // Switch to online filter (triggers PoE to download latest), then switch back to local
+      await switchFilterInGame(result.localFileName, result.onlineFilterName)
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
     // Force an immediate hash check after a short delay to let PoE write the file
     setTimeout(() => checkOnlineSyncNow(), 2000)
     return { ok: true }
@@ -154,6 +164,10 @@ export function register(store: Store<AppSettings>): void {
         skippedForValidity?: number
       }
       conflicts?: Array<{ description: string; actionType: string }>
+      /** Recorded edits that could not be re-applied to the new upstream content.
+       *  Surfaced to the user -- a silently dropped removal would look like the
+       *  item coming back on its own. */
+      unresolved?: string[]
     }> => {
       const info = findOnlineFilter(store)
       if ('error' in info) return { ok: false, error: info.error }
@@ -166,6 +180,7 @@ export function register(store: Store<AppSettings>): void {
         const intentLog = getIntents()
 
         let skippedForValidity = 0
+        let unresolved: string[] = []
         if (intentLog.intents.length === 0) {
           // No intents - overwrite with upstream
           writeFileSync(info.localPath, localContent, 'utf-8')
@@ -173,6 +188,7 @@ export function register(store: Store<AppSettings>): void {
           const result = replayIntents(localContent, info.localPath, intentLog, { forceApply: true })
           const { fallbackBlocks } = writeFilterSelective(result.filter, result.modifiedBlocks, result.removedBlocks)
           skippedForValidity = fallbackBlocks.length
+          unresolved = result.conflicts.map((c) => c.description)
           if (fallbackBlocks.length > 0 && process.env.SCALPEL_DEBUG_LOG) {
             console.warn(
               '[online-sync] quick-update dropped edits to keep filter valid:',
@@ -205,6 +221,7 @@ export function register(store: Store<AppSettings>): void {
             removed: 0,
             skippedForValidity,
           },
+          unresolved,
         }
       } catch (err) {
         return { ok: false, error: String(err) }
@@ -224,6 +241,7 @@ export function register(store: Store<AppSettings>): void {
       error?: string
       conflicts?: Array<{ description: string; intentIndex: number; options: Array<{ label: string; action: string }> }>
       stats?: { applied: number; skipped: number; conflicts: number; skippedForValidity?: number }
+      unresolved?: string[]
     } => {
       try {
         const upstreamContent = readFileSync(onlinePath, 'utf-8')
@@ -270,7 +288,14 @@ export function register(store: Store<AppSettings>): void {
         const currentPath = getProfileBackedSetting(store, 'filterPath')
         if (currentPath === localPath) loadFilter(localPath, 'Online Filter Merged')
 
-        return { ok: true, stats: { ...result.stats, skippedForValidity: fallbackBlocks.length } }
+        // Removal conflicts carry `options: []`, so they never entered
+        // `actionableConflicts` above and never block the merge -- they are
+        // reported here instead, matching the quick-update path.
+        return {
+          ok: true,
+          stats: { ...result.stats, skippedForValidity: fallbackBlocks.length },
+          unresolved: result.conflicts.map((c) => c.description),
+        }
       } catch (err) {
         return { ok: false, error: String(err) }
       }

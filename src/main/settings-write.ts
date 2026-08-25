@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import type Store from 'electron-store'
-import { getOverlayWindow, setCloseOnClickOutside, setRequireGameFocusForChat } from './overlay'
+import { getOverlayWindow, setCloseOnClickOutside } from './overlay'
 import { withPluginHotkeys } from './app-macros'
 import { getAppWindow } from './app-window'
 import { applyCheatSheetHotkeys, getCheatSheetsOverlay } from './cheat-sheets'
@@ -12,6 +12,7 @@ import {
   setChatCommands,
   setHotkey,
   setPriceCheckHotkey,
+  refreshScopedHotkeys,
   setStashScrollEnabled,
   setStashScrollModifier,
 } from './hotkeys'
@@ -77,14 +78,13 @@ function sideEffect(setting: ProfileChangedSetting, prevAppSettings?: AppSetting
 
   if (key === PROFILE_VERSION_KEY) {
     setPoeVersion(value as GameVariant)
+    refreshScopedHotkeys('settings-game-change')
   } else if (key === 'hotkey') {
     setHotkey(value as string)
   } else if (key === 'priceCheckHotkey') {
     setPriceCheckHotkey(value as string)
   } else if (key === 'closeOnClickOutside') {
     setCloseOnClickOutside(value as boolean)
-  } else if (key === 'requireGameFocusForChat') {
-    setRequireGameFocusForChat(value as boolean)
   } else if (key === 'chatCommands') {
     setChatCommands(value as AppSettings['chatCommands'])
   } else if (key === 'appMacros') {

@@ -1,14 +1,30 @@
 import { app, net } from 'electron'
+import { CHART_ZONES } from '@shared/data/trade/charts'
+import {
+  MERCENARY_WARRANT_BASE_TYPE,
+  MERCENARY_WARRANT_BUILDS,
+  MERCENARY_WARRANT_DISCRIMINATOR,
+} from '@shared/data/trade/mercenary-warrants'
+import { SCRYING_ORB_AREAS, SCRYING_ORB_DISCRIMINATOR } from '@shared/data/trade/scrying-orbs'
 import tabletModMap from '@shared/data/trade/tablet-mods.json'
 import { TRANSFIGURED_GEM_DISC } from '@shared/data/trade/transfigured-gems'
+import { vaalGemType } from '@shared/data/trade/vaal-gems'
 import { getTradeUrls } from '@shared/endpoints'
-import { isClusterJewel, isSkillGem, splitRuneTier } from '@shared/poe-item'
+import { hasGeneratedName, isClusterJewel, isSkillGem, splitRuneTier } from '@shared/poe-item'
 import { recordMainBreadcrumb } from '../diagnostics'
 import { getPoeVersion } from '../game-state'
 import { getOverlayWindow } from '../overlay'
 import { harvestIcons } from './icon-cache'
+import { getUniquesByBase } from './prices'
 import { adjustRateLimits, RateLimiter } from './rate-limiter'
+import { getStatEntries } from './stat-matcher/stats-cache'
 import { normalizeTabletModKey, stripTabletMapScoping } from './stat-matcher/producers/tablets'
+
+/** Trade pseudo id for "# Enchant Modifiers" — used to NOT-filter enchanted BPs. */
+export function resolveEnchantModsPseudoId(): string | null {
+  const hit = getStatEntries().find((e) => e.id.startsWith('pseudo.') && /Enchant Modifiers/i.test(e.text))
+  return hit?.id ?? null
+}
 
 /** Forward any newly-harvested name->icon pairs to the overlay so it can merge
  *  them into the in-session iconMap. Without this the renderer would only pick
@@ -76,6 +92,10 @@ export function stripTradeTokens(s: string): string {
   return s.replace(/\[([^\]|]+)\|?([^\]]*)\]/g, (_, a: string, b: string) => b || a)
 }
 
+/** Special categories GGG tags onto a folded `explicitMods` entry. */
+const MOD_CATEGORY_FLAGS = ['fractured', 'crafted', 'desecrated', 'mutated'] as const
+export type ModCategory = (typeof MOD_CATEGORY_FLAGS)[number]
+
 /** A single entry in a trade-fetch item's `*Mods` array.
  *
  *  PoE1 (and, as of 2026-06, PoE2 *implicit* mods) send a plain string. PoE2's
@@ -84,12 +104,20 @@ export function stripTradeTokens(s: string): string {
  *  the per-mod tier/magnitude data that used to live only in `extended.mods`
  *  (now absent for explicits) is inlined under `mods`. Consumers must read the
  *  text via `modEntryText` rather than assuming a string -- treating the object
- *  as a string threw `t.replace is not a function` for every PoE2 search. */
+ *  as a string threw `t.replace is not a function` for every PoE2 search.
+ *
+ *  As of 2026-07, GGG additionally folds the whole explicit family into a
+ *  single `explicitMods` array on both /api/trade and /api/trade2: the
+ *  dedicated `fracturedMods`/`craftedMods`/`desecratedMods`/`mutatedMods`
+ *  arrays are gone, and each entry instead tags its own category via
+ *  `domain`/`flags`. See `modEntryCategory`. */
 export type FetchItemMod =
   | string
   | {
       description: string
       hash?: string
+      domain?: string
+      flags?: Partial<Record<ModCategory, boolean>>
       mods?: Array<{
         // name/tier are omitted for fixed unique rolls (only magnitudes present).
         name?: string
@@ -102,6 +130,22 @@ export type FetchItemMod =
 /** Display text of a `*Mods` entry regardless of which shape GGG sent. */
 export function modEntryText(e: FetchItemMod | undefined): string {
   return typeof e === 'string' ? e : (e?.description ?? '')
+}
+
+/** Which special category a folded `explicitMods` entry belongs to, or null for a
+ *  plain explicit. `domain` mirrors the flag for fractured/crafted/desecrated but
+ *  stays 'explicit' for foulborn (mutated), so `flags` is the authoritative signal. */
+export function modEntryCategory(e: FetchItemMod | undefined): ModCategory | null {
+  if (!e || typeof e === 'string') return null
+  for (const c of MOD_CATEGORY_FLAGS) if (e.flags?.[c]) return c
+  const d = e.domain as ModCategory | undefined
+  return d && (MOD_CATEGORY_FLAGS as readonly string[]).includes(d) ? d : null
+}
+
+/** Stripped text of every folded `explicitMods` entry in `cat`, or undefined if none. */
+export function pickCategory(mods: FetchItemMod[] | undefined, cat: ModCategory): string[] | undefined {
+  const out = (mods ?? []).filter((e) => modEntryCategory(e) === cat).map((e) => stripTradeTokens(modEntryText(e)))
+  return out.length > 0 ? out : undefined
 }
 
 // Calculated pseudos that PoE2's /api/trade2 rejects as native `pseudo.*` stat
@@ -141,6 +185,9 @@ interface TradeSearchResult {
   id: string
   result: string[]
   total: number
+  /** Set on rejected queries (HTTP 400 bodies parse into this same shape), e.g.
+   *  code 2 "Query is too complex ... Logging in will increase this limit." */
+  error?: { code?: number; message?: string }
 }
 
 interface TradeListing {
@@ -158,23 +205,33 @@ interface TradeListing {
     baseType?: string
     explicitMods?: string[]
     implicitMods?: string[]
+    enchantMods?: string[]
     runeMods?: string[]
     fracturedMods?: string[]
     foulbornMods?: string[]
     craftedMods?: string[]
+    desecratedMods?: string[]
     ilvl?: number
     sockets?: Array<{ group: number; sColour: string }>
     gemLevel?: number
     quality?: number
     corrupted?: boolean
     mirrored?: boolean
+    sanctified?: boolean
     identified?: boolean
     templeOpenRooms?: string[]
     templeObstructedRooms?: string[]
     storedExperience?: number
+    memoryStrands?: number
+    intangibility?: number
     modTiers?: Record<string, { tier: string; name: string; ranges: string }>
     rarity?: string
     mapProperties?: Array<{ name: string; value: string }>
+    areaLevel?: number
+    heistJob?: { skill: string; level: number }
+    chartZone?: string
+    /** Mercenary Warrant kit, in the order the item prints it. */
+    mercenarySkills?: Array<{ name: string; icon?: string; supports: Array<{ name: string; tier?: number }> }>
   }
 }
 
@@ -188,6 +245,11 @@ export interface TradeResult {
    *  API rejects weighted searches for anonymous users. The UI shows a login tip
    *  on each matching filter row. Absent when nothing was dropped. */
   loginRequiredPseudoIds?: string[]
+  /** Ids of Mercenary Warrant support rows that searched unscoped because the user
+   *  is not logged in -- scoping a support to its skill needs a `mercenary` stat
+   *  group, and anonymous queries only fit one. The rows still filtered, just
+   *  item-wide instead of per-skill. Absent when nothing was degraded. */
+  loginRequiredMercenaryIds?: string[]
 }
 
 export interface BulkExchangeListing {
@@ -233,6 +295,9 @@ export interface StatFilter {
   premium?: boolean
   modTier?: number // mod tier if known (from advanced mod data)
   modRange?: { min: number; max: number } // possible roll range for this mod
+  /** Where the mod came from (influence, delve, temple, eldritch altar) when it isn't
+   *  an ordinary craftable affix. Display only - the trade query is unaffected. */
+  modSource?: import('@shared/data/tiers/mod-sources').ModSource
   /** Resolved tier ladder for scrubbable affixes (single-stat or trade-averaged,
    *  non-Unique). Attached by the explicits producer; absent when not scrubbable. */
   tierLadder?: import('@shared/data/tiers/types').ModTier[]
@@ -247,6 +312,12 @@ export interface StatFilter {
   /** Ternary chip state: 'yes' | 'no' | undefined (= any). Also used by
    *  minmax chips: 'min' | 'max' | undefined (= off). */
   chipState?: 'yes' | 'no' | 'min' | 'max'
+  /** Mercenary Warrant support rows only: the stat id of the skill this support
+   *  sits on. Trade scopes a support to its skill via a `mercenary` stat group
+   *  (the group's head is the skill), so the pair travels together. Two skills
+   *  carrying the same support therefore get one row each, sharing a stat id but
+   *  not a parent. */
+  mercenarySkillId?: string
   /** PoE2 Weighted Sum payload for calculated pseudos: the contributing real
    *  stat ids. Present only on `type: 'pseudo'` chips; ignored on PoE1, where
    *  pseudos use their native `pseudo.*` id. */
@@ -256,6 +327,11 @@ export interface StatFilter {
   /** True when this mod has a fixed (non-rolled) value: advanced-mod range has min === max,
    *  or no ranges at all. Fixed mods are excluded from direction/bound math in overrides. */
   fixedRoll?: boolean
+  /** True for a Forbidden Shako-style randomized support row (matched into the
+   *  `indexable_support_*` family). Which supports the item rolled -- and how high --
+   *  IS the item's price, so Base mode must keep the producer's enabled state instead
+   *  of blanket-disabling it like an ordinary unique explicit (#564). */
+  randomSupport?: boolean
 }
 
 /** Build a trade `{ min?, max? }` value object from a filter, dropping bounds
@@ -276,12 +352,16 @@ function isWeightedPseudo(f: StatFilter, dialect: TradeDialect): boolean {
   )
 }
 
-/** Whether a search would include at least one Weighted Sum group. The trade API
- *  rejects weighted searches for anonymous users, so the caller checks login
- *  before searching only when this is true. */
+/** Whether a search would emit stat groups the trade API rejects for anonymous
+ *  users: Weighted Sum groups, or per-skill `mercenary` groups (two of those
+ *  already blow the guest complexity budget and 400). The caller checks login
+ *  before searching only when this is true, so the query builder can degrade
+ *  anonymous searches instead of sending a doomed one. */
 export function searchNeedsLogin(statFilters: StatFilter[]): boolean {
   const dialect = TRADE_DIALECTS[getPoeVersion()]
-  return statFilters.some((f) => f.enabled && isWeightedPseudo(f, dialect))
+  return statFilters.some(
+    (f) => f.enabled && (isWeightedPseudo(f, dialect) || (f.type === 'mercenary' && f.mercenarySkillId != null)),
+  )
 }
 
 const ynToOption = (s: 'yes' | 'no'): 'true' | 'false' => (s === 'yes' ? 'true' : 'false')
@@ -672,17 +752,31 @@ export async function searchTrade(
     status: { option: isDivCard ? 'available' : tradeStatus },
   }
 
-  // Unid items have hidden mods, so any explicit/implicit/fractured/crafted/pseudo
-  // filter would never match -- the stat-filter loop below drops those when the
-  // unid chip is on. Computed up here too because an unidentified unique must skip
+  // Unid items hide rolled explicits, so the stat-filter loop below drops those
+  // when the unid chip is on (implicits/enchants/runes that stay visible still
+  // flow through). Computed up here too because an unidentified unique must skip
   // the name search (see the Unique branch).
   const unidEnabled = statFilters.some((f) => f.id === 'misc.identified' && f.enabled)
 
   // For uniques, search by name + base type
   // Strip "Foulborn " prefix from the trade search name
   if (item.rarity === 'Unique' && item.itemClass === 'Maps') {
-    // Unique maps: search by name only (type "Map" doesn't work with name)
-    query.name = item.name
+    // Unique maps: search by name only (type "Map" doesn't work with name).
+    // An unid unique map has name == baseType (e.g. "Machinarium Map"), which
+    // the trade API rejects as an unknown name, and map bases are not valid
+    // query.type values either (#470). Resolve the real unique name from the
+    // uniques-by-base data. Replica/Infused variants never drop unidentified
+    // (Heist curios and vendor recipes produce identified items), so prefer
+    // the droppable candidate on shared bases. (lookupBestUniquePrice in
+    // prices.ts picks by highest chaos value instead - different goal: price
+    // estimate there, a name the trade API accepts here.)
+    if (unidEnabled && item.name === item.baseType) {
+      const candidates = getUniquesByBase()[item.baseType] ?? []
+      const droppable = candidates.filter((n) => !/^(?:Replica|Infused)\s/.test(n))
+      query.name = droppable[0] ?? candidates[0] ?? item.name
+    } else {
+      query.name = item.name
+    }
   } else if (item.rarity === 'Unique' && item.itemClass === 'Stackable Currency') {
     // Captured beasts: a beast IS its own base, so the trade listing's typeLine is
     // the beast name and the name field is empty. Setting query.name would AND-filter
@@ -726,6 +820,13 @@ export async function searchTrade(
       ...(isValdoMap ? {} : { type_filters: { filters: { rarity: { option: 'nonunique' } } } }),
       map_filters: { filters: mapFilterObj },
     }
+  } else if (item.baseType === 'Scrying Orb') {
+    // Scrying Orbs are Stackable Currency but each is bound to a map area, so
+    // they price per area, not as a fungible stack (#513). The bare type covers
+    // every area; the map-area chip below narrows it to the discriminator form.
+    // Skipping the generic branch also keeps its `rarity: nonunique` type filter
+    // off a currency-frame item.
+    query.type = item.baseType
   } else if (item.itemClass === 'Divination Cards') {
     query.type = item.baseType
   } else if (isSkillGem(item)) {
@@ -760,6 +861,7 @@ export async function searchTrade(
       'defence.energy_shield': 'es',
       'defence.ward': 'ward',
       'defence.block': 'block',
+      'defence.base_percentile': 'base_defence_percentile',
     }
     for (const f of defenceFilters) {
       const key = idMap[f.id]
@@ -841,7 +943,7 @@ export async function searchTrade(
     }
   }
 
-  // Add heist filters (wings revealed)
+  // Add heist filters (wings revealed / job levels)
   const heistFilters = statFilters.filter((f) => f.type === 'heist' && f.enabled)
   if (heistFilters.length > 0) {
     const heistQuery: Record<string, { min?: number; max?: number }> = {}
@@ -871,6 +973,37 @@ export async function searchTrade(
     }
   }
 
+  // Charts: a zone is its own trade type, expressed as a discriminator pair
+  // ({option: "SeaPillars", discriminator: "chart_coral_forest"}). This has to
+  // run AFTER the base-type block -- that block sets query.type to the plain
+  // "Coral Forest Chart" string, which would drop the zone. Same shape as the
+  // map and rune-base discriminator handling above.
+  const chartZoneFilter = statFilters.find((f) => f.id === 'misc.chart_zone' && f.enabled)
+  const chartZoneEntry = chartZoneFilter ? CHART_ZONES[chartZoneFilter.text] : undefined
+  if (chartZoneEntry) {
+    query.type = { option: chartZoneEntry.option, discriminator: chartZoneEntry.discriminator }
+  }
+
+  // Scrying Orbs: same deal, one trade type per bound map area. The API rejects
+  // the displayed "Scrying Orb (Dunes)" text as a base type -- only the opaque
+  // option id paired with the scrying_orb discriminator works. Runs after the
+  // base-type block for the same reason the chart one does.
+  const scryingAreaFilter = statFilters.find((f) => f.id === 'misc.scrying_area' && f.enabled)
+  const scryingAreaOption = scryingAreaFilter ? SCRYING_ORB_AREAS[scryingAreaFilter.text] : undefined
+  if (scryingAreaOption) {
+    query.type = { option: scryingAreaOption, discriminator: SCRYING_ORB_DISCRIMINATOR }
+  }
+
+  // Mercenary Warrants: one trade type per mercenary build, "Infamous" variants
+  // included. Without this the search is the bare "Mercenary Warrant" type, which
+  // matches every build in the league and prices a Cardinal against the cheapest
+  // Striker. Runs after the base-type block for the same reason the two above do.
+  const mercenaryBuildFilter = statFilters.find((f) => f.id === 'misc.mercenary_build' && f.enabled)
+  const mercenaryBuildOption = mercenaryBuildFilter ? MERCENARY_WARRANT_BUILDS[mercenaryBuildFilter.text] : undefined
+  if (mercenaryBuildOption) {
+    query.type = { option: mercenaryBuildOption, discriminator: MERCENARY_WARRANT_DISCRIMINATOR }
+  }
+
   // Add misc filters (quality, ilvl, corrupted, mirrored)
   const miscFiltersAll = statFilters.filter(
     (f) =>
@@ -890,10 +1023,19 @@ export async function searchTrade(
       miscQuery.corrupted = { option: ynToOption(f.chipState) }
     if (f.id === 'misc.mirrored' && (f.chipState === 'yes' || f.chipState === 'no'))
       miscQuery.mirrored = { option: ynToOption(f.chipState) }
+    if (f.id === 'misc.vestigial' && (f.chipState === 'yes' || f.chipState === 'no'))
+      miscQuery.vestigial = { option: ynToOption(f.chipState) }
+    if (f.id === 'misc.foulborn' && (f.chipState === 'yes' || f.chipState === 'no'))
+      miscQuery.mutated = { option: ynToOption(f.chipState) }
+    if (f.id === 'misc.sanctified' && (f.chipState === 'yes' || f.chipState === 'no'))
+      miscQuery.sanctified = { option: ynToOption(f.chipState) }
     if (f.id === 'misc.identified') miscQuery.identified = { option: f.enabled ? 'false' : 'true' }
     if (f.id === 'misc.memory_level' && f.enabled) miscQuery.memory_level = minMaxValue(f)
     if (f.id === 'misc.area_level' && f.enabled) miscQuery.area_level = minMaxValue(f)
     if (f.id === 'misc.stored_experience' && f.enabled) miscQuery.stored_experience = minMaxValue(f)
+    // Allflame intangibility (#588). Ships as a cap, so the search keeps listings with no
+    // Intangibility property at all -- those are the uncrafted copies, the best ones.
+    if (f.id === 'misc.intangibility' && f.enabled) miscQuery.intangibility = minMaxValue(f)
     // Influence filters (misc_filters for traditional influences)
     if (f.id.startsWith('misc.influence_') && f.enabled) {
       const influenceKeyMap: Record<string, string> = {
@@ -926,6 +1068,8 @@ export async function searchTrade(
     'map_iir',
     'map_packsize',
     'map_completion_reward',
+    // PoE1 chart property filters
+    'chart_shape',
     // PoE2 waystone property filters
     'map_tier',
     'map_revives',
@@ -941,7 +1085,7 @@ export async function searchTrade(
     const mapQuery: Record<string, unknown> = {}
     for (const f of mapPropFilters) {
       const key = f.id.replace('map.', '')
-      if (key === 'map_completion_reward' && f.option) {
+      if ((key === 'map_completion_reward' || key === 'chart_shape') && f.option) {
         mapQuery[key] = { option: f.option }
       } else {
         mapQuery[key] = minMaxValue(f)
@@ -985,6 +1129,21 @@ export async function searchTrade(
     }
   }
 
+  // Level Requirement row (#570). Both games index this under req_filters -- unlike
+  // ilvl there is no per-game split, so no version gate. It must not be folded into
+  // miscQuery above: misc_filters has no `lvl` key, so the cap would be accepted and
+  // silently dropped.
+  const reqLevelFilter = statFilters.find((f) => f.id === 'misc.req_level' && f.enabled)
+  if (reqLevelFilter) {
+    const existing = (query.filters as Record<string, unknown>) ?? {}
+    const existingReqFilters =
+      ((existing.req_filters as Record<string, unknown>)?.filters as Record<string, unknown>) ?? {}
+    query.filters = {
+      ...existing,
+      req_filters: { filters: { ...existingReqFilters, lvl: minMaxValue(reqLevelFilter) } },
+    }
+  }
+
   // Add stat filters (exclude non-stat types, but include pseudo filters from misc chips)
   const miscPseudoIds = new Set([
     'pseudo.pseudo_number_of_empty_prefix_mods',
@@ -998,15 +1157,20 @@ export async function searchTrade(
     'pseudo.pseudo_map_more_map_drops',
     'pseudo.pseudo_map_more_card_drops',
   ])
-  // Unid items have hidden mods, so any explicit/implicit/fractured/crafted/pseudo
-  // filter would never match -- drop those when the unid chip is on. Enchants
-  // and imbues survive identification (cluster jewel passive count etc.), so
-  // those keep flowing through. `unidEnabled` is computed once near the top.
-  const survivesUnid = (f: StatFilter): boolean => f.type === 'enchant' || f.type === 'imbued' || f.type === 'rune'
+  // Unid items hide rolled explicits/crafted/pseudos, so those must not enter the
+  // query when the unid chip is on. Mods that remain visible on unid items still
+  // match trade listings: enchants/imbues/runes, and implicits — including every
+  // map-category implicit (Elder/Shaper influence, guardian "occupied by …", and
+  // Conqueror citadel lines like Al-Hezmin/Baran/Veritania/Drox).
+  // `unidEnabled` is computed once near the top.
+  const survivesUnid = (f: StatFilter): boolean =>
+    f.type === 'enchant' || f.type === 'imbued' || f.type === 'rune' || f.type === 'implicit'
   const enabledFilters = statFilters.filter(
     (f) =>
       f.enabled &&
       f.type !== 'timeless' &&
+      f.type !== 'mageblood-dup' &&
+      f.type !== 'mageblood-legacy' &&
       f.id !== 'misc.memory_level' &&
       f.id !== 'misc.area_level' &&
       f.id !== 'socket.white_sockets' &&
@@ -1021,7 +1185,45 @@ export async function searchTrade(
   // (resistances, life, mana) and all PoE1 pseudos stay in the `and` group as
   // native ids. dialect.weightedPseudoIds names the ids that need this routing.
   const weightPseudoFilters = enabledFilters.filter((f) => isWeightedPseudo(f, dialect))
-  const andFilters = enabledFilters.filter((f) => !weightPseudoFilters.includes(f))
+
+  // Mercenary Warrant kit. A support only means anything scoped to the skill it
+  // sits on, and trade expresses that as a `mercenary` stat group whose head is
+  // the skill: probed, Bladefall + Brutality + Increased AoE returned 2632 as
+  // flat `and` filters (the supports could sit on any skill) versus 979 as one
+  // group, and hanging Bladefall's supports off Frost Shield returned 0.
+  //
+  // One group per skill that has an enabled support; a group also needs its skill
+  // even when the user unticked that row, since a support-only group matches
+  // everything. Skills with no enabled support stay flat -- a one-filter group and
+  // a flat filter return the same count (5395 vs 5396), and groups are what the
+  // complexity budget charges for.
+  const mercenaryFilters = enabledFilters.filter((f) => f.type === 'mercenary')
+  const mercenarySupports = mercenaryFilters.filter((f) => f.mercenarySkillId)
+  // Anonymous queries fit exactly one stat group: six groups, or even one group
+  // alongside a populated `and` group, come back "Query is too complex ... Logging
+  // in will increase this limit". Rather than drop the supports, degrade to the
+  // unscoped flat filters (a superset of the scoped search, still narrowing) and
+  // report the row ids so the UI can offer a login for real scoping.
+  const scopeSupports = loggedIn && mercenarySupports.length > 0
+  const mercenaryGroups = scopeSupports
+    ? [...new Set(mercenarySupports.map((f) => f.mercenarySkillId!))].map((skillId) => ({
+        type: 'mercenary',
+        filters: [
+          { id: skillId },
+          ...mercenarySupports.filter((f) => f.mercenarySkillId === skillId).map((f) => ({ id: f.id })),
+        ],
+      }))
+    : []
+  const groupedMercenaryIds = new Set(mercenaryGroups.flatMap((g) => g.filters.map((f) => f.id)))
+  const loginRequiredMercenaryIds = loggedIn ? [] : mercenarySupports.map((f) => f.id)
+
+  const andFilters = enabledFilters.filter(
+    (f) =>
+      !weightPseudoFilters.includes(f) &&
+      // A skill that heads a group must not also ride in the `and` group: it is
+      // already constrained there, and every extra filter costs complexity.
+      !(f.type === 'mercenary' && groupedMercenaryIds.has(f.id)),
+  )
 
   // The trade API rejects weighted searches for anonymous users ("too complex,
   // log in"), so emit weight groups only when logged in. When not, the unsupported
@@ -1029,8 +1231,11 @@ export async function searchTrade(
   // so the UI can prompt a login on those rows rather than silently lose them.
   const loginRequiredPseudoIds = loggedIn ? [] : weightPseudoFilters.map((f) => f.id)
   // Spread into whichever TradeResult we return below; empty object when nothing
-  // was dropped so the field is absent.
-  const loginRequiredField = loginRequiredPseudoIds.length > 0 ? { loginRequiredPseudoIds } : {}
+  // was dropped or degraded so the fields are absent.
+  const loginRequiredField = {
+    ...(loginRequiredPseudoIds.length > 0 ? { loginRequiredPseudoIds } : {}),
+    ...(loginRequiredMercenaryIds.length > 0 ? { loginRequiredMercenaryIds } : {}),
+  }
 
   const timelessFilters = unidEnabled ? [] : statFilters.filter((f) => f.enabled && f.type === 'timeless')
 
@@ -1050,6 +1255,12 @@ export async function searchTrade(
       })),
     })
   }
+
+  // One `mercenary` group per Mercenary Warrant skill carrying an enabled support
+  // (empty unless logged in -- see scopeSupports above). Presence-only, so no
+  // per-filter or per-group value: sending `value: {min: 1}` made the group match
+  // every warrant instead of narrowing.
+  statGroups.push(...mercenaryGroups)
 
   // One Weighted Sum group per pseudo that needs it. The trade2 weight group
   // lists each stat id as `{id, disabled:false}` and sums at the implicit weight
@@ -1085,6 +1296,65 @@ export async function searchTrade(
     })
   }
 
+  // Mageblood: each Mage's Legacy is its own trade stat id (the specific Legacy is
+  // baked into the id as an "|N" suffix; the trade index counts copies of that id).
+  // The stat-matcher post-processor collapses same-Legacy duplicates to one chip per
+  // distinct Legacy plus a synthetic Duplicates chip (duplicates = 4 - distinctCount).
+  // Only the "easy" cases (every Legacy row still enabled, so distinct + duplicates ==
+  // 4) get full count-group fidelity; anything else (a user-deselected Legacy row, or
+  // an inconsistent duplicate count) degrades to present-only filters.
+  // Legacy mods are explicit (hidden pre-ID), so an unidentified search must not leak
+  // them -- zero them out under unid exactly like the timeless block above.
+  const legacyChips = unidEnabled ? [] : statFilters.filter((f) => f.enabled && f.type === 'mageblood-legacy')
+  const dupChip = unidEnabled ? undefined : statFilters.find((f) => f.enabled && f.type === 'mageblood-dup')
+  if (legacyChips.length > 0) {
+    const knownCount = legacyChips.length
+    const dupCount = dupChip ? (dupChip.min ?? dupChip.value ?? 0) : 0
+    // Easy case = every Legacy still enabled, so distinct + duplicates == 4. This
+    // is strictly stronger than "<= 4", so it also guards against an inconsistent
+    // chip set claiming more than 4 total Legacies.
+    const isEasyCase = dupChip != null && dupCount > 0 && knownCount + dupCount === 4
+
+    if (knownCount === 4 && dupCount === 0) {
+      // All 4 Legacies distinct: each must appear at least once.
+      statGroups.push({
+        type: 'and',
+        filters: legacyChips.map((f) => ({ id: f.id, value: { min: 1 } })),
+      })
+    } else if (knownCount === 1 && dupCount === 3) {
+      // A single Legacy repeated 4 times: that Legacy must appear exactly 4 times.
+      statGroups.push({
+        type: 'and',
+        filters: legacyChips.map((f) => ({ id: f.id, value: { min: 4 } })),
+      })
+    } else {
+      // Hard cases and the 2+2 / 3+1 easy cases (which carry their exact-count
+      // constraint in the count group below) both emit present-only filters.
+      statGroups.push({
+        type: 'and',
+        filters: legacyChips.map((f) => ({ id: f.id })),
+      })
+    }
+
+    if (isEasyCase && (knownCount === 2 || knownCount === 3)) {
+      // 2 distinct + 2 duplicates: one Legacy has 3 copies, the other 1 (or 2+2) --
+      // total count across both Legacy ids must reach 4.
+      // 3 distinct + 1 duplicate: one Legacy has 2 copies, the other two have 1 each
+      // -- total count across all three must reach 7.
+      // Each Legacy is queried by its own suffixed id with a count bound (value:{min/
+      // max}); this is EE2's proven buildMageBloodNotFilter form and matches the live
+      // trade2 stat ids. The count-as-value semantics are inherited from EE2.
+      const countValue = knownCount === 2 ? 4 : 7
+      const perLegacyValues: Array<{ min?: number; max?: number }> =
+        knownCount === 2 ? [{ min: 1 }, { min: 2 }, { min: 3 }] : [{ min: 1 }, { min: 2 }, { max: 2 }]
+      statGroups.push({
+        type: 'count',
+        filters: legacyChips.flatMap((f) => perLegacyValues.map((v) => ({ id: f.id, value: { ...v } }))),
+        value: { min: countValue },
+      })
+    }
+  }
+
   // Inscribed Ultimatum filters. Each enabled chip carries the API-internal id
   // in its `option` field (resolved at chip-generation time in stat-matcher).
   const ultimatumChips = statFilters.filter((f) => f.type === 'ultimatum' && f.enabled)
@@ -1105,6 +1375,36 @@ export async function searchTrade(
         ...((query.filters as Record<string, unknown>) ?? {}),
         ultimatum_filters: { disabled: false, filters: ultimatumFilters },
       }
+    }
+  }
+
+  // Plain originator (Zana memory) maps: NOT the Elder influence implicit so the comps
+  // are other plain 16.5s, not the far pricier Elder Guardian copies (#556). Only reached
+  // when the chip is present, which the producer does solely for non-Elder originator maps.
+  // The catalog id is flattened (`implicit.stat_1792283443|2`) and must ship bare -- pairing
+  // a `|N` id with value.option returns zero listings.
+  const excludeElderChip = statFilters.find((f) => f.id === 'misc.exclude_elder')
+  if (excludeElderChip?.enabled) {
+    const elderStat = matchModToStat('Area is influenced by The Elder', false, 'implicit')
+    if (elderStat) {
+      statGroups.push({ type: 'not', filters: [{ id: elderStat.statId, value: {} }] })
+    } else {
+      recordMainBreadcrumb('trade: Exclude Elder enabled but the Elder map implicit is not in the stats catalog')
+    }
+  }
+
+  // Unenchanted Heist Blueprints: NOT `# Enchant Modifiers` so comps exclude
+  // Enchanted Armaments / other enchanted listings. Honors the Exclude Enchanted chip.
+  const excludeEnchantChip = statFilters.find((f) => f.id === 'misc.exclude_enchanted')
+  if (excludeEnchantChip?.enabled) {
+    const enchantModsPseudoId = resolveEnchantModsPseudoId()
+    if (enchantModsPseudoId) {
+      statGroups.push({
+        type: 'not',
+        filters: [{ id: enchantModsPseudoId, value: {} }],
+      })
+    } else {
+      recordMainBreadcrumb('trade: Exclude Enchanted enabled but Enchant Modifiers pseudo id not in stats catalog')
     }
   }
 
@@ -1140,6 +1440,19 @@ export async function searchTrade(
     method: 'POST',
     body,
   })) as TradeSearchResult
+
+  // A rejected query parses fine and would otherwise render as "No listings
+  // found" -- surface it instead. Complexity rejections get the house wording
+  // (matched on message text: code 2 is GGG's generic invalid-query code);
+  // anything else passes GGG's own message through.
+  if (searchResult.error) {
+    if (/too complex/i.test(searchResult.error.message ?? '')) {
+      throw new Error('This trade is too complicated for the API unless you are logged in. Blame Greg. Log in.')
+    }
+    throw new Error(
+      `GGG's trade API rejected this search: ${searchResult.error.message?.replace(/\s+/g, ' ') ?? 'unknown error'}`,
+    )
+  }
 
   if (!searchResult.result || searchResult.result.length === 0) {
     return {
@@ -1218,6 +1531,7 @@ export interface FetchEntry {
     additionalProperties?: Array<{ name: string; values: Array<[string, number]>; type?: number }>
     corrupted?: boolean
     duplicated?: boolean
+    sanctified?: boolean
     identified?: boolean
     frameType?: number
     extended?: {
@@ -1239,6 +1553,13 @@ export interface FetchEntry {
       hashes?: Record<string, Array<[string, number[]]>>
     }
     grantedSkills?: Array<{ name: string; values: Array<[string, number]>; icon?: string }>
+    /** Mercenary Warrants: the mercenary's kit. `supports` is absent on a skill
+     *  with none (an aura like Grace). */
+    mercenarySkills?: Array<{
+      name: string
+      icon?: string
+      supports?: Array<{ name: string; tier?: number }>
+    }>
   }
 }
 
@@ -1267,14 +1588,26 @@ export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing
           // object form is what threw `t.replace is not a function` (#PoE2 fetch).
           const clean = (arr?: FetchItemMod[]): string[] | undefined =>
             arr?.map((e) => stripTradeTokens(modEntryText(e)))
-          const explicit = clean(r.item.explicitMods)
+          // GGG folded the whole explicit family into one `explicitMods` array (2026-07):
+          // the dedicated fracturedMods/craftedMods/desecratedMods/mutatedMods arrays are
+          // gone and each entry now carries its category on `flags`/`domain`. Split them
+          // back out or the listing preview colours a fractured mod as a plain explicit
+          // (#512). Legacy arrays are still merged in so a GGG rollback stays handled.
+          const folded = r.item.explicitMods ?? []
+          const inCategory = (cat: ModCategory | null): FetchItemMod[] =>
+            folded.filter((e) => modEntryCategory(e) === cat)
+          const merge = (legacy: FetchItemMod[] | undefined, cat: ModCategory): string[] | undefined => {
+            const out = clean([...(legacy ?? []), ...inCategory(cat)]) ?? []
+            return out.length > 0 ? out : undefined
+          }
+          const explicit = clean(inCategory(null))
           const implicit = clean(r.item.implicitMods)
           const enchant = clean(r.item.enchantMods)
           const rune = clean(r.item.runeMods)
-          const fractured = clean(r.item.fracturedMods)
-          const crafted = clean(r.item.craftedMods)
-          const foulborn = clean(r.item.mutatedMods)
-          const desecrated = clean(r.item.desecratedMods)
+          const fractured = merge(r.item.fracturedMods, 'fractured')
+          const crafted = merge(r.item.craftedMods, 'crafted')
+          const foulborn = merge(r.item.mutatedMods, 'mutated')
+          const desecrated = merge(r.item.desecratedMods, 'desecrated')
           return {
             // Magic items (frameType 1) carry an empty `name`; their affixed
             // display name lives in `typeLine` (e.g. "Glaciated Prismatic Ring"),
@@ -1313,9 +1646,26 @@ export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing
             storedExperience: r.item.properties?.find((p) => p.name.startsWith('Stored Experience'))?.values?.[0]?.[0]
               ? parseInt(r.item.properties.find((p) => p.name.startsWith('Stored Experience'))!.values[0][0], 10)
               : undefined,
+            // Gear dropped inside a Memory carries a "Memory Strands: N" property
+            // (PoE1-only, GGG tags it type 99) -- it's the whole reason these bases sell.
+            memoryStrands: r.item.properties?.find((p) => p.name === 'Memory Strands')?.values?.[0]?.[0]
+              ? parseInt(r.item.properties.find((p) => p.name === 'Memory Strands')!.values[0][0], 10)
+              : undefined,
+            // Allflame intangibility, printed as "12%". GGG ships the name in raw tag form
+            // ("[Intangibility|Intangibility]") on this one, so match its property type code
+            // 110 first and keep a name test as the fallback (#588).
+            intangibility: (() => {
+              const v = r.item.properties?.find((p) => p.type === 110 || p.name.includes('Intangibility'))
+                ?.values?.[0]?.[0]
+              return v ? parseInt(v.replace('%', ''), 10) : undefined
+            })(),
             areaLevel: r.item.properties?.find((p) => p.name === 'Area Level')?.values?.[0]?.[0]
               ? parseInt(r.item.properties.find((p) => p.name === 'Area Level')!.values[0][0], 10)
               : undefined,
+            // Charts carry the zone name as an UNNAMED property (name: "") tagged
+            // with GGG's chart-zone type code 105, so the type is the only thing to
+            // match on -- the same trick the quality lookup above uses with type 6.
+            chartZone: r.item.properties?.find((p) => p.type === 105)?.values?.[0]?.[0],
             heistJob: (() => {
               const prop = r.item?.properties?.find((p) => p.type === 46)
               if (!prop?.values?.[0]?.[0] && !prop?.values?.[1]?.[0]) return undefined
@@ -1323,6 +1673,7 @@ export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing
             })(),
             corrupted: r.item.corrupted,
             mirrored: r.item.duplicated,
+            sanctified: r.item.sanctified,
             identified: r.item.identified,
             ...(() => {
               const ap = r.item?.additionalProperties
@@ -1434,6 +1785,13 @@ export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing
             grantedSkills: r.item.grantedSkills
               ?.map((g) => ({ text: stripTradeTokens(g.values?.[0]?.[0] ?? ''), icon: g.icon }))
               .filter((g) => g.text),
+            // A Mercenary Warrant's kit -- the thing that sets its price. Kept as
+            // skill -> supports so the listing reads the way the item does in game.
+            mercenarySkills: r.item.mercenarySkills?.map((s) => ({
+              name: s.name,
+              icon: s.icon,
+              supports: (s.supports ?? []).map((sup) => ({ name: sup.name, tier: sup.tier })),
+            })),
           }
         })()
       : undefined,
@@ -1442,42 +1800,61 @@ export function parseFetchedListings(fetchedEntries: FetchEntry[]): TradeListing
 
 // ─── Bulk Exchange ──────────────────────────────────────────────────────────
 
-import { isVendorExchangeItem } from '@shared/data/trade/bulk-exchange-eligibility'
 import { getBulkExchangeIdMap } from '@shared/data/trade/bulk-exchange-ids'
 
 /** Build the `type` field of a gem trade query. Returns the discriminator shape for
- *  transfigured gems (with "Vaal " prepended to the base when the gem has a Vaal alt),
- *  a plain string for non-transfigured gems. */
+ *  transfigured gems (resolved to the Vaal half when the gem has a Vaal alt), a plain
+ *  string for non-transfigured gems. */
 export function buildGemTypeField(
   baseType: string,
   vaalGem: boolean | undefined,
 ): string | { option: string; discriminator: string } {
   const disc = TRANSFIGURED_GEM_DISC[baseType]
   if (disc) {
-    const baseGem = baseType.slice(0, baseType.indexOf(' of '))
-    return { option: vaalGem ? `Vaal ${baseGem}` : baseGem, discriminator: disc }
+    // The transfiguration suffix is the LAST " of " -- base skills whose own name
+    // carries one (Wave of Conviction, Rain of Arrows, Eye of Winter, Orb of Storms)
+    // get cut down to a bare "Wave" on the first, which trade rejects with
+    // "Discriminator did not match the specified item base type" (#589).
+    const baseGem = baseType.slice(0, baseType.lastIndexOf(' of '))
+    return { option: vaalGem ? vaalGemType(baseGem) : baseGem, discriminator: disc }
   }
-  if (vaalGem && !baseType.startsWith('Vaal ')) return `Vaal ${baseType}`
+  if (vaalGem && !baseType.startsWith('Vaal ')) return vaalGemType(baseType)
   return baseType
 }
 
 /** Look up the bulk exchange ID for an item by its name or base type */
-export function getBulkExchangeId(name: string, baseType: string): string | null {
+export function getBulkExchangeId(
+  name: string,
+  baseType: string,
+  rarity?: string,
+  zanaMemory?: boolean,
+): string | null {
   // Try exact name first (e.g. "Divine Orb", "Uncut Skill Gem (Level 20)"),
   // then base type. Map is picked per game: PoE1 uses the hand-maintained
   // legacy list, PoE2 uses EE2-sourced IDs.
   const bulkIdMap = getBulkExchangeIdMap(getPoeVersion())
-  let id = bulkIdMap[name] ?? bulkIdMap[baseType] ?? null
+  // Magic/Rare items show a randomly generated title that can collide with a
+  // real currency name (e.g. a Hypnotic Eye Jewel rolling "Ancient Orb", #501),
+  // so skip the name key for them -- only the base type can match.
+  let id = (hasGeneratedName(rarity) ? null : bulkIdMap[name]) ?? bulkIdMap[baseType] ?? null
   if (!id || id === 'sep') return null
-  // Fix legacy zana- prefixed map IDs to current format
-  if (id.startsWith('zana-map-tier-')) {
+  // "zana-map-tier-N" and "map-tier-N" are both live exchange markets with distinct
+  // listings -- an Originator (Zana memory) map belongs on the zana- market, a plain
+  // map on the stripped one. Pick the id matching the item in hand (#545).
+  if (id.startsWith('zana-map-tier-') && !zanaMemory) {
     id = id.replace('zana-', '')
   }
   return id
 }
 
 /** Check if an item should use bulk exchange instead of regular trade */
-export function isBulkExchangeItem(itemClass: string, name: string, baseType: string, _rarity?: string): boolean {
+export function isBulkExchangeItem(
+  itemClass: string,
+  name: string,
+  baseType: string,
+  _rarity?: string,
+  zanaMemory?: boolean,
+): boolean {
   // Items where individual attributes matter - always regular trade
   const regularTradeClasses = new Set([
     'Divination Cards',
@@ -1489,6 +1866,20 @@ export function isBulkExchangeItem(itemClass: string, name: string, baseType: st
   if (regularTradeClasses.has(itemClass)) return false
   // Specific items with variable properties that need regular trade
   if (baseType === "Facetor's Lens") return false
+  // A Scrying Orb is Stackable Currency but carries a bound map area, so it is
+  // priced per area on regular search and has no exchange listing at all (#513).
+  if (baseType === 'Scrying Orb') return false
+  // A Mercenary Warrant is Map Fragments, but it sells one specific mercenary --
+  // build and level are the price, and there is no bulk listing to offer.
+  if (baseType === MERCENARY_WARRANT_BASE_TYPE) return false
+  // The four Vaal Aspects (Ambition, Beauty, Cooperation, Curiosity) are Unique
+  // Pieces that transform when combined, not fungible stacks. GGG lists a slug
+  // for each in the Fragments exchange group, so the name map routes them to
+  // bulk -- but nobody sells them there. Measured mid-league: Cooperation had 0
+  // exchange offers against a 7-8 divine regular-search market, and Ambition had
+  // a single 20c offer against a 7-divine one. Price them on regular search,
+  // where name + base type is an exact match (#551).
+  if (baseType === 'Vaal Aspect') return false
   // Beasts are "Stackable Currency" but have rarity Rare/Unique and need regular trade
   if (itemClass === 'Stackable Currency' && (_rarity === 'Rare' || _rarity === 'Unique')) return false
   // Modified map-class items (Magic/Rare/Unique) aren't stackable, so they can't be on
@@ -1499,29 +1890,22 @@ export function isBulkExchangeItem(itemClass: string, name: string, baseType: st
   // regular search regardless.
   const isMapClass = itemClass === 'Maps' || itemClass === 'Waystones'
   if (isMapClass && (_rarity === 'Magic' || _rarity === 'Rare' || _rarity === 'Unique')) return false
+  // An Originator (Zana memory) map is a separately-priced item: its exchange market
+  // only exposes a bulk ratio, and that ratio reads identically to the plain map
+  // market at the cheap end (both bottom out at 1c) -- there is no way to distinguish
+  // them on the exchange. Price it on the regular search instead, where the
+  // originator implicit, tier, and rarity are real filters (#545).
+  if (isMapClass && zanaMemory) return false
 
-  // PoE2 routing: an Ange-exchange item only goes through bulk if we actually
-  // have its exchange ID. Eligible-but-no-ID items (e.g. new bases not yet on
-  // the exchange) fall through to regular search so the user sees real listings
-  // as a price reference -- the AngeBanner still surfaces independently (it
-  // keys off isVendorExchangeItem), so they're still told to check Ange.
-  if (getPoeVersion() === 2 && isVendorExchangeItem(2, itemClass, baseType, _rarity)) {
-    return getBulkExchangeId(name, baseType) != null
-  }
-
-  const bulkClasses = new Set([
-    'Currency',
-    'Stackable Currency',
-    'Map Fragments',
-    'Scarabs',
-    'Delve Stackable Socketable Currency',
-    'Harvest Seed',
-    'Delve Socketable Currency',
-    'Currency Stash Tab Items',
-  ])
-  if (bulkClasses.has(itemClass)) return true
-  // Also check if we have a bulk ID for it (catches essences, fossils, boss frags, etc.)
-  return getBulkExchangeId(name, baseType) != null
+  // An exchange ID is what makes bulk possible at all -- it is the only thing the
+  // /exchange endpoint accepts under `want`. Belonging to a currency-ish item class
+  // is not enough: Incursion vials are Stackable Currency but GGG lists no vial in
+  // the exchange's own item list, so routing one to bulk could only ever render an
+  // empty panel while the regular search carries a real market (#550). This also
+  // covers what the PoE2 vendor-exchange path used to gate on its own: a PoE2 base
+  // not yet on the exchange falls through to regular search so the user still sees
+  // real listings, and the AngeBanner surfaces independently in the renderer.
+  return getBulkExchangeId(name, baseType, _rarity) != null
 }
 
 export async function searchBulkExchange(
@@ -1662,6 +2046,12 @@ async function fetchAndMapListings(ids: string[], queryId: string): Promise<Trad
           // receive the raw entry. Mirrors parseFetchedListings (#PoE2 fetch).
           explicitMods: (r.item.explicitMods ?? []).map((e) => stripTradeTokens(modEntryText(e))),
           implicitMods: r.item.implicitMods?.map((e) => stripTradeTokens(modEntryText(e))),
+          // The preview colours mods by these buckets; GGG folds them all into
+          // explicitMods now, so split them back out here too (#512).
+          fracturedMods: pickCategory(r.item.explicitMods, 'fractured'),
+          craftedMods: pickCategory(r.item.explicitMods, 'crafted'),
+          foulbornMods: pickCategory(r.item.explicitMods, 'mutated'),
+          desecratedMods: pickCategory(r.item.explicitMods, 'desecrated'),
           ilvl: r.item.ilvl,
           // ExpandedListing surfaces these flags as status chips (Corrupted, Mirrored,
           // Unidentified); the regular trade path includes them, so map-regex listings
@@ -1820,7 +2210,10 @@ export async function searchMapsByRegex(
       trade_filters: {
         disabled: false,
         filters: {
-          ...(tradePriceOption === dialect.priceDivinePair
+          // Same rule as the main search: send the buyout currency for every
+          // option except the "equivalent" pseudo-option, which isn't a valid
+          // API value and has to leave the price filter off entirely.
+          ...(tradePriceOption !== dialect.priceEquivalent
             ? { price: { min: null, max: null, option: tradePriceOption } }
             : {}),
           ...(collapseListings ? { collapse: { option: 'true' } } : {}),
@@ -1963,7 +2356,10 @@ export async function searchWaystonesByRegex(
       trade_filters: {
         disabled: false,
         filters: {
-          ...(tradePriceOption === dialect.priceDivinePair
+          // Same rule as the main search: send the buyout currency for every
+          // option except the "equivalent" pseudo-option, which isn't a valid
+          // API value and has to leave the price filter off entirely.
+          ...(tradePriceOption !== dialect.priceEquivalent
             ? { price: { min: null, max: null, option: tradePriceOption } }
             : {}),
           ...(collapseListings ? { collapse: { option: 'true' } } : {}),
@@ -1997,7 +2393,8 @@ const TABLET_MOD_LOOKUP = tabletModMap as Record<string, string>
 const TABLET_TYPE_BASE_NAMES: Record<string, string> = {
   breach: 'Breach Tablet',
   delirium: 'Delirium Tablet',
-  expedition: 'Expedition Tablet',
+  abyss: 'Abyss Tablet',
+  temple: 'Temple Tablet',
   ritual: 'Ritual Tablet',
   overseer: 'Overseer Tablet',
   irradiated: 'Irradiated Tablet',
@@ -2030,7 +2427,7 @@ export async function searchTabletsByRegex(
   wantTexts: string[],
   wantMode: 'any' | 'all',
   wantValues: Record<number, number>,
-  rarity: { normal: boolean; magic: boolean },
+  rarity: { normal: boolean; magic: boolean; rare: boolean },
   typeFlags: Record<string, boolean>,
   uses: { enabled: boolean; value: number },
   tradeStatus: string,
@@ -2044,8 +2441,8 @@ export async function searchTabletsByRegex(
   const statGroups = buildRegexStatGroups([], wantTexts, wantMode, {}, resolveTabletText)
 
   const typeFilterFilters: Record<string, unknown> = { category: { option: 'map.tablet' } }
-  if (rarity.magic && !rarity.normal) typeFilterFilters.rarity = { option: 'magic' }
-  if (rarity.normal && !rarity.magic) typeFilterFilters.rarity = { option: 'normal' }
+  const selectedRarities = (['normal', 'magic', 'rare'] as const).filter((k) => rarity[k])
+  if (selectedRarities.length === 1) typeFilterFilters.rarity = { option: selectedRarities[0] }
 
   // Single selected type flag narrows base type; multiple/none stays category-wide.
   const selectedTypes = Object.entries(typeFlags)
@@ -2062,7 +2459,10 @@ export async function searchTabletsByRegex(
       trade_filters: {
         disabled: false,
         filters: {
-          ...(tradePriceOption === dialect.priceDivinePair
+          // Same rule as the main search: send the buyout currency for every
+          // option except the "equivalent" pseudo-option, which isn't a valid
+          // API value and has to leave the price filter off entirely.
+          ...(tradePriceOption !== dialect.priceEquivalent
             ? { price: { min: null, max: null, option: tradePriceOption } }
             : {}),
           ...(collapseListings ? { collapse: { option: 'true' } } : {}),

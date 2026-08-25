@@ -1,5 +1,5 @@
 import { SKILL_GEM_CLASSES } from '@shared/poe-item'
-import type { AdvancedMod } from '@shared/types'
+import type { AdvancedMod, MercenarySkill } from '@shared/types'
 import { ARMOUR_CLASSES, WEAPON_CLASSES } from './item-classes'
 import type { PseudoAccumulatorEntry } from './pseudo'
 
@@ -15,6 +15,7 @@ export interface ItemInfo {
   gemLevel: number
   corrupted: boolean
   mirrored: boolean
+  sanctified?: boolean
   identified?: boolean
   influence?: string[]
   mapTier?: number
@@ -35,19 +36,24 @@ export interface ItemInfo {
   runes?: string[]
   grantedSkills?: string[]
   memoryStrands?: number
+  intangibility?: number
   physDamageMin?: number
   physDamageMax?: number
   eleDamageAvg?: number
   chaosDamageAvg?: number
   attacksPerSecond?: number
   critChance?: number
-  heistJob?: { skill: string; level: number }
+  heistJobs?: Array<{ skill: string; level: number }>
+  heistTarget?: string
   monsterLevel?: number
   wingsRevealed?: number
   wingsTotal?: number
   mapReward?: string
   transfigured?: boolean
   synthesised?: boolean
+  vestigial?: boolean
+  foulborn?: boolean
+  zanaMemory?: boolean
   logbookFactions?: string[]
   logbookBosses?: string[]
   atzoatlRooms?: string[]
@@ -58,6 +64,13 @@ export interface ItemInfo {
   ultimatumRequired?: string
   isSynthetic?: boolean
   unidentifiedTier?: number
+  chartZone?: string
+  chartShape?: string
+  scryingArea?: string
+  mercenaryBuild?: string
+  mercenaryLevel?: number
+  mercenarySkills?: MercenarySkill[]
+  requiredLevel?: number
 }
 
 export interface DefenseValues {

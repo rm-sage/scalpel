@@ -6,6 +6,7 @@ import uniqueInfoPoe2 from '@shared/data/items/unique-info-poe2.json'
 import { POE_NINJA_API } from '@shared/endpoints'
 import type { NinjaItemRef } from '@shared/external-link'
 import { deriveItemVariant } from '@shared/external-link'
+import { hasGeneratedName } from '@shared/poe-item'
 import type { PriceEntry, PriceInfo } from '@shared/types'
 import { getPoeVersion } from '../game-state'
 import { getManifest } from '../manifest'
@@ -27,11 +28,30 @@ function getCachePath(): string {
   return join(app.getPath('userData'), 'uniques-by-base-cache.json')
 }
 
+// Merges dynamic/cached entries over the bundled static map (static supplies
+// the floor, extra supplements it). Shared by the dense-response builder and
+// the cache loader below.
+function mergeOverStatic(extra: Record<string, Iterable<string>>): Record<string, string[]> {
+  const merged = { ...(poe1StaticUniquesByBase as Record<string, string[]>) }
+  for (const [base, names] of Object.entries(extra)) {
+    const existing = new Set(merged[base] ?? [])
+    for (const n of names) existing.add(n)
+    merged[base] = [...existing]
+  }
+  return merged
+}
+
 function loadCachedUniquesByBase(): Record<string, string[]> {
   try {
     const cachePath = getCachePath()
     if (existsSync(cachePath)) {
-      return JSON.parse(readFileSync(cachePath, 'utf-8'))
+      // The cache file is a point-in-time merge from the last successful
+      // refreshPrices() call, not a live re-merge. Without re-merging over
+      // the bundled static map here, a shipped data fix (e.g. new flask
+      // bases added to unique-info.json) would stay invisible for an
+      // existing user until their next successful price refresh overwrote
+      // the file.
+      return mergeOverStatic(JSON.parse(readFileSync(cachePath, 'utf-8')))
     }
   } catch {
     /* fall through */
@@ -93,6 +113,9 @@ let lastFetchTime = 0
 // from priceMap because it retains display-case names + category slugs that the
 // lowercased lookup map discards.
 let priceEntries: PriceEntry[] = []
+// Lazily built name -> ninjaType index over priceEntries. Nulled on every
+// snapshot swap so it can't outlive the entries it was derived from.
+let ninjaTypeByName: Map<string, string> | null = null
 let priceEntriesUpdatedAt: number | null = null
 const priceUpdateListeners = new Set<() => void>()
 
@@ -130,7 +153,10 @@ interface DenseResponse {
   itemOverviews: DenseOverview[]
 }
 
-function fetchJson(url: string): Promise<unknown> {
+/** Bare JSON GET over Electron's net stack. Exported so sibling ninja fetchers
+ *  (beast-prices) can be handed a real fetcher without importing electron
+ *  themselves, which keeps them unit-testable. */
+export function fetchJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const request = net.request(url)
     request.setHeader('User-Agent', 'Scalpel-Prices')
@@ -218,12 +244,7 @@ function buildUniquesByBaseFromDense(resp: DenseResponse): void {
   }
 
   // Merge dynamic data into the base map (dynamic supplements static)
-  const merged = { ...(poe1StaticUniquesByBase as Record<string, string[]>) }
-  for (const [base, names] of Object.entries(dynamicMap)) {
-    const existing = new Set(merged[base] ?? [])
-    for (const n of names) existing.add(n)
-    merged[base] = [...existing]
-  }
+  const merged = mergeOverStatic(dynamicMap)
   uniqueBaseMap = merged
   saveCachedUniquesByBase(merged)
 }
@@ -277,7 +298,14 @@ export function processDenseResponse(resp: DenseResponse, entriesOut: PriceEntry
       pricesByVariant.set(`${name.toLowerCase()}|${line.variant ?? ''}`, info)
       if (isDivCards) divCardPriceMap.set(name.toLowerCase(), info)
 
-      entriesOut.push({ name, category, chaosValue: chaos, divineValue: info.divineValue, graph: line.graph })
+      entriesOut.push({
+        name,
+        category,
+        chaosValue: chaos,
+        divineValue: info.divineValue,
+        graph: line.graph,
+        ninjaType: overview.type,
+      })
     }
   }
 
@@ -310,6 +338,7 @@ export function processDenseResponse(resp: DenseResponse, entriesOut: PriceEntry
         category: 'currency',
         chaosValue: info.chaosValue,
         divineValue: info.divineValue,
+        ninjaType: 'Currency',
       })
     }
   }
@@ -329,6 +358,7 @@ function resetCache(league: string, now: number): void {
   divCardPriceMap = new Map()
   gemNames = new Set()
   priceEntries = []
+  ninjaTypeByName = null
   lastFetchTime = now
 }
 
@@ -354,6 +384,7 @@ export async function refreshPrices(league: string): Promise<void> {
       uniqueBaseMapPoe2 = result.uniquesByBase
       saveCachedUniquesByBasePoe2(result.uniquesByBase)
       priceEntries = result.entries
+      ninjaTypeByName = null
       priceEntriesUpdatedAt = now
       notifyPriceUpdate()
       return
@@ -364,6 +395,7 @@ export async function refreshPrices(league: string): Promise<void> {
     processDenseResponse(resp, freshEntries)
     buildUniquesByBaseFromDense(resp)
     priceEntries = freshEntries
+    ninjaTypeByName = null
     priceEntriesUpdatedAt = now
     notifyPriceUpdate()
   } catch (e) {
@@ -386,6 +418,20 @@ export function getPriceEntries(category?: string): { prices: PriceEntry[]; upda
   return { prices, updatedAt: priceEntriesUpdatedAt }
 }
 
+/** poe.ninja's raw overview type for an item ('DivinationCard', 'Ritual', ...),
+ *  or undefined when the current snapshot doesn't price it. Backs the exchange
+ *  details fetch, whose `type` param rejects the kebab `category` slug. Built
+ *  off priceEntries so both games share one code path. */
+export function getNinjaType(name: string): string | undefined {
+  if (ninjaTypeByName === null) {
+    ninjaTypeByName = new Map()
+    for (const e of priceEntries) {
+      if (e.ninjaType) ninjaTypeByName.set(e.name.toLowerCase(), e.ninjaType)
+    }
+  }
+  return ninjaTypeByName.get(name.toLowerCase())
+}
+
 /** Subscribe to "price snapshot refreshed" events. Fires after each successful
  *  refreshPrices(). Returns an unsubscribe function. */
 export function subscribePriceUpdates(cb: () => void): () => void {
@@ -399,6 +445,7 @@ export function subscribePriceUpdates(cb: () => void): () => void {
  *  the update emitter so subscriber wiring can be asserted. */
 export function _setPriceEntriesForTests(entries: PriceEntry[], updatedAt: number | null): void {
   priceEntries = entries
+  ninjaTypeByName = null
   priceEntriesUpdatedAt = updatedAt
   notifyPriceUpdate()
 }
@@ -423,6 +470,11 @@ export function lookupUniquePriceForBase(name: string, baseType: string): PriceI
  *  price lookup always agree -- when we link a user to /skill-gems/hatred-21-20c,
  *  the price chip we show is the price ninja actually has for that page. */
 export function lookupPriceForItem(item: NinjaItemRef): PriceInfo | undefined {
+  // Magic/Rare items show a randomly generated title that can collide with a
+  // real currency/unique name (e.g. a Hypnotic Eye Jewel rolling "Ancient
+  // Orb", #501), so price them by base type only -- the name carries no
+  // pricing identity for these rarities.
+  if (hasGeneratedName(item.rarity)) return lookupPrice(item.baseType, item.baseType)
   const variant = deriveItemVariant(item)
   if (variant != null) {
     const exact = pricesByVariant.get(`${item.name.toLowerCase()}|${variant}`)
@@ -481,12 +533,31 @@ export function lookupBestUniquePrice(baseType: string): PriceInfo | undefined {
   return best
 }
 
+/** The "which unique is this?" picker shown for an unidentified unique, priced
+ *  where poe.ninja has data and sorted most-valuable first.
+ *
+ *  Every unique on the base is offered, priced or not. This used to skip
+ *  unpriced names outside Standard on the theory that no price meant not
+ *  obtainable this league, but ninja only publishes uniques with enough
+ *  listings: String of Servitude has no ninja entry in *any* league, so an
+ *  unid Heavy Belt could never be identified as one (#579). ~146 names across
+ *  the PoE1 base map were hidden the same way. Unpriced candidates land at the
+ *  bottom, where the UI renders them without a price chip. */
+export function buildUnidCandidates(baseType: string): Array<{ name: string; chaosValue: number }> {
+  const names = getUniquesByBase()[baseType] ?? []
+  // lookupUniquePriceForBase disambiguates same-name uniques by base type and
+  // falls back to the name-only entry when no variant key matches.
+  return names
+    .map((name) => ({ name, chaosValue: lookupUniquePriceForBase(name, baseType)?.chaosValue ?? 0 }))
+    .sort((a, b) => b.chaosValue - a.chaosValue)
+}
+
 /** Pick the price entry to display for an item. Identified uniques -- and every
  *  non-unique -- resolve by their own name/variant via lookupPriceForItem. An
  *  *unidentified* unique doesn't expose its name in the clipboard (PoE shows
  *  only the base), so the only thing we can price it by is its base: we estimate
  *  with the most valuable unique that drops on that base. This mirrors the
- *  best-case unidCandidates list shown alongside it in preloadPriceCheck. */
+ *  best-case buildUnidCandidates list shown alongside it in preloadPriceCheck. */
 export function lookupItemPrice(item: NinjaItemRef & { identified?: boolean }): PriceInfo | undefined {
   if (item.rarity === 'Unique' && !item.identified) {
     return lookupBestUniquePrice(item.baseType) ?? lookupPriceForItem(item)

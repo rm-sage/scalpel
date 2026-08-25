@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef, useMemo, Fragment } from 'react'
+import { createPortal } from 'react-dom'
 import type { PriceCheckProps, StatFilter, Listing, BulkListing } from './types'
 import { searchSignature } from './search-signature'
 import { getTradeUrls } from '@shared/endpoints'
 import { getGameFeatures } from '@shared/game-features'
+import type { ExchangeDetails } from '@shared/contracts/exchange'
+import { isVendorExchangeItem } from '@shared/data/trade/bulk-exchange-eligibility'
 import {
   RARITY_COLORS,
   INFLUENCE_ICONS,
@@ -17,6 +20,7 @@ import {
 import { FilterChip } from '../../components/primitives/FilterChip'
 import { FaustusBanner } from './FaustusBanner'
 import { AngeBanner } from './AngeBanner'
+import { ExchangePanel } from './ExchangePanel'
 import { TradeTimeoutBanner } from './TradeTimeoutBanner'
 import { ItemHeader } from './ItemHeader'
 import { getDustInfo } from '../../shared/dust'
@@ -30,18 +34,32 @@ import { DismissibleTip } from '../../shared/DismissibleTip'
 import {
   BASE_DEFAULT_ITEM_CLASSES,
   CRAFTING_READY_EXCLUDED_CLASSES,
+  applyAllModsToFilters,
   applyBaseModeToFilters,
   applyCraftingReadyToFilters,
   isCraftingReadyState,
   isPerfectUniqueRoll,
+  resolveDefaultPreset,
   shouldIncludeImplicitsInBase,
 } from './base-mode'
 import { applyLearnedDecisions } from './learned-decisions'
+import { pickMercenarySupportsToEnable } from './mercenary-tighten'
+import { toggleFilterAt } from './toggle-filter'
+import { shouldAutoBulkSearch, shouldShowExchangePanel } from './exchange-view'
 import type { ListedTime, PriceOption, ResultsView, StatusOption } from './search-settings'
-import { LISTED_TIME_OPTIONS, getPriceOptions, primaryCurrencySwap, STATUS_OPTIONS } from './search-settings'
+import {
+  LISTED_TIME_OPTIONS,
+  getPriceOptions,
+  defaultPriceOption,
+  normalizePriceOption,
+  primaryCurrencySwap,
+  STATUS_OPTIONS,
+} from './search-settings'
 import { SearchSettingDropdown } from './SearchSettingDropdown'
 import { zebraRowBg, stripIpcErrorWrapper } from '../../shared/utils'
 import { useAuth } from '../../shared/use-auth'
+import { ContextMenu, type ContextMenuEntry } from '../../components/primitives/ContextMenu'
+import { learnedMenuEntries, type SessionPref } from './learned-preference-menu'
 
 export function PriceCheck({
   item,
@@ -72,6 +90,10 @@ export function PriceCheck({
   // (Weighted Sum, e.g. added elemental damage on PoE2). Each drives an in-row
   // login tip under the matching filter.
   const [loginRequiredPseudoIds, setLoginRequiredPseudoIds] = useState<string[]>([])
+  // Ids of Mercenary Warrant support rows the last search had to send unscoped:
+  // pinning a support to its skill needs a `mercenary` stat group, and an
+  // anonymous query only fits one. They still filtered, just item-wide.
+  const [loginRequiredMercenaryIds, setLoginRequiredMercenaryIds] = useState<string[]>([])
   // Rate-limit state comes from main already merged across all policies we've seen. The
   // RateLimitBar handles decay + blending; we just store the latest snapshot here.
   const [rateLimitTiers, setRateLimitTiers] = useState<
@@ -93,6 +115,28 @@ export function PriceCheck({
   }, [])
 
   const [filters, setFilters] = useState<StatFilter[]>(initialFilters)
+  // Right-click learned-preference menu on a stat row: viewport coords + the
+  // ORIGINAL index into `filters` of the row that was clicked.
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; scale: number; filterIdx: number } | null>(null)
+  // Mid-session pins/unpins; shadows the static learnedDecisions payload so
+  // menu entries stay correct when the menu is re-opened before a new check.
+  const [sessionPrefs, setSessionPrefs] = useState<Record<string, SessionPref>>({})
+
+  const setLearnedPreference = (filterIdx: number): void => {
+    const f = filters[filterIdx]
+    if (!f) return
+    window.api.setLearnedPreference(sessionId, f.id, f.enabled)
+    setSessionPrefs((p) => ({ ...p, [f.id]: 'set' }))
+    setFilters((fs) => fs.map((x, xi) => (xi === filterIdx ? { ...x, learned: true } : x)))
+  }
+
+  const unsetLearnedPreference = (filterIdx: number): void => {
+    const f = filters[filterIdx]
+    if (!f) return
+    window.api.unsetLearnedPreference(sessionId, f.id)
+    setSessionPrefs((p) => ({ ...p, [f.id]: 'unset' }))
+    setFilters((fs) => fs.map((x, xi) => (xi === filterIdx ? { ...x, learned: false } : x)))
+  }
   const filtersRef = useRef(filters)
   const sessionIdRef = useRef(sessionId)
   // Set true once the mount effect has applied base mode + learned defaults. The capture
@@ -159,20 +203,27 @@ export function PriceCheck({
   }, [queryId, remainingIds.length, loadingMore])
   const autoSearched = useRef(false)
   const lastSearchedSig = useRef<string>('')
+  // Mercenary Warrants get exactly one automatic narrowing pass per item.
+  const mercenaryTightened = useRef(false)
   const [isBulk, setIsBulk] = useState<boolean | null>(null)
   const [bulkListings, setBulkListings] = useState<BulkListing[]>([])
+  // undefined = request in flight, null = no exchange data for this item.
+  const [exchange, setExchange] = useState<ExchangeDetails | null | undefined>(undefined)
+  // Bulk listings are opt-in for exchange items: the request only fires on the
+  // first expand, so a normal currency check costs zero trade-API budget.
+  const [listingsOpen, setListingsOpen] = useState(false)
 
   // Per-search settings overrides (exposed via the Settings chip). Defaults come from the
   // user's global settings once they load; left blank for "listed" ("any time").
   const [showSettings, setShowSettings] = useState(false)
   const [listedTime, setListedTime] = useState<ListedTime>('')
-  const [priceOption, setPriceOption] = useState<PriceOption>('chaos_divine')
+  const [priceOption, setPriceOption] = useState<PriceOption>(() => defaultPriceOption(poeVersion))
   const [statusOption, setStatusOption] = useState<StatusOption>('available')
   const [resultsView, setResultsView] = useState<ResultsView>('default')
 
-  const includeImplicits = shouldIncludeImplicitsInBase(item.rarity, item.corrupted)
+  const includeImplicits = shouldIncludeImplicitsInBase(item.rarity, item.corrupted, item.vestigial)
   const applyBaseMode = (): void => {
-    setFilters((prev) => applyBaseModeToFilters(prev, item.rarity, item.corrupted))
+    setFilters((prev) => applyBaseModeToFilters(prev, item.rarity, item.corrupted, { vestigial: item.vestigial }))
   }
 
   // Gear-only: maps/tablets/relics/flasks are isEquipment but their explicit "affixes" are
@@ -191,13 +242,36 @@ export function PriceCheck({
 
   // Check if this is a bulk exchange item on mount
   useEffect(() => {
-    window.api.checkBulkItem(item.name, item.baseType, item.itemClass, item.rarity).then(setIsBulk)
-  }, [item.name, item.baseType, item.itemClass])
+    window.api.checkBulkItem(item.name, item.baseType, item.itemClass, item.rarity, item.zanaMemory).then(setIsBulk)
+  }, [item.name, item.baseType, item.itemClass, item.zanaMemory])
 
-  // Auto-apply Base mode:
-  //   - Item classes in BASE_DEFAULT_ITEM_CLASSES: always (e.g. Blueprints, Contracts)
-  //   - Uniques (for everyone): apply Base but keep the disabled rows visible above the fold
-  //   - Setting "Default all items to Base": same as uniques behavior for all items
+  // Currency Exchange details. Only worth asking for items the vendor actually
+  // carries -- isVendorExchangeItem is the cheap local gate in front of the
+  // network call. Anything else resolves straight to null so the auto-search
+  // gate isn't left waiting on a request we never made.
+  useEffect(() => {
+    if (!isVendorExchangeItem(poeVersion, item.itemClass, item.baseType, item.rarity)) {
+      setExchange(null)
+      return
+    }
+    let cancelled = false
+    setExchange(undefined)
+    window.api
+      .exchangeDetails(item.baseType)
+      .then((d) => {
+        if (!cancelled) setExchange(d)
+      })
+      .catch(() => {
+        if (!cancelled) setExchange(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [item.baseType, item.itemClass, item.rarity, poeVersion])
+
+  // Opening preset (see resolveDefaultPreset): PoE2 Crafting Ready wins where eligible,
+  // then BASE_DEFAULT_ITEM_CLASSES force Base, then the "Affixes prechecked" setting --
+  // 'default' Bases uniques only, 'base' Bases everything, 'all' ticks every affix.
   const baseModeApplied = useRef(false)
   const baseModeExpandedIndices = useRef<Set<number> | null>(null)
   const keepUncheckedVisible = useRef(false)
@@ -215,18 +289,24 @@ export function PriceCheck({
       // sees a real exchange rate (PoE1: chaos<->divine, PoE2: exalted<->divine).
       const crossCurrency = primaryCurrencySwap(item.name, poeVersion)
       if (crossCurrency) setPriceOption(crossCurrency)
-      else if (s.activeProfile?.tradePriceOption) setPriceOption(s.activeProfile.tradePriceOption as PriceOption)
+      // normalize: the two games' currency lists barely overlap, so a value
+      // carried over from the other game (or a retired catalog entry) has to
+      // fall back rather than silently ship a dead option id to the API.
+      else if (s.activeProfile?.tradePriceOption)
+        setPriceOption(normalizePriceOption(s.activeProfile.tradePriceOption, poeVersion))
       if (s.tradeStatus) setStatusOption(s.tradeStatus as StatusOption)
       if (s.tradeDefaultListedTime !== undefined) setListedTime(s.tradeDefaultListedTime as ListedTime)
       if (s.tradeResultsView) setResultsView(s.tradeResultsView)
       setSettingsLoaded(true)
-      const isClassDefault = BASE_DEFAULT_ITEM_CLASSES.has(item.itemClass)
-      const isUnique = item.rarity === 'Unique'
       // Crafting Ready wins for eligible PoE2 white/magic items (it is a superset of
       // Base that keeps the affixes on). Gated by the global setting (default on).
       const craftingReadyDefault = craftingReadyEligible && (s.tradePoe2CraftingReadyDefault ?? true)
-      const keepRowsVisible = isUnique || !!s.tradeDefaultToBase || craftingReadyDefault
-      const useBaseMode = !craftingReadyDefault && (isClassDefault || keepRowsVisible)
+      const { preset, keepRowsVisible } = resolveDefaultPreset({
+        mode: s.tradeAffixesPrechecked ?? 'default',
+        craftingReadyDefault,
+        isClassDefault: BASE_DEFAULT_ITEM_CLASSES.has(item.itemClass),
+        isUnique: item.rarity === 'Unique',
+      })
       if (keepRowsVisible) {
         // Keep rows visible that are enabled pre-preset OR that learning will enable.
         baseModeExpandedIndices.current = new Set(
@@ -236,8 +316,11 @@ export function PriceCheck({
       // Learning is the final layer: apply it on top of the (optionally preset) defaults.
       setFilters((prev) => {
         let seeded = prev
-        if (craftingReadyDefault) seeded = applyCraftingReadyToFilters(prev, item.rarity, item.corrupted)
-        else if (useBaseMode) seeded = applyBaseModeToFilters(prev, item.rarity, item.corrupted)
+        if (preset === 'crafting-ready') seeded = applyCraftingReadyToFilters(prev, item.rarity, item.corrupted)
+        else if (preset === 'base')
+          seeded = applyBaseModeToFilters(prev, item.rarity, item.corrupted, { vestigial: item.vestigial })
+        else if (preset === 'all')
+          seeded = applyAllModsToFilters(prev, item.rarity, item.corrupted, { vestigial: item.vestigial })
         return applyLearnedDecisions(seeded, learnedDecisions)
       })
       baseModeApplied.current = true
@@ -253,6 +336,8 @@ export function PriceCheck({
   )
   // Only dirty after a search has run, not while one is in progress, and never for bulk.
   const searchDirty = searched && !searching && !isBulk && currentSig !== lastSearchedSig.current
+  // The Currency Exchange dashboard is up and has taken over the results area.
+  const showExchangePanel = shouldShowExchangePanel({ isBulk, details: exchange })
 
   const doBulkSearch = async (): Promise<void> => {
     setSearching(true)
@@ -269,7 +354,7 @@ export function PriceCheck({
       const payWith =
         swap ??
         (priceInfo?.divineValue != null && priceInfo.divineValue >= 1 ? 'divine' : features.bulkBaselineCurrency)
-      const result = await window.api.bulkExchange(item.name, item.baseType, payWith)
+      const result = await window.api.bulkExchange(item.name, item.baseType, payWith, item.zanaMemory)
       setBulkListings(result.listings)
       setTotal(result.total)
       setQueryId(result.queryId)
@@ -280,7 +365,11 @@ export function PriceCheck({
     setSearching(false)
   }
 
-  const doSearch = async (): Promise<void> => {
+  // `overrideFilters` is the tightening pass re-searching with rows it has just
+  // switched on: setFilters won't have landed by the time we need them, so the
+  // array travels by argument rather than through state.
+  const doSearch = async (overrideFilters?: StatFilter[]): Promise<void> => {
+    const active = overrideFilters ?? filters
     setSearching(true)
     setError(null)
     setPenaltyUntil(null)
@@ -296,19 +385,23 @@ export function PriceCheck({
       // Snapshot which filters are currently enabled -- these stay visible when collapsed.
       // Also keep rows that were originally on before auto-Base disabled them, so the user
       // can still see the "turned off" rows above the fold rather than hidden behind "more filters".
-      const enabledIndices = new Set(filters.map((f, i) => (f.enabled ? i : -1)).filter((i) => i >= 0))
+      const enabledIndices = new Set(active.map((f, i) => (f.enabled ? i : -1)).filter((i) => i >= 0))
       if (baseModeExpandedIndices.current) {
         for (const i of baseModeExpandedIndices.current) enabledIndices.add(i)
       }
       // Rune rows stay above the fold even when unchecked: a socketed rune is an intrinsic,
       // visible part of the item (like the trade site shows it), and a resistance rune folds
       // into a pseudo, so its own chip is off by default yet should still be seen.
-      filters.forEach((f, i) => {
-        if (f.type === 'rune') enabledIndices.add(i)
+      // Same for a Forbidden Shako's randomized supports. When both slots roll the SAME
+      // support only the higher one can be searched (two filters on one indexable id
+      // match nothing), so the twin arrives disabled -- but it is still a mod printed on
+      // the item, and hiding it reads as the price checker having lost it (#564).
+      active.forEach((f, i) => {
+        if (f.type === 'rune' || f.randomSupport) enabledIndices.add(i)
       })
       setCollapsedVisibleIndices(enabledIndices)
     }
-    lastSearchedSig.current = searchSignature(filters, { listedTime, priceOption, statusOption })
+    lastSearchedSig.current = searchSignature(active, { listedTime, priceOption, statusOption })
     try {
       const result = await window.api.tradeSearch(
         {
@@ -323,7 +416,7 @@ export function PriceCheck({
           block: item.block,
           vaalGem: item.vaalGem,
         },
-        filters,
+        active,
         { listedTime, priceOption, statusOption },
       )
       setListings(result.listings)
@@ -332,6 +425,26 @@ export function PriceCheck({
       queryIdRef.current = result.queryId
       setRemainingIds(result.remainingIds ?? [])
       setLoginRequiredPseudoIds(result.loginRequiredPseudoIds ?? [])
+      setLoginRequiredMercenaryIds(result.loginRequiredMercenaryIds ?? [])
+
+      // Mercenary Warrants open on skills alone, which prices the build rather
+      // than the warrant. The comps that just came back are the cheapest ones
+      // matching those skills, so they say which of this warrant's supports are
+      // unusual -- tick those and search again. Once per item: after this the
+      // user owns the selection, including if they clear it.
+      if (!mercenaryTightened.current) {
+        const picks = pickMercenarySupportsToEnable(active, result.listings, result.total)
+        if (picks.length > 0) {
+          mercenaryTightened.current = true
+          const tightened = active.map((f, i) => (picks.includes(i) ? { ...f, enabled: true } : f))
+          // Positional, not a wholesale replace: a chip the user clicked while the
+          // search was in flight would otherwise be reverted. Toggling only flips
+          // `enabled`, so the indices still line up. If they did click, the query
+          // we are about to send no longer matches state and the panel says so.
+          setFilters((prev) => prev.map((f, i) => (picks.includes(i) ? { ...f, enabled: true } : f)))
+          await doSearch(tightened)
+        }
+      }
     } catch (e) {
       setError(stripIpcErrorWrapper(e instanceof Error ? e.message : 'Search failed'))
     }
@@ -363,39 +476,21 @@ export function PriceCheck({
     if (isBulk === null) return // still checking
     if (!settingsLoaded) return
     if (neverAutoSearch.current) return
+    // Exchange items are still resolving their details; searching now would burn
+    // a trade request whose results the dashboard is about to hide.
+    if (isBulk && exchange === undefined) return
     if (!autoSearched.current && (!unidCandidates || selectedUnique)) {
       autoSearched.current = true
       if (isBulk) {
-        doBulkSearch()
+        if (shouldAutoBulkSearch({ isBulk, details: exchange })) doBulkSearch()
       } else {
         doSearch()
       }
     }
-  }, [selectedUnique, isBulk, settingsLoaded])
+  }, [selectedUnique, isBulk, settingsLoaded, exchange])
 
   const toggleFilter = (idx: number): void => {
-    setFilters((prev) => {
-      const target = prev[idx]
-      // Ternary and minmax chips are driven via chipState through the FilterChip's onChange path;
-      // toggling them via this binary path would silently desync state.
-      if (TERNARY_CHIP_IDS.has(target.id) || MINMAX_CHIP_IDS.has(target.id)) return prev
-      const toggling = !target.enabled
-      return prev.map((f, i) => {
-        if (i === idx) {
-          if (toggling && f.type === 'timeless') return { ...f, enabled: true }
-          return { ...f, enabled: toggling }
-        }
-        // Timeless chips are mutually exclusive: enabling one disables the other
-        if (f.type === 'timeless' && target.type === 'timeless' && toggling) {
-          return { ...f, enabled: false }
-        }
-        // Auto-flip the Fractured chip to "yes" when a fractured-mod row is toggled on
-        if (f.id === 'misc.fractured' && target.type === 'fractured' && toggling) {
-          return { ...f, chipState: 'yes' }
-        }
-        return f
-      })
-    })
+    setFilters((prev) => toggleFilterAt(prev, idx))
   }
 
   const updateFilterMin = (idx: number, val: string): void => {
@@ -424,7 +519,7 @@ export function PriceCheck({
         maxStackSize={item.maxStackSize}
         dustInfo={getDustInfo(item)}
         areaLevel={item.monsterLevel}
-        heistJob={item.heistJob}
+        heistJobs={item.heistJobs}
         onOpenWiki={onOpenWiki}
         onOpenPoeDb={onOpenPoeDb}
         onOpenNinja={onOpenNinja}
@@ -726,6 +821,7 @@ export function PriceCheck({
                       updateFilterMin={updateFilterMin}
                       updateFilterMax={updateFilterMax}
                       itemRarity={item.rarity}
+                      onRowContextMenu={(i2, x, y, scale) => setRowMenu({ filterIdx: i2, x, y, scale })}
                     />
                     {/* This pseudo needs a Weighted Sum search, which the trade API
                         only allows for logged-in users; it was dropped this search. */}
@@ -746,6 +842,24 @@ export function PriceCheck({
                             Log in
                           </span>{' '}
                           to add this pseudo to your search
+                        </DismissibleTip>
+                      </div>
+                    )}
+                    {/* This support searched item-wide instead of on its own skill:
+                        the scoped form is a `mercenary` stat group, and anonymous
+                        queries only fit one. Shown once, on the first such row. */}
+                    {loginRequiredMercenaryIds[0] === f.id && (
+                      <div className="px-3 pt-2 pb-2" style={{ background: zebraRowBg(rowIdx) }}>
+                        <DismissibleTip id="mercenary-support-login" dismissible={false}>
+                          This trade is too complicated for the API unless you are logged in. Blame Greg.{' '}
+                          <span
+                            className="font-bold underline cursor-pointer"
+                            onClick={() => {
+                              login().then(() => doSearch())
+                            }}
+                          >
+                            Log in.
+                          </span>
                         </DismissibleTip>
                       </div>
                     )}
@@ -800,39 +914,52 @@ export function PriceCheck({
           </div>
         )}
 
-        {/* Search buttons */}
-        <div className="flex gap-[6px]">
-          <button
-            onClick={() => (isBulk ? doBulkSearch() : doSearch())}
-            onMouseEnter={() => {
-              if (searchDirty) void doSearch()
-            }}
-            disabled={searching}
-            className="flex-1 px-4 py-2 text-xs font-semibold border-none rounded"
-            style={{
-              background: searching ? 'rgba(255,255,255,0.1)' : 'var(--accent)',
-              color: searching ? 'var(--text-dim)' : '#171821',
-              cursor: searching ? 'default' : 'pointer',
-              boxShadow: searchDirty ? '0 0 4px 0 var(--accent)' : undefined,
-            }}
-          >
-            {searching ? 'Searching...' : searched ? 'Search Again' : 'Search Trade'}
-          </button>
-          {searched && !searching && queryId !== null && (
+        {/* Search buttons. With the dashboard up this whole row is gone: there is
+            nothing to search from here, and "Open in Trade" moves down next to
+            the listings it belongs with. An empty row would still count as a
+            flex child of the parent's gap-[10px] stack and leave dead space. */}
+        {!showExchangePanel && (
+          <div className="flex gap-[6px]">
             <button
-              onClick={() =>
-                window.api.openExternal(
-                  isBulk === true ? tradeUrls.webExchange(league, queryId) : tradeUrls.webSearch(league, queryId),
-                )
-              }
-              className="px-3 py-2 text-[11px] font-semibold bg-white/[0.08] text-text border-none rounded cursor-pointer whitespace-nowrap"
+              onClick={() => (isBulk ? doBulkSearch() : doSearch())}
+              onMouseEnter={() => {
+                if (searchDirty) void doSearch()
+              }}
+              disabled={searching}
+              className="flex-1 px-4 py-2 text-xs font-semibold border-none rounded"
+              style={{
+                background: searching ? 'rgba(255,255,255,0.1)' : 'var(--accent)',
+                color: searching ? 'var(--text-dim)' : '#171821',
+                cursor: searching ? 'default' : 'pointer',
+                boxShadow: searchDirty ? '0 0 4px 0 var(--accent)' : undefined,
+              }}
             >
-              Open in Trade
+              {searching ? 'Searching...' : searched ? 'Search Again' : 'Search Trade'}
             </button>
-          )}
-        </div>
+            {searched && !searching && queryId !== null && (
+              <button
+                onClick={() =>
+                  window.api.openExternal(
+                    isBulk === true ? tradeUrls.webExchange(league, queryId) : tradeUrls.webSearch(league, queryId),
+                  )
+                }
+                className="px-3 py-2 text-[11px] font-semibold bg-white/[0.08] text-text border-none rounded cursor-pointer whitespace-nowrap"
+              >
+                Open in Trade
+              </button>
+            )}
+          </div>
+        )}
 
-        {features.bulkExchangeBanner === 'ange' ? (
+        {showExchangePanel ? (
+          <ExchangePanel
+            key={item.baseType}
+            details={exchange!}
+            vendor={features.bulkExchangeBanner === 'ange' ? 'Ange' : 'Faustus'}
+            stackSize={item.stackSize}
+            onOpenNinja={onOpenNinja}
+          />
+        ) : features.bulkExchangeBanner === 'ange' ? (
           <AngeBanner item={item} priceInfo={priceInfo} chaosPerDivine={chaosPerDivine} divineGraph={divineGraph} />
         ) : (
           <FaustusBanner item={item} priceInfo={priceInfo} chaosPerDivine={chaosPerDivine} divineGraph={divineGraph} />
@@ -856,7 +983,44 @@ export function PriceCheck({
             API is in flight (can take several seconds under rate limit). */}
         {searching && <ListingRowsSkeleton />}
 
-        {/* Bulk Exchange Results */}
+        {/* Bulk Exchange Results. With the dashboard up these are opt-in: the
+            search only runs on the first expand. If the expand search failed
+            (rate limit is the common case), no listings ever appear and the
+            button stays hidden -- re-show it as a retry affordance so the user
+            isn't stuck re-checking the item to try again. */}
+        {(() => {
+          if (!isBulk || !showExchangePanel) return null
+          const showToggle = !listingsOpen || (error != null && bulkListings.length === 0)
+          // "Open in Trade" lives here rather than in the top button row: with the
+          // dashboard up it is only meaningful once listings are open, so it
+          // belongs in the same slot the expand button occupied.
+          const showOpenInTrade = listingsOpen && searched && !searching && queryId !== null
+          if (!showToggle && !showOpenInTrade) return null
+          return (
+            <div className="flex gap-[6px] items-center">
+              {showToggle && (
+                <button
+                  onClick={() => {
+                    if (!listingsOpen) setListingsOpen(true)
+                    void doBulkSearch()
+                  }}
+                  className="px-3 py-[6px] text-[11px] text-text-dim bg-white/[0.04] border-none rounded cursor-pointer whitespace-nowrap"
+                >
+                  {listingsOpen ? <>&#8635; Retry trade listings</> : <>&#9660; Trade listings</>}
+                </button>
+              )}
+              {showOpenInTrade && (
+                <button
+                  onClick={() => window.api.openExternal(tradeUrls.webExchange(league, queryId))}
+                  className="px-3 py-[6px] text-[11px] font-semibold bg-white/[0.08] text-text border-none rounded cursor-pointer whitespace-nowrap"
+                >
+                  Open in Trade
+                </button>
+              )}
+            </div>
+          )
+        })()}
+
         {isBulk && searched && !searching && bulkListings.length > 0 && (
           <BulkListings bulkListings={bulkListings} total={total} />
         )}
@@ -892,6 +1056,31 @@ export function PriceCheck({
         )}
       </div>
       {searched && !searching && <RateLimitBar rateLimitTiers={rateLimitTiers} />}
+      {rowMenu &&
+        (() => {
+          const f = filters[rowMenu.filterIdx]
+          if (!f) return null
+          const entries = learnedMenuEntries(f, learnedDecisions ?? {}, sessionPrefs)
+          if (entries.length === 0) return null
+          const items: ContextMenuEntry[] = entries.map((en) => ({
+            label: en.label,
+            onClick: () =>
+              en.kind === 'set' ? setLearnedPreference(rowMenu.filterIdx) : unsetLearnedPreference(rowMenu.filterIdx),
+          }))
+          // The panel wrapper always carries a CSS transform, which would hijack
+          // position:fixed - portal to body escapes it (same reason as HoverTooltip).
+          return createPortal(
+            <ContextMenu
+              positioning="fixed"
+              x={rowMenu.x}
+              y={rowMenu.y}
+              scale={rowMenu.scale}
+              items={items}
+              onClose={() => setRowMenu(null)}
+            />,
+            document.body,
+          )
+        })()}
     </div>
   )
 }

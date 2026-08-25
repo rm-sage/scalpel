@@ -1,4 +1,4 @@
-import { app, clipboard, crashReporter, ipcMain, screen } from 'electron'
+import { app, crashReporter, ipcMain, screen } from 'electron'
 import { installEarlyDiagnostics, recordMainBreadcrumb, recordMainDiagnostic } from './diagnostics'
 
 // Prevent unhandled JS exceptions from crashing the native overlay thread
@@ -30,18 +30,9 @@ installEarlyDiagnostics()
 crashReporter.start({ uploadToServer: false })
 
 import { execSync } from 'node:child_process'
-import { uIOhook, UiohookKey } from 'uiohook-napi'
 import Store from 'electron-store'
 import { OverlayController } from 'electron-overlay-window'
-import {
-  hideOverlay,
-  showOverlay,
-  getOverlayWindow,
-  setCloseOnClickOutside,
-  setRequireGameFocusForChat,
-  mayInjectChatNow,
-  setWindowInputFocused,
-} from './overlay'
+import { hideOverlay, showOverlay, getOverlayWindow, setCloseOnClickOutside, setWindowInputFocused } from './overlay'
 import { createAppWindow, showAppWindow, getAppWindow } from './app-window'
 import {
   startHotkeyListener,
@@ -57,8 +48,12 @@ import {
   resumeHotkeys,
   setStashScrollEnabled,
   setStashScrollModifier,
+  pasteRegexToPoESearch,
 } from './hotkeys'
 import { refreshLeagues } from './trade/leagues'
+import { resolvePresetRegex } from './trade/beast-preset'
+import { getBeastPrices, peekBeastPrices } from './trade/beast-prices'
+import { fetchJson } from './trade/prices'
 import { stopOnlineSync } from './online-sync'
 import { applyPendingUpdate } from './update/update-swap'
 import { getCurrentFilter, loadFilter, onFilterLoaded } from './filter-state'
@@ -72,8 +67,6 @@ import {
 } from './evaluation'
 import { initLearning } from './learning'
 import { initMainLocale } from './locale'
-import { snapshotClipboard } from './clipboard-preserve'
-import { clipboardHoldsInjectedText, REGEX_CLIPBOARD_RESTORE_DELAY_MS } from './chat-inject-guard'
 import { flushAll as flushPluginStorage } from './plugins/storage'
 import { registerCheatSheetProtocol } from './cheat-sheet-protocol'
 import { registerScalpelInternalProtocol, registerScalpelInternalSchemePrivileges } from './plugins/protocol'
@@ -150,7 +143,6 @@ const store = new Store<AppSettings>({
     overlayScale: 1,
     openSide: 'both',
     closeOnClickOutside: false,
-    requireGameFocusForChat: true,
     currencyLabelsAsText: false,
     useCurrentZoneAreaLevel: false,
     reloadOnSave: true,
@@ -160,7 +152,7 @@ const store = new Store<AppSettings>({
     previewVolume: 0.25,
     priceCheckDefaultPercent: 90,
     adaptiveDefaultsMode: 'eager',
-    tradeDefaultToBase: false,
+    tradeAffixesPrechecked: 'default',
     tradePoe2CraftingReadyDefault: true,
     chatCommands: [],
     appMacros: [],
@@ -188,7 +180,6 @@ const store = new Store<AppSettings>({
 
 // Backfill defaults for keys added after initial release
 if (store.get('reloadOnSave') === undefined) store.set('reloadOnSave', true)
-if (store.get('requireGameFocusForChat') === undefined) store.set('requireGameFocusForChat', true)
 if (store.get('useCurrentZoneAreaLevel') === undefined) store.set('useCurrentZoneAreaLevel', false)
 if (store.get('stashScrollEnabled') === undefined) store.set('stashScrollEnabled', false)
 if (store.get('stashScrollModifier') === undefined) store.set('stashScrollModifier', 'Ctrl')
@@ -201,9 +192,25 @@ if (store.get('startInTray') === undefined) store.set('startInTray', true)
 if (store.get('pluginAutoUpdate') === undefined) store.set('pluginAutoUpdate', false)
 if (store.get('locale') === undefined) store.set('locale', 'en')
 
+// tradeDefaultToBase (boolean) became tradeAffixesPrechecked (three-way). Gate on the OLD
+// key's presence, not on the new one being undefined: the new key is in `defaults`, so
+// store.get() always resolves it and an undefined-check would never fire. The old key is
+// present in every pre-migration config and absent on a fresh install, and the delete
+// makes this a one-shot.
+{
+  const legacyStore = store as Store<AppSettings & { tradeDefaultToBase?: boolean }>
+  const legacyBase = legacyStore.get('tradeDefaultToBase')
+  if (legacyBase !== undefined) {
+    if (legacyBase === true) store.set('tradeAffixesPrechecked', 'base')
+    legacyStore.delete('tradeDefaultToBase')
+  }
+}
+
 initMainLocale(store, () => refreshTrayMenu())
 
-const profileStore = initProfileStore(app.getPath('userData'))
+const profileStore = initProfileStore(app.getPath('userData'), (variant) =>
+  store.get(variant === 2 ? 'leaguesPoe2' : 'leaguesPoe1'),
+)
 
 if (store.get(ACTIVE_PROFILE_ID_KEY) === undefined) store.set(ACTIVE_PROFILE_ID_KEY, '')
 if (store.get(LAST_PROFILE_ID_POE1_KEY) === undefined) store.set(LAST_PROFILE_ID_POE1_KEY, '')
@@ -289,6 +296,7 @@ if (!gotLock) {
 const installDir = IS_E2E ? process.cwd() : applyPendingUpdate()
 
 app.whenReady().then(() => {
+  recordMainBreadcrumb('session-start')
   if (!IS_E2E)
     getOverlayAttachStrategy(store).createInitialOverlay((store.get(PROFILE_VERSION_KEY) as GameVariant) ?? 1)
   setMainOverlayGetter(getOverlayWindow)
@@ -330,24 +338,19 @@ app.whenReady().then(() => {
     openDivCards: 'divcards',
     openRegex: 'regex',
   }
-  const pasteRegexToSearch = (regex: string): void => {
-    // Same focus gate as chat injection: never type the regex (or leak a late
-    // clipboard restore) into a window that isn't the focused game.
-    if (!mayInjectChatNow()) return
-    const restoreClip = snapshotClipboard()
-    clipboard.writeText(regex)
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
-    uIOhook.keyTap(UiohookKey.F)
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
-    uIOhook.keyTap(UiohookKey.V)
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
-    // Restore only after a margin long enough for the game to consume the paste, and
-    // only if the clipboard still holds our regex (nothing else changed it meanwhile).
-    setTimeout(() => {
-      if (clipboardHoldsInjectedText(clipboard.readText(), regex)) restoreClip()
-    }, REGEX_CLIPBOARD_RESTORE_DELAY_MS)
+
+  // Beasts presets re-derive against cached poe.ninja prices so a hotkey bound
+  // weeks ago still pastes today's valuable beasts. A cold cache pastes the
+  // stored regex immediately and warms in the background, so a keypress never
+  // waits on the network.
+  const beastPresetDeps = {
+    peek: peekBeastPrices,
+    warm: (league: string): void => {
+      void getBeastPrices(league, fetchJson)
+    },
   }
+  const presetRegex = (preset: RegexPreset): string | undefined =>
+    resolvePresetRegex(preset, getProfileBackedSetting(store, 'league'), beastPresetDeps)
 
   const REGEX_REMOTE_FLUSH_EPS = 0.01
   function regexRemoteFlushLeft(anchor: { fracX: number } | null): boolean {
@@ -369,8 +372,11 @@ app.whenReady().then(() => {
           OverlayController.focusTarget()
         } catch {}
       },
-      paste: pasteRegexToSearch,
+      paste: (regex) => {
+        void pasteRegexToPoESearch(regex)
+      },
       defer: (fn) => setTimeout(fn, 50),
+      resolveRegex: presetRegex,
     })
   })
   ipcMain.on('regex-remote:close', () => getRegexRemoteOverlay()?.hide())
@@ -382,7 +388,7 @@ app.whenReady().then(() => {
 
   setAppMacroHandler((action, tag, presetId) => {
     if (action === 'pasteRegex') {
-      if (currentRegex) pasteRegexToSearch(currentRegex)
+      if (currentRegex) void pasteRegexToPoESearch(currentRegex)
       return
     }
     if (action === 'useSavedRegex') {
@@ -392,7 +398,8 @@ app.whenReady().then(() => {
       const preset = presetId
         ? presets.find((p) => p.id === presetId)
         : presets.find((p) => p.tags?.some((t) => t.text === tag && (!t.source || t.source === 'custom')))
-      if (preset?.regex) pasteRegexToSearch(preset.regex)
+      const regex = preset ? presetRegex(preset) : undefined
+      if (regex) void pasteRegexToPoESearch(regex)
       return
     }
     if (action === 'closeOverlay') {
@@ -490,10 +497,23 @@ app.whenReady().then(() => {
   setStashScrollEnabled(store.get('stashScrollEnabled') ?? false)
   setStashScrollModifier(store.get('stashScrollModifier') ?? 'Ctrl')
   setOpenSide(store.get('openSide') ?? 'both')
-  setRequireGameFocusForChat(store.get('requireGameFocusForChat') ?? true)
 
   ipcMain.on('suspend-hotkeys', () => suspendHotkeys())
   ipcMain.on('resume-hotkeys', () => resumeHotkeys())
+
+  // Plugin dev quality-of-life: a fully-reload requires an app relaunch
+  // (plugin code is loaded once at start). Surface a button in the Developer
+  // settings section so plugin authors don't have to close + reopen by hand.
+  // Dev builds skip the relaunch step since electron-vite dev won't come back
+  // after app.quit() — same caveat as game-switch.ts.
+  ipcMain.on('app-restart', () => {
+    if (!app.isPackaged) {
+      console.warn('[app-restart] dev build — close and `npm run dev` to re-attach')
+      return
+    }
+    app.relaunch()
+    app.quit()
+  })
 
   ipcMain.on('overlay-input-focused', (e, focused: boolean) => {
     setWindowInputFocused(e.sender.id, focused)

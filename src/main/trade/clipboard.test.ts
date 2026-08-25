@@ -91,6 +91,111 @@ describe('parseItemText', () => {
       expect(item.itemLevel).toBe(83)
     })
 
+    it('parses Allflame intangibility off the property block (#588)', () => {
+      // 3.29 prints it with the property block, as a percentage.
+      const text = [
+        'Item Class: Rings',
+        'Rarity: Rare',
+        'Oblivion Grip',
+        'Manifold Ring',
+        '--------',
+        'Quality (Life and Mana Modifiers): +20% (augmented)',
+        'Intangibility: 67%',
+        '--------',
+        'Item Level: 84',
+        '--------',
+        '+42 to maximum Life',
+      ].join('\n')
+
+      expect(parseItemText(text)!.intangibility).toBe(67)
+    })
+
+    it('leaves intangibility undefined on an item that never saw an Allflame craft', () => {
+      const text = [
+        'Item Class: Rings',
+        'Rarity: Rare',
+        'Storm Knuckle',
+        'Ruby Ring',
+        '--------',
+        'Item Level: 75',
+      ].join('\n')
+
+      expect(parseItemText(text)!.intangibility).toBeUndefined()
+    })
+
+    it('parses the level requirement from the requirements section', () => {
+      const text = [
+        'Item Class: Helmets',
+        'Rarity: Rare',
+        'Dread Visor',
+        'Iron Hat',
+        '--------',
+        'Armour: 120',
+        '--------',
+        'Requirements:',
+        'Level: 40',
+        'Str: 62',
+        '--------',
+        'Item Level: 55',
+        '--------',
+        '+42 to maximum Life',
+      ].join('\n')
+
+      expect(parseItemText(text)!.requiredLevel).toBe(40)
+    })
+
+    it('reads the gem level requirement, not the gem property-block level', () => {
+      // A gem prints "Level: 20" in its property block before the requirements
+      // section. An unscoped read takes the first match and returns the gem level.
+      const text = [
+        'Item Class: Active Skill Gems',
+        'Rarity: Gem',
+        'Fireball',
+        '--------',
+        'Fire, Projectile, Spell, AoE',
+        'Level: 20',
+        '--------',
+        'Requirements:',
+        'Level: 70',
+        'Int: 155',
+        '--------',
+        'Deals 1095 to 1643 Fire Damage',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.gemLevel).toBe(20)
+      expect(item.requiredLevel).toBe(70)
+    })
+
+    it('parses a level requirement the character cannot meet', () => {
+      const text = [
+        'Item Class: Body Armours',
+        'Rarity: Rare',
+        'Doom Shell',
+        'Astral Plate',
+        '--------',
+        'Requirements:',
+        'Level: 62 (unmet)',
+        'Str: 180',
+        '--------',
+        'Item Level: 86',
+      ].join('\n')
+
+      expect(parseItemText(text)!.requiredLevel).toBe(62)
+    })
+
+    it('leaves the level requirement absent when the item prints none', () => {
+      const text = [
+        'Item Class: Stackable Currency',
+        'Rarity: Currency',
+        'Chaos Orb',
+        '--------',
+        'Stack Size: 5/10',
+      ].join('\n')
+
+      expect(parseItemText(text)!.requiredLevel).toBeUndefined()
+    })
+
     it('parses quality', () => {
       const text = [
         'Item Class: Body Armours',
@@ -572,6 +677,38 @@ describe('parseItemText', () => {
       expect(item.corrupted).toBe(true)
     })
 
+    it('resolves a renamed Vaal half to the real gem name (Purity of Fire -> Vaal Impurity of Fire)', () => {
+      // A hybrid Vaal gem is named by its non-Vaal half, with the Vaal skill heading a
+      // later section. The Vaal half of Purity of Fire is "Vaal Impurity of Fire", not
+      // "Vaal Purity of Fire", so the prefix rule alone names a gem that does not
+      // exist and the price check returns nothing (#589).
+      const text = [
+        'Item Class: Skill Gems',
+        'Rarity: Gem',
+        'Purity of Fire',
+        '--------',
+        'Aura, Spell, AoE, Duration, Vaal, Fire',
+        'Level: 20 (Max)',
+        'Reservation: 35% Mana',
+        'Cast Time: Instant',
+        'Quality: +20% (augmented)',
+        '--------',
+        'Your aura grants +49% to Fire Resistance to you and your allies',
+        '--------',
+        'Vaal Impurity of Fire',
+        '--------',
+        'Souls Per Use: 40',
+        'Can Store 1 Use',
+        'Soul Gain Prevention: 0 sec',
+        '--------',
+        'Corrupted',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.name).toBe('Vaal Impurity of Fire')
+      expect(item.baseType).toBe('Vaal Impurity of Fire')
+      expect(item.vaalGem).toBe(true)
+    })
+
     it('does not flag Vaal-related Support gems as vaalGem (regression: Vaal Temptation Support)', () => {
       // Support gems carry a "Vaal" tag because they *support* Vaal skills, but they are
       // not themselves Vaal skills -- no "Souls Per Use" mechanic, no Vaal-prefixed name
@@ -651,6 +788,59 @@ describe('parseItemText', () => {
       expect(item.itemClass).toBe('Divination Cards')
       expect(item.name).toBe('The Doctor')
       expect(item.stackSize).toBe(1)
+    })
+
+    it("parses a Facetor's Lens stored experience grouped with commas", () => {
+      const text = [
+        'Item Class: Stackable Currency',
+        'Rarity: Currency',
+        "Facetor's Lens",
+        '--------',
+        'Stack Size: 1/10',
+        '--------',
+        'Stored Experience: 999,627,082',
+        '--------',
+        'Adds stored experience to a gem, up to its maximum level.',
+      ].join('\n')
+
+      expect(parseItemText(text)!.storedExperience).toBe(999627082)
+    })
+
+    it.each([
+      ['plain spaces', '750 000 000'],
+      ['non-breaking spaces', '750\u00A0000\u00A0000'],
+      ['narrow non-breaking spaces', '750\u202F000\u202F000'],
+      ['periods', '750.000.000'],
+    ])('parses stored experience grouped with %s (#539)', (_label, grouped) => {
+      // GGG groups large numbers per client language. A space-grouped lens used to
+      // parse as 750 because only commas were stripped.
+      const text = [
+        'Item Class: Stackable Currency',
+        'Rarity: Currency',
+        "Facetor's Lens",
+        '--------',
+        `Stored Experience: ${grouped}`,
+        '--------',
+        'Adds stored experience to a gem, up to its maximum level.',
+      ].join('\n')
+
+      expect(parseItemText(text)!.storedExperience).toBe(750000000)
+    })
+
+    it('parses a space-grouped stack size (#539)', () => {
+      const text = [
+        'Item Class: Stackable Currency',
+        'Rarity: Currency',
+        'Chaos Orb',
+        '--------',
+        'Stack Size: 3 500/5 000',
+        '--------',
+        'Reforges the properties of an item',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.stackSize).toBe(3500)
+      expect(item.maxStackSize).toBe(5000)
     })
 
     it('defaults areaLevel to the endgame level for currency with no item level', () => {
@@ -764,6 +954,68 @@ describe('parseItemText', () => {
       const item = parseItemText(text)!
       expect(item.explicits).toContain('Recover 59 Mana when Used')
       expect(item.explicits).toContain('19% reduced Charges per use')
+    })
+
+    it('offers a "\\n"-joined candidate for a basic-copy mod that wraps across two lines', () => {
+      // A basic (Ctrl+C) copy has no advanced-mod headers to group a mod's wrapped
+      // lines, so the joined candidate must be synthesized here instead -- otherwise
+      // only the two junk half-lines reach the matcher and the real stat never matches.
+      const text = [
+        'Item Class: Jewels',
+        'Rarity: Unique',
+        "Watcher's Eye",
+        'Prismatic Jewel',
+        '--------',
+        'Limited to: 1',
+        '--------',
+        'Item Level: 85',
+        '--------',
+        '4% increased maximum Life',
+        '6% increased maximum Energy Shield',
+        '4% increased maximum Mana',
+        '19% of Damage taken while affected by Clarity Recouped as Mana',
+        '15% of Fire and Cold Damage taken as Lightning Damage while',
+        'affected by Purity of Lightning',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.explicits).toContain(
+        '15% of Fire and Cold Damage taken as Lightning Damage while\naffected by Purity of Lightning',
+      )
+      expect(item.explicits).toContain('4% increased maximum Life')
+      expect(item.explicits).toContain('6% increased maximum Energy Shield')
+      expect(item.explicits).toContain('4% increased maximum Mana')
+      expect(item.explicits).toContain('19% of Damage taken while affected by Clarity Recouped as Mana')
+      expect(item.explicits).not.toContain('4% increased maximum Life\n6% increased maximum Energy Shield')
+    })
+
+    it('joins a wrapped mod whose continuation starts with a capital (#527)', () => {
+      // Kitava's Thirst wraps before "Upfront", so the lowercase-continuation tell
+      // doesn't fire. The first half ends on a dangling "an" instead. Without the
+      // join, the trailing half matched the WRONG twin (the Mana stat id) with no
+      // value, and the real Life mod never reached the search at all.
+      const text = [
+        'Item Class: Helmets',
+        'Rarity: Unique',
+        "Foulborn Kitava's Thirst",
+        'Zealot Helmet',
+        '--------',
+        'Item Level: 84',
+        '--------',
+        '50% chance to Trigger Socketed Spells when you Spend at least 200 Life on an',
+        'Upfront Cost to Use or Trigger a Skill, with a 0.1 second Cooldown',
+        '15% reduced Cast Speed',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.explicits).toContain(
+        '50% chance to Trigger Socketed Spells when you Spend at least 200 Life on an\nUpfront Cost to Use or Trigger a Skill, with a 0.1 second Cooldown',
+      )
+      expect(item.explicits).toContain('15% reduced Cast Speed')
+      // "...Cooldown" is not a dangling tail, so the next mod is not swept into a join.
+      expect(item.explicits).not.toContain(
+        'Upfront Cost to Use or Trigger a Skill, with a 0.1 second Cooldown\n15% reduced Cast Speed',
+      )
     })
 
     it('parses a PoE2 Waystone property block and monster affixes', () => {
@@ -960,6 +1212,269 @@ describe('parseItemText', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // Charts (PoE1 Allflame league)
+  // ---------------------------------------------------------------------------
+
+  describe('charts', () => {
+    const chartText = (withAdvancedMods: boolean) =>
+      [
+        'Item Class: Chart',
+        'Rarity: Magic',
+        'Fecund Coral Forest Chart',
+        '--------',
+        'Sea Pillars',
+        'Area Level: 57',
+        'Item Quantity: +20% (augmented)',
+        '--------',
+        'Item Level: 57',
+        '--------',
+        ...(withAdvancedMods ? ['{ Implicit Modifier }'] : []),
+        'Voyage Modifier will be revealed once Charted',
+        '--------',
+        'Chart Shape: Straight',
+        '--------',
+        ...(withAdvancedMods
+          ? ['{ Prefix Modifier "Fecund" (Tier: 4) - Life }', '15(10-19)% more Monster Life']
+          : ['15% more Monster Life']),
+        '--------',
+        'Take this item to Valerie aboard the Sovereign to Chart this area.',
+      ].join('\n')
+
+    it('parses the zone name, shape and quantity from an advanced copy', () => {
+      const item = parseItemText(chartText(true))!
+
+      expect(item.itemClass).toBe('Chart')
+      expect(item.chartZone).toBe('Sea Pillars')
+      expect(item.chartShape).toBe('Straight')
+      expect(item.monsterLevel).toBe(57)
+      expect(item.mapQuantity).toBe(20)
+      expect(item.baseType).toBe('Coral Forest Chart')
+    })
+
+    it('parses the zone name and shape from a basic copy', () => {
+      const item = parseItemText(chartText(false))!
+
+      expect(item.chartZone).toBe('Sea Pillars')
+      expect(item.chartShape).toBe('Straight')
+    })
+
+    it('leaves chartZone undefined when the zone line is missing', () => {
+      const text = [
+        'Item Class: Chart',
+        'Rarity: Normal',
+        'Coral Forest Chart',
+        '--------',
+        'Area Level: 57',
+        '--------',
+        'Item Level: 57',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+
+      expect(item.chartZone).toBeUndefined()
+      expect(item.monsterLevel).toBe(57)
+    })
+
+    it('does not read a zone off a non-chart item with an area level', () => {
+      const text = [
+        'Item Class: Expedition Logbooks',
+        'Rarity: Normal',
+        'Expedition Logbook',
+        '--------',
+        'Area Level: 81',
+        '--------',
+        'Item Level: 81',
+        '--------',
+        'Knights of the Sun',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+
+      expect(item.chartZone).toBeUndefined()
+      expect(item.chartShape).toBeUndefined()
+    })
+
+    it('strips the magic prefix on a basic copy using the static base list', () => {
+      const item = parseItemText(chartText(false))!
+
+      expect(item.baseType).toBe('Coral Forest Chart')
+      expect(item.width).toBe(1)
+      expect(item.height).toBe(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Scrying Orbs (PoE1)
+  // ---------------------------------------------------------------------------
+
+  describe('scrying orbs', () => {
+    const scryingOrbText = (area: string) =>
+      [
+        'Item Class: Stackable Currency',
+        'Rarity: Currency',
+        'Scrying Orb',
+        '--------',
+        `Map Area: ${area}`,
+        '--------',
+        'Scries a Map on your Atlas',
+        '--------',
+        'Right click on this item then left click a Map on your Atlas.',
+      ].join('\n')
+
+    it('parses the bound map area', () => {
+      const item = parseItemText(scryingOrbText('Dunes'))!
+
+      expect(item.itemClass).toBe('Stackable Currency')
+      expect(item.baseType).toBe('Scrying Orb')
+      expect(item.scryingArea).toBe('Dunes')
+    })
+
+    it('keeps a multi-word area intact', () => {
+      expect(parseItemText(scryingOrbText('Sunken City'))!.scryingArea).toBe('Sunken City')
+    })
+
+    it('leaves the area line out of the mod list', () => {
+      const item = parseItemText(scryingOrbText('Dunes'))!
+
+      expect(item.explicits ?? []).not.toContain('Map Area: Dunes')
+    })
+
+    it('leaves scryingArea undefined on another currency', () => {
+      const text = [
+        'Item Class: Stackable Currency',
+        'Rarity: Currency',
+        'Chaos Orb',
+        '--------',
+        'Stack Size: 12/20',
+        '--------',
+        'Reforges a rare item with new random modifiers',
+      ].join('\n')
+
+      expect(parseItemText(text)!.scryingArea).toBeUndefined()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Mercenary Warrants (PoE1)
+  // ---------------------------------------------------------------------------
+
+  describe('mercenary warrants', () => {
+    const warrantText = (build: string, level = 83) =>
+      [
+        'Item Class: Map Fragments',
+        'Rarity: Normal',
+        'Mercenary Warrant',
+        '--------',
+        'Saxon, the Azadin Seafarer',
+        '--------',
+        `Build: ${build}`,
+        `Mercenary Level: ${level}`,
+        '--------',
+        'Right click this item to view Mercenary details.',
+        'Can be used in a personal Map Device alongside a Map to have this previously fought Mercenary reappear in the area for a rematch.',
+      ].join('\n')
+
+    it('parses the build and the mercenary level', () => {
+      const item = parseItemText(warrantText('Mysterious Diver'))!
+
+      expect(item.itemClass).toBe('Map Fragments')
+      expect(item.baseType).toBe('Mercenary Warrant')
+      expect(item.mercenaryBuild).toBe('Mysterious Diver')
+      expect(item.mercenaryLevel).toBe(83)
+    })
+
+    it('keeps the Infamous prefix, which is its own trade type', () => {
+      expect(parseItemText(warrantText('Infamous Mysterious Diver'))!.mercenaryBuild).toBe('Infamous Mysterious Diver')
+    })
+
+    it('parses a below-cap mercenary level', () => {
+      expect(parseItemText(warrantText('Sniper', 68))!.mercenaryLevel).toBe(68)
+    })
+
+    it('leaves the build, level and mercenary name out of the mod list', () => {
+      const explicits = parseItemText(warrantText('Mysterious Diver'))!.explicits ?? []
+
+      expect(explicits).not.toContain('Build: Mysterious Diver')
+      expect(explicits).not.toContain('Mercenary Level: 83')
+      expect(explicits).not.toContain('Saxon, the Azadin Seafarer')
+    })
+
+    it('leaves both fields undefined on another map fragment', () => {
+      const text = [
+        'Item Class: Map Fragments',
+        'Rarity: Normal',
+        'Sacrifice at Dusk',
+        '--------',
+        'Only the unworthy shall be sacrificed.',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.mercenaryBuild).toBeUndefined()
+      expect(item.mercenaryLevel).toBeUndefined()
+      expect(item.mercenarySkills).toBeUndefined()
+    })
+
+    // A real level-83 Bladecaster, copied in-game after 3.27 made warrants
+    // Ctrl+C-able. Every skill and support here resolves to a live
+    // mercenary.skill_* / mercenary.support_* trade stat id.
+    const KRIMON = [
+      'Item Class: Map Fragments',
+      'Rarity: Normal',
+      'Mercenary Warrant',
+      '--------',
+      'Krimon Howl-scream',
+      '--------',
+      'Build: Bladecaster',
+      'Mercenary Level: 83',
+      '--------',
+      'Clutches of the Damned',
+      '--------',
+      'Bloody Warp',
+      'Critical Chance (Tier: 2)',
+      'Cooldown Recovery (Tier: 2)',
+      '--------',
+      'Bladefall of Trarthus',
+      'Greater Concentrated Effect (Tier: 3)',
+      'Brutality (Tier: 2)',
+      '--------',
+      'Grace',
+      '--------',
+      'Right click this item to view Mercenary details.',
+      'Can be used in a personal Map Device alongside a Map to have this previously fought Mercenary reappear in the area for a rematch.',
+    ].join('\n')
+
+    it('parses each skill block with its supports, in clipboard order', () => {
+      expect(parseItemText(KRIMON)!.mercenarySkills).toEqual([
+        { name: 'Clutches of the Damned', supports: [] },
+        { name: 'Bloody Warp', supports: ['Critical Chance (Tier: 2)', 'Cooldown Recovery (Tier: 2)'] },
+        {
+          name: 'Bladefall of Trarthus',
+          supports: ['Greater Concentrated Effect (Tier: 3)', 'Brutality (Tier: 2)'],
+        },
+        { name: 'Grace', supports: [] },
+      ])
+    })
+
+    it('keeps the skill blocks out of the mod list', () => {
+      const item = parseItemText(KRIMON)!
+
+      expect(item.explicits ?? []).toEqual([])
+      expect(item.implicits ?? []).toEqual([])
+    })
+
+    it('stops at the description, so a trade note is never read as a skill', () => {
+      const withNote = `${KRIMON}\n--------\nNote: ~b/o 5 divine`
+      const names = parseItemText(withNote)!.mercenarySkills!.map((s) => s.name)
+
+      expect(names).toEqual(['Clutches of the Damned', 'Bloody Warp', 'Bladefall of Trarthus', 'Grace'])
+    })
+
+    it('leaves the field undefined on a warrant printed without skill blocks', () => {
+      expect(parseItemText(warrantText('Mysterious Diver'))!.mercenarySkills).toBeUndefined()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // Flags
   // ---------------------------------------------------------------------------
 
@@ -1038,6 +1553,143 @@ describe('parseItemText', () => {
     it('detects Mirrored flag', () => {
       const item = parseItemText(makeRing(['--------', 'Mirrored']))!
       expect(item.mirrored).toBe(true)
+    })
+
+    it('detects a vestigial unique via the base-type prefix and strips it', () => {
+      // Vestigial items (3.27 Legion) carry the mechanic as a "Vestigial " base-type
+      // prefix -- there is no marker line. The prefix is display-only: the real base
+      // type (what the trade API's baseType field expects) has no prefix.
+      const text = [
+        'Item Class: Body Armours',
+        'Rarity: Unique',
+        'Tabula Rasa',
+        'Vestigial Simple Robe',
+        '--------',
+        'Requirements:',
+        'Level: 14',
+        '--------',
+        'Sockets: W-W-W-W-W-W',
+        '--------',
+        'Item Level: 83',
+        '--------',
+        '{ Vestigial Implicit Modifier }',
+        '20% of Physical Damage taken as Fire Damage',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.vestigial).toBe(true)
+      expect(item.baseType).toBe('Simple Robe')
+      expect(item.name).toBe('Tabula Rasa')
+    })
+
+    it('detects a vestigial rare via the base-type prefix and strips it', () => {
+      const text = [
+        'Item Class: Boots',
+        'Rarity: Rare',
+        'Storm Knuckle',
+        'Vestigial Dragonscale Boots',
+        '--------',
+        'Item Level: 83',
+        '--------',
+        '+30 to Strength',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.vestigial).toBe(true)
+      expect(item.baseType).toBe('Dragonscale Boots')
+    })
+
+    it('an unidentified vestigial item has no separate name line -- name === baseType with the prefix stripped', () => {
+      // Unid items only have one line under the header (the base type), so the
+      // parser sets name == the raw base line. trade.ts keys the unid-unique
+      // search off name === baseType, so both must have the prefix stripped.
+      const text = [
+        'Item Class: Body Armours',
+        'Rarity: Unique',
+        'Vestigial Simple Robe',
+        '--------',
+        'Unidentified',
+        '--------',
+        'Item Level: 83',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.vestigial).toBe(true)
+      expect(item.name).toBe('Simple Robe')
+      expect(item.baseType).toBe('Simple Robe')
+    })
+
+    it('a normal item is not vestigial', () => {
+      const item = parseItemText(makeRing([]))!
+      expect(item.vestigial).toBe(false)
+    })
+
+    it('detects the PoE2 Sanctified marker line (#597)', () => {
+      const item = parseItemText(makeRing(['--------', 'Sanctified']))!
+      expect(item.sanctified).toBe(true)
+    })
+
+    it('a plain item is not sanctified, and a Sanctified base-type line does not trip the flag', () => {
+      // "Sanctified Staff" is a real PoE2 base type -- the marker check must be an
+      // exact line match, not a substring/prefix test.
+      const plain = parseItemText(makeRing([]))!
+      expect(plain.sanctified).toBe(false)
+      const text = [
+        'Item Class: Staves',
+        'Rarity: Rare',
+        'Storm Call',
+        'Sanctified Staff',
+        '--------',
+        'Item Level: 80',
+        '--------',
+        '+30 to Strength',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.sanctified).toBe(false)
+      expect(item.explicits).toContain('+30 to Strength')
+    })
+
+    it('the Sanctified section is not swallowed into explicit mods', () => {
+      const item = parseItemText(makeRing(['--------', '+30 to Strength', '--------', 'Sanctified']))!
+      expect(item.sanctified).toBe(true)
+      expect(item.explicits).toContain('+30 to Strength')
+      expect(item.explicits).not.toContain('Sanctified')
+    })
+
+    it('detects a foulborn unique via the name prefix and does NOT strip it (#532)', () => {
+      // Unlike vestigial, the Foulborn prefix stays on `name` -- trade.ts strips it
+      // at query time instead, since poe.ninja/the clipboard need the full name.
+      const text = [
+        'Item Class: Belts',
+        'Rarity: Unique',
+        'Foulborn Headhunter',
+        'Heavy Belt',
+        '--------',
+        'Requires: Level 50',
+        '--------',
+        'Item Level: 64',
+        '--------',
+        '{ Unique Modifier }',
+        'When you kill a Rare monster, you gain its Modifiers for 60 seconds',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.foulborn).toBe(true)
+      expect(item.name).toBe('Foulborn Headhunter')
+    })
+
+    it('a plain unique is not foulborn', () => {
+      const text = [
+        'Item Class: Belts',
+        'Rarity: Unique',
+        'Headhunter',
+        'Heavy Belt',
+        '--------',
+        'Requires: Level 50',
+        '--------',
+        'Item Level: 64',
+        '--------',
+        '{ Unique Modifier }',
+        'When you kill a Rare monster, you gain its Modifiers for 60 seconds',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.foulborn).toBeFalsy()
     })
 
     it('detects Fractured flag via (fractured) suffix', () => {
@@ -1129,7 +1781,7 @@ describe('parseItemText', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Advanced mods (Ctrl+Alt+C format)
+  // Advanced mods (advanced copy format)
   // ---------------------------------------------------------------------------
 
   describe('advanced mods', () => {
@@ -1365,6 +2017,37 @@ describe('parseItemText', () => {
       expect(item.explicits).toContain('Passives granting Fire Resistance\nalso grant increased Maximum Life')
     })
 
+    it('pushes intermediate contiguous joins for 3+ line mods (#559)', () => {
+      // "Tacati's" pairs a two-line stat ("Trigger a Socketed Spell ... Cooldown" +
+      // "Spells Triggered this way ...", one trade stat) with a third independent
+      // line. Neither the single lines nor the whole-block join matches that stat,
+      // so the 2-line prefix run has to be emitted too.
+      const text = [
+        'Item Class: Sceptres',
+        'Rarity: Rare',
+        'Phoenix Roar',
+        'Void Sceptre',
+        '--------',
+        'Item Level: 86',
+        '--------',
+        '{ Prefix Modifier "Tacati\'s" — Damage, Caster, Gem }',
+        'Trigger a Socketed Spell on Using a Skill, with a 4 second Cooldown',
+        'Spells Triggered this way have 150% more Cost',
+        '70(70-74)% increased Spell Damage',
+      ].join('\n')
+
+      const item = parseItemText(text)!
+      expect(item.explicits).toContain(
+        'Trigger a Socketed Spell on Using a Skill, with a 4 second Cooldown\nSpells Triggered this way have 150% more Cost',
+      )
+      expect(item.explicits).toContain('Spells Triggered this way have 150% more Cost\n70% increased Spell Damage')
+      // Individual lines and the whole-block join are still emitted.
+      expect(item.explicits).toContain('70% increased Spell Damage')
+      expect(item.explicits).toContain(
+        'Trigger a Socketed Spell on Using a Skill, with a 4 second Cooldown\nSpells Triggered this way have 150% more Cost\n70% increased Spell Damage',
+      )
+    })
+
     it('handles hybrid mods (socketed gem + bonus under one header)', () => {
       const text = [
         'Item Class: Helmets',
@@ -1408,6 +2091,7 @@ describe('parseItemText', () => {
       const eldritchMod = item.advancedMods?.find((m) => m.eldritch)
       expect(eldritchMod).toBeDefined()
       expect(eldritchMod?.type).toBe('implicit')
+      expect(eldritchMod?.eldritchSource).toBe('searing-exarch')
       expect(item.implicits).toContain('+2% to maximum Fire Resistance')
     })
 
@@ -1431,6 +2115,25 @@ describe('parseItemText', () => {
       const eldritchMod = item.advancedMods?.find((m) => m.eldritch)
       expect(eldritchMod).toBeDefined()
       expect(eldritchMod?.type).toBe('implicit')
+      expect(eldritchMod?.eldritchSource).toBe('eater-of-worlds')
+    })
+
+    it('leaves eldritchSource unset on an ordinary affix', () => {
+      const text = [
+        'Item Class: Rings',
+        'Rarity: Rare',
+        'Doom Loop',
+        'Iron Ring',
+        '--------',
+        'Item Level: 86',
+        '--------',
+        '{ Prefix Modifier "Test" (Tier: 1) -- Life }',
+        '+50 to maximum Life',
+      ].join('\n')
+
+      const mod = parseItemText(text)!.advancedMods?.[0]
+      expect(mod?.eldritch).toBe(false)
+      expect(mod?.eldritchSource).toBeUndefined()
     })
 
     it('stops collecting mod lines at section separators', () => {
@@ -1680,7 +2383,7 @@ describe('parseItemText', () => {
         'Item Level: 83',
       ].join('\n')
       const item = parseItemText(text)!
-      expect(item.heistJob).toEqual({ skill: 'Engineering', level: 3 })
+      expect(item.heistJobs).toEqual([{ skill: 'Engineering', level: 3 }])
     })
 
     it('parses heist job requirement from a contract with "(unmet)" suffix', () => {
@@ -1694,7 +2397,33 @@ describe('parseItemText', () => {
         'Item Level: 83',
       ].join('\n')
       const item = parseItemText(text)!
-      expect(item.heistJob).toEqual({ skill: 'Engineering', level: 3 })
+      expect(item.heistJobs).toEqual([{ skill: 'Engineering', level: 3 }])
+    })
+
+    it('parses every job requirement from a blueprint (#591)', () => {
+      const text = [
+        'Item Class: Blueprints',
+        'Rarity: Rare',
+        'Chimeric Pledge',
+        'Blueprint: Bunker',
+        '--------',
+        'Area Level: 83',
+        'Wings Revealed: 1/3',
+        'Escape Routes Revealed: 1/6',
+        'Reward Rooms Revealed: 3/21',
+        'Requires Demolition (Level 2)',
+        'Requires Counter-Thaumaturgy (Level 5)',
+        'Requires Trap Disarmament (Level 1)',
+        'Item Quantity: +58%',
+        '--------',
+        'Item Level: 84',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.heistJobs).toEqual([
+        { skill: 'Demolition', level: 2 },
+        { skill: 'Counter-Thaumaturgy', level: 5 },
+        { skill: 'Trap Disarmament', level: 1 },
+      ])
     })
 
     it('parses wings revealed and total from a blueprint', () => {
@@ -1711,6 +2440,39 @@ describe('parseItemText', () => {
       const item = parseItemText(text)!
       expect(item.wingsRevealed).toBe(1)
       expect(item.wingsTotal).toBe(3)
+    })
+
+    it('parses Heist Target property from a blueprint', () => {
+      const text = [
+        'Item Class: Blueprints',
+        'Rarity: Normal',
+        'Blueprint: Bunker',
+        '--------',
+        'Heist Target: Currency',
+        'Area Level: 83',
+        'Wings Revealed: 3/3',
+        '--------',
+        'Item Level: 83',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.heistTarget).toBe('Currency')
+    })
+
+    it('parses Heist Targets are always line as heistTarget', () => {
+      const text = [
+        'Item Class: Blueprints',
+        'Rarity: Normal',
+        'Blueprint: Bunker',
+        '--------',
+        'Area Level: 83',
+        'Wings Revealed: 1/3',
+        '--------',
+        'Heist Targets are always Enchanted Armaments',
+        '--------',
+        'Item Level: 83',
+      ].join('\n')
+      const item = parseItemText(text)!
+      expect(item.heistTarget).toBe('Enchanted Armaments')
     })
   })
 

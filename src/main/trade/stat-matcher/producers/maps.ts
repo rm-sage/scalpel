@@ -2,9 +2,11 @@ import { isEndgameFilterIndexed } from '../../endgame-filter-support'
 import type { AdvancedMod } from '@shared/types'
 import type { StatFilter } from '../../trade'
 
-/** "Fuzz floor" applied to a map/waystone property when searching: accept
- *  listings down to 90% of the item's value so near-identical rolls match. */
-const MAP_MIN = (v: number): number => Math.floor(v * 0.9)
+/** "Fuzz floor" applied to a map/waystone/chart property when searching: accept
+ *  listings down to the user's default search percentage (Settings -> Price Check)
+ *  of the item's value, so at 100% the search pins to the item's exact roll.
+ *  Exported for the chart producer, which applies the same floor to map_iiq. */
+export const MAP_MIN = (v: number, pct: number): number => Math.floor(v * pct)
 
 type MapItemInfo = {
   itemClass?: string
@@ -54,7 +56,11 @@ const WAYSTONE_ENDGAME_FILTERS: readonly WaystoneEndgameFilter[] = [
 ]
 
 // Map property chips (Item Quantity, Rarity, Pack Size, More X) and modifier-count scrubber
-export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?: AdvancedMod[]): StatFilter[] {
+export function buildMapFilters(
+  itemInfo: MapItemInfo | undefined,
+  advancedMods: AdvancedMod[] | undefined,
+  pct: number,
+): StatFilter[] {
   const out: StatFilter[] = []
 
   if (itemInfo && itemInfo.itemClass === 'Maps' && itemInfo.rarity === 'Rare') {
@@ -63,7 +69,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'map.map_iiq',
         text: `Quantity: +${itemInfo.mapQuantity}%`,
         value: itemInfo.mapQuantity,
-        min: MAP_MIN(itemInfo.mapQuantity),
+        min: MAP_MIN(itemInfo.mapQuantity, pct),
         max: null,
         enabled: true,
         type: 'map',
@@ -73,9 +79,13 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'map.map_iir',
         text: `Rarity: +${itemInfo.mapRarity}%`,
         value: itemInfo.mapRarity,
-        min: MAP_MIN(itemInfo.mapRarity),
+        min: MAP_MIN(itemInfo.mapRarity, pct),
         max: null,
-        enabled: false,
+        // On by default like every other property chip in this block, and like the PoE2
+        // waystone Rarity chip (#561). It used to be originator-only (#541) on the theory
+        // that Item Rarity is noise on a regular map; users price on it either way, and the
+        // chip is now learnable so anyone who disagrees can toggle it off and have that stick.
+        enabled: true,
         type: 'map',
       })
     if (itemInfo.mapPackSize)
@@ -83,7 +93,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'map.map_packsize',
         text: `Pack Size: +${itemInfo.mapPackSize}%`,
         value: itemInfo.mapPackSize,
-        min: MAP_MIN(itemInfo.mapPackSize),
+        min: MAP_MIN(itemInfo.mapPackSize, pct),
         max: null,
         enabled: true,
         type: 'map',
@@ -94,7 +104,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_scarab_drops',
         text: `More Scarabs: +${itemInfo.mapMoreScarabs}%`,
         value: itemInfo.mapMoreScarabs,
-        min: MAP_MIN(itemInfo.mapMoreScarabs),
+        min: MAP_MIN(itemInfo.mapMoreScarabs, pct),
         max: null,
         enabled: true,
         type: 'map',
@@ -104,7 +114,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_currency_drops',
         text: `More Currency: +${itemInfo.mapMoreCurrency}%`,
         value: itemInfo.mapMoreCurrency,
-        min: MAP_MIN(itemInfo.mapMoreCurrency),
+        min: MAP_MIN(itemInfo.mapMoreCurrency, pct),
         max: null,
         enabled: true,
         type: 'map',
@@ -114,7 +124,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_map_drops',
         text: `More Maps: +${itemInfo.mapMoreMaps}%`,
         value: itemInfo.mapMoreMaps,
-        min: MAP_MIN(itemInfo.mapMoreMaps),
+        min: MAP_MIN(itemInfo.mapMoreMaps, pct),
         max: null,
         enabled: true,
         type: 'map',
@@ -124,7 +134,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: 'pseudo.pseudo_map_more_card_drops',
         text: `More Div Cards: +${itemInfo.mapMoreDivCards}%`,
         value: itemInfo.mapMoreDivCards,
-        min: MAP_MIN(itemInfo.mapMoreDivCards),
+        min: MAP_MIN(itemInfo.mapMoreDivCards, pct),
         max: null,
         enabled: true,
         type: 'map',
@@ -160,7 +170,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
         id: f.id,
         text: `${f.label}: ${value}`,
         value,
-        min: f.exact ? value : MAP_MIN(value),
+        min: f.exact ? value : MAP_MIN(value, pct),
         max: f.exact ? value : null,
         enabled: f.enabledByDefault ?? false,
         type: 'map',
@@ -174,7 +184,7 @@ export function buildMapFilters(itemInfo: MapItemInfo | undefined, advancedMods?
   // `min`, so the user can scrub the minimum down to broaden the search. Default-on only at 8
   // (full rolls); lower counts are present but disabled so the user can opt in.
   // Implicits are excluded from the count - they are not affixes.
-  // Requires an advanced-mode clipboard copy (Ctrl+Alt+C) so that advancedMods carries
+  // Requires an advanced-mode clipboard copy so that advancedMods carries
   // type 'prefix' | 'suffix' labels; a basic copy leaves advancedMods empty and emits no chip.
   // Covers both PoE1 Maps and PoE2 Waystones - trade2 indexing of this pseudo stat for
   // waystones was probe-confirmed (no remote-allowlist gating needed).

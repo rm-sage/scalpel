@@ -27,13 +27,12 @@ export type ActionType =
 
 export type ConditionResult = 'pass' | 'fail' | 'unknown'
 
-export type TradePriceOption =
-  | 'chaos_divine'
-  | 'chaos_equivalent'
-  | 'chaos'
-  | 'divine'
-  | 'exalted_divine'
-  | 'exalted_equivalent'
-  | 'exalted'
+/** Derived from the buyout-currency catalog so the option list and the
+ *  persisted type can't drift apart. */
+export type { TradePriceOption } from '../trade-price-options'
 
 export type AdaptiveMode = 'eager' | 'conservative' | 'off'
+
+/** Price-check "Affixes prechecked" trade default: 'default' = the producer's smart
+ *  best-effort state, 'base' = every affix unticked, 'all' = every affix ticked. */
+export type AffixesPrechecked = 'default' | 'base' | 'all'

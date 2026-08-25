@@ -1,22 +1,7 @@
 import { RARITY_COLORS } from '../constants'
 import { getItemSize } from '../item-display'
-import socketRed from '../../assets/sockets/socket-red.png'
-import socketGreen from '../../assets/sockets/socket-green.png'
-import socketBlue from '../../assets/sockets/socket-blue.png'
-import socketWhite from '../../assets/sockets/socket-white.png'
-import socketAbyss from '../../assets/sockets/socket-abyss.png'
 
-export { RARITY_COLORS, getItemSize, socketWhite }
-export { default as socketLink } from '../../assets/sockets/socket-link.png'
-
-export const SOCKET_IMGS: Record<string, string> = {
-  R: socketRed,
-  G: socketGreen,
-  B: socketBlue,
-  W: socketWhite,
-  A: socketAbyss,
-  Ab: socketAbyss,
-}
+export { RARITY_COLORS, getItemSize }
 
 export const MOD_COLORS: Record<string, string> = {
   'temple-key': '#ffd700',
@@ -36,6 +21,7 @@ export const MOD_COLORS: Record<string, string> = {
   rune: '#a8e6cf',
   skill: '#a8e6cf',
   map: '#80cbc4',
+  mercenary: '#a8e6cf',
   explicit: '#8787FE',
   tierPrefix: '#ec7676',
   tierSuffix: '#7aaff1',

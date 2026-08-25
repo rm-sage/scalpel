@@ -32,6 +32,14 @@ const FILES = [
   'mapmods/GeneratedTypes.ts',
   // Re-mapped on save: upstream stores it in src/generated/, we put it under flaskmods/.
   { from: 'GeneratedFlaskMods.ts', to: 'flaskmods/GeneratedFlaskMods.ts' },
+  // PoE1 vendor gems (Vendor tab gem list + gem regex tokens).
+  'gems/Generated.Gems.English.ts',
+  'gems/GeneratedTypes.ts',
+  // PoE1 Items tab (rare crafting mods + magic name matching).
+  { from: 'GeneratedItemBases.ts', to: 'item/GeneratedItemBases.ts' },
+  { from: 'GeneratedItemMods.ts', to: 'item/GeneratedItemMods.ts' },
+  // PoE1 Beasts tab (bestiary regex fragments + craft recipes).
+  { from: 'GeneratedBeastRegex.ts', to: 'beast/GeneratedBeastRegex.ts' },
 ]
 
 const ATTRIBUTION = `// Data sourced from poe-vendor-string (https://github.com/${REPO})
@@ -49,7 +57,12 @@ function fetch(url) {
           res.resume()
           return reject(new Error(`HTTP ${res.statusCode} for ${url}`))
         }
+        // Without an explicit encoding, a multi-byte character split across two
+        // chunk boundaries decodes as mojibake. Beast names carry the first
+        // non-ASCII join key in synced data ("Black Morrigan" with an accented o),
+        // and that name has to match poe.ninja's string exactly.
         let data = ''
+        res.setEncoding('utf8')
         res.on('data', (chunk) => {
           data += chunk
         })
@@ -114,21 +127,25 @@ async function sync() {
     }
   }
 
-  // Save meta
-  fs.writeFileSync(
-    META_FILE,
-    JSON.stringify(
-      {
-        commit: latestCommit,
-        timestamp: new Date().toISOString(),
-        repo: REPO,
-      },
-      null,
-      2,
-    ),
-  )
-
+  // Save meta only when a file actually changed. Upstream commits to
+  // src/generated regularly without touching the 18 files we pull, so writing
+  // the sha unconditionally rewrote this tracked file on every dev start and
+  // left a zero-data-change diff in the working tree. The cost of not caching
+  // the checked-but-unchanged sha is re-fetching those files on the next dev
+  // start, which runs in the background and costs nothing that matters.
   if (updated > 0) {
+    fs.writeFileSync(
+      META_FILE,
+      JSON.stringify(
+        {
+          commit: latestCommit,
+          timestamp: new Date().toISOString(),
+          repo: REPO,
+        },
+        null,
+        2,
+      ),
+    )
     console.log(`[sync-regex] Updated ${updated} file(s).`)
   } else {
     console.log('[sync-regex] All files already current.')

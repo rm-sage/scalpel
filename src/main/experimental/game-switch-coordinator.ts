@@ -10,6 +10,7 @@ import { invalidateBaseToClassCache, invalidateSearchableItemsCache } from '../h
 import { updateOnlineSyncDir } from '../online-sync'
 import { retargetForGame } from '../overlay'
 import { applyPinnedZoneEnabled } from '../pinned-zone'
+import { advancedCopyTracker } from '../trade/advanced-copy'
 import { invalidateClipboardCaches } from '../trade/clipboard'
 import { loadTierData, refreshTierData, resetTierDataRefreshGuard } from '../tier-data'
 import {
@@ -26,6 +27,7 @@ import { refreshLeagues } from '../trade/leagues'
 import { refreshPrices } from '../trade/prices'
 import { invalidateStatMatcherCaches } from '../trade/stat-matcher/cache-invalidation'
 import { getPoeVersion, setPoeVersion } from '../game-state'
+import { refreshScopedHotkeys } from '../hotkeys'
 
 function isValidLeagueForGame(store: Store<AppSettings>, league: string, variant: GameVariant): boolean {
   const key = variant === 2 ? 'leaguesPoe2' : 'leaguesPoe1'
@@ -52,6 +54,7 @@ export function switchGameContext(
 ): GameSwitchResult {
   const changed = target !== getPoeVersion()
   setPoeVersion(target)
+  if (changed) refreshScopedHotkeys('game-switch')
 
   // Drop the previous game's last-evaluated item before the filter (re)load
   // below fires onFilterLoaded -> reEvaluateLastItem, which would otherwise
@@ -90,6 +93,9 @@ export function switchGameContext(
     // the previous game's data: clipboard base-types/sizes, the searchable
     // item list, and the tier dataset (reload + drop the refresh-hash guard).
     invalidateClipboardCaches()
+    // The advanced-copy latch is per-client: one game needing Alt says nothing
+    // about the other, so re-probe after a switch.
+    advancedCopyTracker.reset()
     invalidateSearchableItemsCache()
     resetTierDataRefreshGuard()
     void loadTierData(target)

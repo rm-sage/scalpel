@@ -26,7 +26,14 @@ export interface OverlayState {
   // any visible secondary" sweep (focus.ts); other hide sites that should
   // spare a persisting overlay must check it explicitly. Set and cleared by
   // the owner (the whiteboard sets it true in passthrough, false in edit).
+  // The pinned-zone overlay sets it true permanently at registration, since
+  // it has no edit/passthrough mode to toggle between.
   persistOverOthers: boolean
+  // User-facing pin (the Chrome header toggle): exempts the overlay from the
+  // Esc hide sweep, exactly like persistOverOthers but user-owned so the two
+  // never fight (the whiteboard toggles persistOverOthers by mode). Seeded
+  // from the persisted pin store at registration; see windowing/pin.ts.
+  userPinned: boolean
 }
 
 /** All registered secondary overlays, keyed by spec.id. Shared between the

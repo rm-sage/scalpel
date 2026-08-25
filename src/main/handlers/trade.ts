@@ -3,6 +3,7 @@ import type Store from 'electron-store'
 import { getTradeUrls, POE_WEBSITE } from '@shared/endpoints'
 import type { AppSettings, AuthResult } from '@shared/types'
 import { getPoeVersion } from '../game-state'
+import { normalizePriceOption } from '@shared/trade-price-options'
 import { getProfileBackedSetting } from '../profiles/profile-settings'
 import type { BulkExchangeResult, StatFilter, TradeResult } from '../trade/trade'
 import {
@@ -249,10 +250,14 @@ export function register(store: Store<AppSettings>): void {
       // Per-search overrides from the price-check Settings chip take priority over the
       // persisted global settings.
       const status = searchOptions?.statusOption ?? store.get('tradeStatus') ?? 'available'
-      const price = searchOptions?.priceOption ?? getProfileBackedSetting(store, 'tradePriceOption') ?? 'chaos_divine'
+      const price = normalizePriceOption(
+        searchOptions?.priceOption ?? getProfileBackedSetting(store, 'tradePriceOption'),
+        getPoeVersion(),
+      )
       const collapse = store.get('tradeCollapseListings') ?? true
-      // Only spend a login check when the search would carry a Weighted Sum group
-      // (the trade API rejects those for anonymous users). Most searches skip it.
+      // Only spend a login check when the search would carry a stat group the
+      // trade API rejects for anonymous users (Weighted Sum, scoped mercenary
+      // groups). Most searches skip it.
       const loggedIn = searchNeedsLogin(statFilters) ? await isLoggedInCached() : true
       return searchTrade(league, item, statFilters, {
         tradeStatus: status,
@@ -266,9 +271,15 @@ export function register(store: Store<AppSettings>): void {
 
   ipcMain.handle(
     'bulk-exchange',
-    async (_event, itemName: string, baseType: string, haveId?: string): Promise<BulkExchangeResult> => {
+    async (
+      _event,
+      itemName: string,
+      baseType: string,
+      haveId?: string,
+      zanaMemory?: boolean,
+    ): Promise<BulkExchangeResult> => {
       const league = getProfileBackedSetting(store, 'league')
-      const wantId = getBulkExchangeId(itemName, baseType)
+      const wantId = getBulkExchangeId(itemName, baseType, undefined, zanaMemory)
       if (!wantId) return { total: 0, listings: [], queryId: '' }
       return searchBulkExchange(league, wantId, haveId ?? 'chaos')
     },
@@ -276,8 +287,8 @@ export function register(store: Store<AppSettings>): void {
 
   ipcMain.handle(
     'check-bulk-item',
-    (_event, itemName: string, baseType: string, itemClass: string, rarity?: string): boolean => {
-      return isBulkExchangeItem(itemClass, itemName, baseType, rarity)
+    (_event, itemName: string, baseType: string, itemClass: string, rarity?: string, zanaMemory?: boolean): boolean => {
+      return isBulkExchangeItem(itemClass, itemName, baseType, rarity, zanaMemory)
     },
   )
 
@@ -362,7 +373,7 @@ export function register(store: Store<AppSettings>): void {
     ) => {
       const league = getProfileBackedSetting(store, 'league')
       const tradeStatus = store.get('tradeStatus') ?? 'available'
-      const tradePriceOption = getProfileBackedSetting(store, 'tradePriceOption') ?? 'chaos_divine'
+      const tradePriceOption = normalizePriceOption(getProfileBackedSetting(store, 'tradePriceOption'), getPoeVersion())
       const collapse = store.get('tradeCollapseListings') ?? true
       const result = await searchMapsByRegex(
         league,
@@ -410,7 +421,7 @@ export function register(store: Store<AppSettings>): void {
     ) => {
       const league = getProfileBackedSetting(store, 'league')
       const tradeStatus = store.get('tradeStatus') ?? 'available'
-      const tradePriceOption = getProfileBackedSetting(store, 'tradePriceOption') ?? 'chaos_divine'
+      const tradePriceOption = normalizePriceOption(getProfileBackedSetting(store, 'tradePriceOption'), getPoeVersion())
       const collapse = store.get('tradeCollapseListings') ?? true
       const result = await searchWaystonesByRegex(
         league,
@@ -438,14 +449,14 @@ export function register(store: Store<AppSettings>): void {
         wantTexts: string[]
         wantMode: 'any' | 'all'
         wantValues: Record<number, number>
-        rarity: { normal: boolean; magic: boolean }
+        rarity: { normal: boolean; magic: boolean; rare: boolean }
         typeFlags: Record<string, boolean>
         uses: { enabled: boolean; value: number }
       },
     ) => {
       const league = getProfileBackedSetting(store, 'league')
       const tradeStatus = store.get('tradeStatus') ?? 'available'
-      const tradePriceOption = getProfileBackedSetting(store, 'tradePriceOption') ?? 'chaos_divine'
+      const tradePriceOption = normalizePriceOption(getProfileBackedSetting(store, 'tradePriceOption'), getPoeVersion())
       const collapse = store.get('tradeCollapseListings') ?? true
       const result = await searchTabletsByRegex(
         league,

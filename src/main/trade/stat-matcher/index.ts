@@ -4,7 +4,9 @@ import type { DefenseValues, ItemInfo } from './context'
 import { deriveContext } from './context'
 import { ITEM_CLASS_TO_CATEGORY } from './item-classes'
 import { buildAtzoatlFilters } from './producers/atzoatl'
+import { buildBasePercentileFilter } from './producers/base-percentile'
 import { buildBaseTypeFilter } from './producers/base-type'
+import { buildChartFilters } from './producers/charts'
 import { buildRuneBaseFilter } from './producers/rune-base'
 import { buildDefenseFilters } from './producers/defenses'
 import { buildEnchantFilters } from './producers/enchants'
@@ -16,11 +18,14 @@ import { buildImbueFilters } from './producers/imbues'
 import { processImplicits } from './producers/implicits'
 import { postProcessInscribedUltimatum } from './producers/inscribed-ultimatum'
 import { buildLogbookFilters } from './producers/logbook'
+import { postProcessMageblood } from './producers/mageblood'
 import { buildMapFilters } from './producers/maps'
 import { buildMiscFilters } from './producers/misc'
 import { emitPseudoFilters } from './producers/pseudo-emit'
 import { buildRelicFilters } from './producers/relics'
 import { buildRuneFilters } from './producers/rune-mods'
+import { buildMercenaryWarrantFilters } from './producers/mercenary-warrant'
+import { buildScryingOrbFilters } from './producers/scrying-orb'
 import { buildSocketFilters } from './producers/sockets'
 import { buildStoredExperienceFilters } from './producers/stored-experience'
 import { buildTabletFilters } from './producers/tablets'
@@ -77,6 +82,9 @@ export function matchItemMods(
   // Add defense filters as special "defence" type
   const defenseFilters = buildDefenseFilters(defenses, qualityNorm, ctx.pct)
 
+  // PoE1 base defence percentile chip (issue #467)
+  const basePercentileFilters = buildBasePercentileFilter(ctx)
+
   // Add weapon DPS filters
   const weaponFilters = buildWeaponDpsFilters(itemInfo, qualityNorm, ctx.pct)
 
@@ -87,7 +95,7 @@ export function matchItemMods(
   const enchantFilters = buildEnchantFilters(itemInfo, ctx.hasLocalMods)
 
   // Socket chips (rune, white, abyssal, links)
-  const socketFilters = buildSocketFilters(itemInfo, advancedMods)
+  const socketFilters = buildSocketFilters(itemInfo, ctx.explicits, ctx.implicits)
 
   // Base type chip
   const baseTypeFilters = buildBaseTypeFilter(itemInfo)
@@ -114,7 +122,16 @@ export function matchItemMods(
   const atzoatlFilters = buildAtzoatlFilters(itemInfo)
 
   // Map property chips (Item Quantity, Rarity, Pack Size, More X, 8-mod corrupted)
-  const mapFilters = buildMapFilters(itemInfo, advancedMods)
+  const mapFilters = buildMapFilters(itemInfo, advancedMods, ctx.pct)
+
+  // Chart zone, quantity and shape chips
+  const chartFilters = buildChartFilters(itemInfo, ctx.pct)
+
+  // Scrying Orb map-area chip
+  const scryingOrbFilters = buildScryingOrbFilters(itemInfo)
+
+  // Mercenary Warrant build and level chips
+  const mercenaryWarrantFilters = buildMercenaryWarrantFilters(itemInfo)
 
   // Timeless jewel handling: two toggleable chips - "Any Leader" and specific leader
   const timelessFilters = buildTimelessFilters(itemInfo, advancedMods, explicits)
@@ -130,12 +147,16 @@ export function matchItemMods(
   const combined: StatFilter[] = [
     ...weaponFilters,
     ...defenseFilters,
+    ...basePercentileFilters,
     ...pseudoFilters,
     ...timelessFilters,
     ...imbueFilters,
     ...enchantFilters,
     ...runeFilters,
     ...mapFilters,
+    ...chartFilters,
+    ...scryingOrbFilters,
+    ...mercenaryWarrantFilters,
     ...socketFilters,
     // Rune chip sits before the base-name chip so they read left-to-right as
     // "Runeforged" + "<base>" (the composed type the search sends).
@@ -156,6 +177,7 @@ export function matchItemMods(
   ]
 
   let assembled = postProcessInscribedUltimatum(combined, itemInfo)
+  assembled = postProcessMageblood(assembled, itemInfo)
 
   const resolved = resolveUniqueOverride(itemInfo)
   if (resolved) {

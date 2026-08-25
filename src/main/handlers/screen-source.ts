@@ -1,6 +1,7 @@
 import { desktopCapturer, ipcMain, screen } from 'electron'
 import { OverlayController } from 'electron-overlay-window'
 import { GAME_TITLES } from '@shared/contracts/game-variant'
+import { IPC_CHANNELS } from '@shared/contracts/ipc'
 import { getPoeVersion } from '../game-state'
 
 export interface GameWindowSourceInfo {
@@ -33,6 +34,9 @@ async function handleGetSource(): Promise<GameWindowSourceInfo | null> {
     // opens the live stream from the id). This keeps getSources cheap.
     const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1, height: 1 } })
     const sourceId = matchGameWindowSource(sources, title)
+    if (process.env.SCALPEL_DEBUG_LOG) {
+      console.log(`[screen-source] title="${title}" resolved=${sourceId} of ${sources.length} sources`)
+    }
     if (!sourceId) return null
     const display = screen.getDisplayNearestPoint({ x: tb.x + tb.width / 2, y: tb.y + tb.height / 2 })
     const sf = display.scaleFactor
@@ -44,5 +48,5 @@ async function handleGetSource(): Promise<GameWindowSourceInfo | null> {
 }
 
 export function register(): void {
-  ipcMain.handle('screen:get-game-window-source', () => handleGetSource())
+  ipcMain.handle(IPC_CHANNELS.SCREEN.GET_GAME_WINDOW_SOURCE, () => handleGetSource())
 }

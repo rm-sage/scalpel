@@ -11,7 +11,8 @@ import dustIcon from '../assets/currency/thaumaturgic-dust.png'
 import socketRed from '../assets/sockets/socket-red.png'
 import socketGreen from '../assets/sockets/socket-green.png'
 import socketBlue from '../assets/sockets/socket-blue.png'
-import socketWhite from '../assets/sockets/socket-white.png'
+import socketColorless from '../assets/sockets/socket-colorless.png'
+import socketAbyss from '../assets/sockets/socket-abyss.png'
 import { RuneSocketChipPoe2 } from './sockets/RuneSocketChip.poe2'
 import { usePoeVersion } from '../shared/poe-version-context'
 import { getGameFeatures } from '@shared/game-features'
@@ -19,6 +20,7 @@ import divCardsData from '@shared/data/economy/div-cards.json'
 import baseToUniques from '@shared/data/items/unique-info.json'
 import { ItemChip } from './ItemChip'
 import { IconGlow } from '../shared/IconGlow'
+import { VestigialChip } from '../shared/VestigialChip'
 import mapFrameIcon from '../assets/other/map-frame.png'
 const divCardInfoMap = new Map(
   (divCardsData as Array<{ name: string; reward: string; stack: number }>).map((c) => [
@@ -355,6 +357,11 @@ export function ItemSummary({
               <span className="font-semibold">Mirrored</span>
             </InfoChip>
           )}
+          {item.sanctified && (
+            <InfoChip color="#e7b356">
+              <span className="font-semibold">Sanctified</span>
+            </InfoChip>
+          )}
           {item.fractured && (
             <InfoChip color="#a29162">
               <span className="font-semibold">Fractured</span>
@@ -365,6 +372,7 @@ export function ItemSummary({
               <span className="font-semibold">Synthesised</span>
             </InfoChip>
           )}
+          <VestigialChip item={item} />
           {item.influence.map((inf) => (
             <InfoChip key={inf} icon={INFLUENCE_ICONS_BY_NAME[inf]} color="#c8a96e">
               <span className="font-semibold">{inf}</span>
@@ -405,13 +413,14 @@ function _Chip({
   )
 }
 
+// 3.29 renders the any-colour (W) socket grey; the clipboard token is still "W".
 const SOCKET_ICONS: Record<string, string> = {
   R: socketRed,
   G: socketGreen,
   B: socketBlue,
-  W: socketWhite,
-  A: socketWhite,
-  D: socketWhite,
+  W: socketColorless,
+  A: socketAbyss,
+  D: socketColorless,
 }
 const SOCKET_SIZE = 18
 const LINK_WIDTH = 10
@@ -437,7 +446,7 @@ function SocketDisplay({ sockets, onRecolor }: { sockets: string; onRecolor?: ()
         return (
           <div key={gi} className="flex items-center relative" style={{ height: SOCKET_SIZE }}>
             {colors.map((c, ci) => {
-              const icon = SOCKET_ICONS[c] ?? socketWhite
+              const icon = SOCKET_ICONS[c] ?? socketColorless
               const isLinked = ci < colors.length - 1
               return (
                 <div key={ci} className="contents">
@@ -469,18 +478,20 @@ function SocketDisplay({ sockets, onRecolor }: { sockets: string; onRecolor?: ()
           </div>
         )
       })}
-      <button
-        onClick={onRecolor}
-        className="text-[9px] font-semibold text-accent border-none rounded-full cursor-pointer px-2 py-[2px] bg-white/[0.08]"
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255,255,255,0.15)'
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'rgba(255,255,255,0.08)'
-        }}
-      >
-        Recolor
-      </button>
+      {onRecolor && (
+        <button
+          onClick={onRecolor}
+          className="text-[9px] font-semibold text-accent border-none rounded-full cursor-pointer px-2 py-[2px] bg-white/[0.08]"
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'rgba(255,255,255,0.15)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'rgba(255,255,255,0.08)'
+          }}
+        >
+          Recolor
+        </button>
+      )}
     </div>
   )
 }

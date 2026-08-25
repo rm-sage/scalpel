@@ -1,18 +1,19 @@
 /** Shared types and URL builder for "Open in poewiki / poedb" buttons and
  *  app macros. Used by both main (macro routing) and renderer (button onClick,
  *  preload IPC subscription). */
-import { SKILL_GEM_CLASSES } from './poe-item'
+import { hasGeneratedName, SKILL_GEM_CLASSES } from './poe-item'
 import type { PriceInfo } from './types'
 
 export type ExternalLinkTarget = 'wiki' | 'poedb'
 
 /** Pick the lookup string the external site indexes by. Magic and Rare items
- *  show a randomized name (e.g. "Mind Locket Chain Belt") that has no page;
- *  the wiki/poedb keys those off the base type. Foulborn uniques carry a
- *  "Foulborn " prefix the page doesn't, so strip it. Everything else (Normal,
- *  Unique, Gem, Currency, Divination Cards, ...) is keyed by the displayed name. */
+ *  show a randomized name (e.g. "Mind Locket Chain Belt") that has no page --
+ *  see hasGeneratedName for why -- so the wiki/poedb keys those off the base
+ *  type. Foulborn uniques carry a "Foulborn " prefix the page doesn't, so
+ *  strip it. Everything else (Normal, Unique, Gem, Currency, Divination
+ *  Cards, ...) is keyed by the displayed name. */
 function externalLookupName(item: { name: string; baseType: string; rarity: string }): string {
-  if (item.rarity === 'Magic' || item.rarity === 'Rare') return item.baseType
+  if (hasGeneratedName(item.rarity)) return item.baseType
   if (item.rarity === 'Unique' && item.name.startsWith('Foulborn ')) {
     return item.name.slice('Foulborn '.length)
   }
@@ -144,8 +145,11 @@ const NINJA_CURRENCY_LIKE_CLASSES = new Set([
  *  the strip (no real examples use them in our data today, but keeping them
  *  future-proofs the slug). The gem-variant separator is a SPACE (e.g. `21 20c`),
  *  which the trailing space-to-hyphen pass turns into `21-20c` in the URL. The
- *  slash in "21/20c" would be stripped, so that notation is NOT used. */
-function ninjaSlug(name: string, variant?: string): string {
+ *  slash in "21/20c" would be stripped, so that notation is NOT used.
+ *
+ *  Also the id the poe.ninja exchange-details endpoint keys on -- verified live
+ *  on the awkward cases (`Omen of Death's Door` -> `omen-of-deaths-door`). */
+export function ninjaSlug(name: string, variant?: string): string {
   const combined = variant ? `${name}, ${variant}` : name
   return combined
     .normalize('NFKD')

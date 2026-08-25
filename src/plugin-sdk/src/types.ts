@@ -60,6 +60,19 @@ export interface RegisterOverlayOptions {
   /** Initial window size in CSS px. Falls back to a Scalpel default if absent. */
   defaultSize?: { width: number; height: number }
   /**
+   * Where the overlay first appears, as fractions of the game window (the
+   * window's top-left corner). Omit for Scalpel's centered default. Each
+   * fraction is clamped so the window stays fully on the game window - fracX to
+   * 0..(1 - the window's fractional width), fracY likewise - so a position past
+   * the far edge is pulled back rather than left off-screen. A non-finite value
+   * falls back to centering on that axis. This is also the window's snap-home,
+   * so a drag-snap returns it here. Ignored in 'annotation' mode, which always
+   * spans the game window,
+   * and ignored once the user has moved the window - the moved position is
+   * remembered from then on.
+   */
+  defaultPosition?: { fracX: number; fracY: number }
+  /**
    * Overlay surface kind. 'window' (default) is the chrome'd, draggable,
    * snap-anchored window. 'annotation' is a borderless, transparent,
    * click-through surface locked to the full game window: `render`'s container
@@ -204,6 +217,30 @@ export interface ScalpelPluginContext {
   closeOverlay(): void
 
   /**
+   * Subscribe to this plugin's overlay window being opened or closed. Returns
+   * an unsubscribe function.
+   *
+   * Closing an overlay does NOT unmount your `registerOverlay` render - Scalpel
+   * hides the window rather than destroying it, so the same DOM (and any React
+   * state in it) is still there when the user reopens. Nothing in the DOM
+   * reflects that: the window stays visible to the OS and is never focused, so
+   * `visibilitychange` and focus events don't fire. Use this when reopening
+   * should feel like a fresh start - clearing stale input, resetting a form,
+   * restoring focus to your main field.
+   *
+   * Fires only on a real change, and only for deliberate opens and closes. The
+   * transient hide when the user alt-tabs out of PoE (and the matching restore
+   * when they come back) is not reported - that isn't the user closing your
+   * window, and resetting there would discard work they still want. The first
+   * open after the window is created isn't reported either; your render has
+   * only just mounted at that point, so it is already in its initial state.
+   *
+   * Only meaningful inside the overlay window itself - inert when your plugin
+   * code is running in Scalpel's main overlay.
+   */
+  onOverlayVisibility(handler: (visible: boolean) => void): () => void
+
+  /**
    * Annotation overlays only. Declare the screen region (in overlay/game CSS px,
    * measured from the overlay's top-left) that should receive mouse input. While
    * the cursor is inside it, Scalpel flips the otherwise click-through overlay
@@ -221,8 +258,19 @@ export interface ScalpelPluginContext {
    * (other plugins + Scalpel's filter/price-check views), and resolve to
    * the parsed item. Returns null when the clipboard doesn't contain a
    * recognisable PoE item.
+   *
+   * `opts.showOverlay` defaults to true, opening Scalpel's main overlay after
+   * a successful capture. A plugin with its own overlay will usually want
+   * `false` here, otherwise Scalpel's main overlay opens on top of it.
+   *
+   * `opts.dispatch` defaults to true. Set it to `false` for a private read: the
+   * parsed item is returned to the caller alone, Scalpel's filter and
+   * price-check views do not update, other plugins' `onCurrentItem` does not
+   * fire, and no filter needs to be loaded (a plugin-only read doesn't require
+   * one). Use this when your plugin wants the hovered item without touching
+   * anyone else's view.
    */
-  copyAndEvaluateItem(): Promise<PoeItem | null>
+  copyAndEvaluateItem(opts?: { showOverlay?: boolean; dispatch?: boolean }): Promise<PoeItem | null>
 
   /**
    * Capture the focused game window as raw RGBA pixels for the plugin to OCR or
@@ -233,6 +281,15 @@ export interface ScalpelPluginContext {
    * your registered hotkey while the target menu is open).
    */
   captureGameWindow(region?: GameRect): Promise<GameCapture | null>
+
+  /**
+   * The cursor's position in game CSS px, measured from the game window's
+   * top-left - the same coordinate space as setInteractiveRegion and
+   * GameCapture.origin, so an annotation overlay can position against it
+   * directly. Resolves to null when PoE is not focused or the cursor is
+   * outside the game window. One-shot: call it from your hotkey handler.
+   */
+  getCursorPosition(): Promise<{ x: number; y: number } | null>
 
   /**
    * Switch the overlay to this plugin's tab. No-op if the tab isn't

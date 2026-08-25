@@ -27,7 +27,30 @@ export const ITEM_CLASS_TO_CATEGORY: Record<string, string> = {
   Warstaves: 'weapon.warstaff',
   'Rune Daggers': 'weapon.runedagger',
   Jewels: 'jewel',
+  // PoE1 abyss jewels (Murderous/Hypnotic/etc. Eye) — separate clipboard class
+  // from regular Jewels. Without this entry they aren't treated as equipment, so
+  // misc chips like Corrupted never appear on uncorrupted eyes.
+  'Abyss Jewels': 'jewel.abyss',
   Flasks: 'flask',
+  // PoE2 splits flasks by recover type; same trade category as PoE1 Flasks.
+  'Life Flasks': 'flask',
+  'Mana Flasks': 'flask',
+  // PoE2 files charms under the flask family; there is no azmeri.* category in
+  // either game's published filter list, and an unpublished category is worse
+  // than none -- trade.ts drops the query.type fallback as soon as it has one.
+  Charms: 'flask.charm',
+  // PoE1 craftables that share the Abyss-Jewel failure mode if omitted: no
+  // Corrupted/Mirrored ternary chips and trade falls back to bare base-type.
+  Tinctures: 'tincture',
+  Trinkets: 'accessory.trinket',
+  'Heist Brooches': 'heistequipment.heistreward',
+  'Heist Cloaks': 'heistequipment.heistutility',
+  'Heist Tools': 'heistequipment.heisttool',
+  // Clipboard emits both "Contracts"/"Blueprints" and the Heist-prefixed forms.
+  Contracts: 'heistmission.contract',
+  Blueprints: 'heistmission.blueprint',
+  'Heist Contracts': 'heistmission.contract',
+  'Heist Blueprints': 'heistmission.blueprint',
   // PoE2-only classes that have live listings. Keeping them in the same map
   // is safe -- no key collides with PoE1, and stat-matcher / trade.ts both
   // look up by the exact class name the clipboard reports. Without these
@@ -54,6 +77,37 @@ export const ITEM_CLASS_TO_CATEGORY: Record<string, string> = {
   // PoE2 waystones (the maps of PoE2). Property block (tier/rarity/packsize/...)
   // searches via map_filters; monster affixes via the normal explicit matcher.
   Waystones: 'map.waystone',
+  // PoE1 charts (Allflame league). Routing through the category leaves
+  // query.type unset so the zone chip can pin it to the discriminator form;
+  // without this entry the generic branch would hard-set query.type to the
+  // base type and the zone could not override it cleanly.
+  Chart: 'chart',
+}
+
+// ─── Item Class to Trade-Stat Qualifier ───────────────────────────────────────
+
+// Item class -> the trailing trade-stat qualifier its mods should prefer. The trade
+// API tags otherwise-identical display text (e.g. "#% increased Duration") with
+// "(Charm)"/"(Flask)"/"(Jewel)" to disambiguate; the clipboard carries only the bare
+// text, so we tell the matcher which qualified variant to pick (issue #397).
+export const QUALIFIER_BY_ITEM_CLASS: Record<string, string> = {
+  Charms: 'Charm',
+  // PoE1 flask copies say "Flasks"; PoE2 splits the class into "Life Flasks" /
+  // "Mana Flasks", so all three must point at the "(Flask)" qualifier (issue #466).
+  Flasks: 'Flask',
+  'Life Flasks': 'Flask',
+  'Mana Flasks': 'Flask',
+  Jewels: 'Jewel',
+  'Abyss Jewels': 'Jewel',
+  // PoE1 staff-block twin is tagged "(Staves)" on the trade API; prefer it for
+  // staves so unique staff searches don't land on the untagged jewel id.
+  Staves: 'Staves',
+  Warstaves: 'Staves',
+  // A corrupted shield's "+#% Chance to Block" implicit is published only as
+  // "+#% Chance to Block (Shields)" -- unlike the staff block implicit there is
+  // no unqualified twin for the explicit-stat fallback to land on, so without
+  // this the row is dropped entirely.
+  Shields: 'Shields',
 }
 
 const ARMOUR_CLASSES = new Set([

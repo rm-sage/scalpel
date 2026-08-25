@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import type Konva from 'konva'
 import type { LiveMirrorElement } from '@shared/whiteboard-types'
 import { useWhiteboardStore } from '../state/store'
-import { acquireStream, releaseStream } from './stream'
+import { acquireStream, releaseStream, revalidateStream } from './stream'
 import { mirrorCss } from './crop'
 import { cssEscape } from '../canvas/css-escape'
 
@@ -31,7 +31,14 @@ export function MirrorLayer({ stageRef }: { stageRef: RefObject<Konva.Stage> }):
   // requestShownState (catches the case where main's onFirstShow fires before
   // this effect runs).
   useEffect(() => {
-    const unShown = window.api.whiteboard.onShown(() => setVisible(true))
+    const unShown = window.api.whiteboard.onShown(() => {
+      setVisible(true)
+      // Re-showing the board is the moment a stale stream becomes visible to
+      // the user - the visible flag alone can't catch it, since the game-exit
+      // hide path never sends a hidden IPC, so visible may already be true
+      // and the acquire effect below won't re-run.
+      void revalidateStream()
+    })
     const unHidden = window.api.whiteboard.onHidden(() => setVisible(false))
     window.api.whiteboard.requestShownState()
     return () => {

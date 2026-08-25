@@ -118,6 +118,9 @@ function evaluateCondition(cond: FilterCondition, item: PoeItem): ConditionResul
     case 'Scourged':
       return boolMatch(item.scourged, values[0]) ? 'pass' : 'fail'
 
+    case 'Vestigial':
+      return boolMatch(item.vestigial ?? false, values[0]) ? 'pass' : 'fail'
+
     case 'AlternateQuality':
       return boolMatch(item.alternateQuality ?? false, values[0]) ? 'pass' : 'fail'
 
@@ -315,6 +318,34 @@ export function findMatchingBlocks(filter: FilterFile, item: PoeItem, strictUnkn
   }
 
   return results
+}
+
+/**
+ * The block that becomes the first match once the block at `afterIndex` stops
+ * matching this item -- i.e. where the item "falls through" to.
+ *
+ * This cannot be read off `findMatchingBlocks`: that function stops searching at
+ * the first real match, so its result never contains anything past the active
+ * block. Continue blocks decorate but never take over, so the answer is the first
+ * non-Continue block after `afterIndex` whose conditions match. Null when nothing
+ * else catches the item, which means the game renders it with default styling
+ * rather than hiding it.
+ */
+export function findNextMatchAfter(filter: FilterFile, item: PoeItem, afterIndex: number): MatchResult | null {
+  for (let i = afterIndex + 1; i < filter.blocks.length; i++) {
+    const block = filter.blocks[i]
+    if (block.continue) continue
+    const evaluation = evaluateBlock(block, item)
+    if (!evaluation.matches) continue
+    return {
+      block,
+      blockIndex: i,
+      isFirstMatch: true,
+      evaluatedConditions: evaluation.evaluatedConditions,
+      hasUnknowns: evaluation.hasUnknowns,
+    }
+  }
+  return null
 }
 
 /**

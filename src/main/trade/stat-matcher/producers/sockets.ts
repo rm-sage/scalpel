@@ -1,4 +1,3 @@
-import type { AdvancedMod } from '@shared/types'
 import type { StatFilter } from '../../trade'
 import { SKILL_GEM_CLASSES } from '@shared/poe-item'
 
@@ -12,7 +11,8 @@ type SocketItemInfo = {
 // Socket chips: rune sockets (PoE2), white sockets, abyssal sockets, links
 export function buildSocketFilters(
   itemInfo: SocketItemInfo | undefined,
-  advancedMods: AdvancedMod[] | undefined,
+  explicits: string[] = [],
+  implicits: string[] = [],
 ): StatFilter[] {
   if (!itemInfo) return []
 
@@ -79,18 +79,45 @@ export function buildSocketFilters(
   }
 
   if (a > 0) {
-    const abyssIsImplicit =
-      !advancedMods ||
-      advancedMods.some((am) => am.type === 'implicit' && am.lines.some((l) => /Abyssal Socket/i.test(l)))
-    out.push({
-      id: `${abyssIsImplicit ? 'implicit' : 'explicit'}.stat_3527617737`,
-      text: 'Abyssal Sockets',
-      value: a,
-      min: a,
-      max: null,
-      enabled: true,
-      type: abyssIsImplicit ? 'implicit' : 'explicit',
-    })
+    // Trade indexes each abyssal-socket GRANT under its own id at its own value,
+    // never the item's total socket count: a Darkness Enthroned carries the
+    // Stygian Vise implicit "Has 1 Abyssal Socket" AND the unique's own explicit
+    // copy of that line, and indexes as implicit.stat_3527617737 = 1 plus
+    // explicit.stat_3527617737 = 1. One chip at the socket count therefore asked
+    // for "implicit >= 2" and matched nothing (probe-verified). So: one chip
+    // per source, each pinned to the number printed on that source's own line. A
+    // grant covering several sockets prints them as one line and indexes as that
+    // one value ("Has 2 Abyssal Sockets" on a two-socket Bubonic Trail = 2), which
+    // is why the count comes off the line rather than from counting `A`s.
+    //
+    // The implicit-vs-explicit split follows the clipboard text, not advancedMods --
+    // basic copies (no advanced mod block, chat-linked items) still carry the raw
+    // explicits[] / implicits[] lines, so this signal exists on every copy path.
+    const abyssLine = /^Has (\d+) Abyssal Sockets?$/i
+    const stripTag = (l: string) => l.replace(/\s*\((?:implicit|crafted|fractured)\)\s*$/i, '').trim()
+    const granted = (lines: string[]) => lines.reduce((n, l) => n + Number(abyssLine.exec(stripTag(l))?.[1] ?? 0), 0)
+    const sources: Array<{ domain: 'implicit' | 'explicit'; count: number }> = []
+    const implicitCount = granted(implicits)
+    const explicitCount = granted(explicits)
+    if (implicitCount > 0) sources.push({ domain: 'implicit', count: implicitCount })
+    if (explicitCount > 0) sources.push({ domain: 'explicit', count: explicitCount })
+    // No abyss line at all (unidentified item, inherent unique socket) keeps the
+    // old default: a single implicit chip at the socket count.
+    if (sources.length === 0) sources.push({ domain: 'implicit', count: a })
+    // Both sources granting means two rows on two different ids; name the source so
+    // they don't read as one row printed twice.
+    const nameSource = sources.length > 1
+    for (const { domain, count } of sources) {
+      out.push({
+        id: `${domain}.stat_3527617737`,
+        text: nameSource ? `Abyssal Sockets (${domain})` : 'Abyssal Sockets',
+        value: count,
+        min: count,
+        max: null,
+        enabled: true,
+        type: domain,
+      })
+    }
   }
 
   if (itemInfo.linkedSockets >= 5) {

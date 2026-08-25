@@ -1,6 +1,12 @@
-import { Fragment, useEffect, useState } from 'react'
-import type { AppSettings, PoeProfileSummary, RuntimeSettings } from '@shared/types'
-import { type Step, STEP_ORDER, type SelectedGames, totalOnboardingSteps } from './app-window/constants'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import type { AppSettings, PoeProfileSummary, ProfileSettingValue, RuntimeSettings } from '@shared/types'
+import {
+  type Step,
+  STEP_ORDER,
+  type SelectedGames,
+  resolveResumeStep,
+  totalOnboardingSteps,
+} from './app-window/constants'
 import {
   backStepFromFilterFolder,
   backStepFromHotkey,
@@ -11,7 +17,7 @@ import {
   nextStepAfterOnlineSetup,
   onlineSetupStepFor,
   selectedGameOrder,
-  sharedStepBase,
+  sharedStepNum,
 } from './app-window/onboarding-nav'
 import { SlideIn } from './app-window/SlideIn'
 import {
@@ -20,11 +26,12 @@ import {
   FilterStep,
   OnlineFilterSetupStep,
   HotkeyStep,
-  PriceCheckHotkeyStep,
-  TradeLoginStep,
+  TradeStep,
   PreferencesStep,
+  PluginsStep,
+  MacrosStep,
   DoneStep,
-} from './app-window/onboarding-steps'
+} from './app-window/steps'
 import { AppSettingsWrapper } from './app-window/AppSettingsWrapper'
 import { AppUpdateBanner } from './app-window/AppUpdateBanner'
 import { LinuxDisclaimerBanner } from './components/LinuxDisclaimerBanner'
@@ -35,6 +42,7 @@ type ImportedOnline = { poe1: string | null; poe2: string | null }
 
 export function AppWindow(): JSX.Element {
   const [settings, setSettings] = useState<RuntimeSettings | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const [step, setStep] = useState<Step>('welcome')
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
   const [importedOnline, setImportedOnline] = useState<ImportedOnline>({ poe1: null, poe2: null })
@@ -57,6 +65,12 @@ export function AppWindow(): JSX.Element {
     }
   }
 
+  // Each step reuses the same scroll container, so without this a step entered
+  // from the bottom of a tall one opens scrolled past its own heading.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 })
+  }, [step])
+
   const switchOnboardingGame = async (target: 1 | 2): Promise<void> => {
     if (!settings) return
     // Ensure a default profile exists for the target game before switching to
@@ -77,7 +91,8 @@ export function AppWindow(): JSX.Element {
       if (s.onboardingCompleted) {
         goTo('settings')
       } else if (s.onboardingStep) {
-        setStep((s.onboardingStep === 'profiles' ? 'welcome' : s.onboardingStep) as Step)
+        const resumed = resolveResumeStep(s.onboardingStep)
+        if (resumed) setStep(resumed)
         if (s.onboardingSelectedGames) setSelectedGames(s.onboardingSelectedGames)
         if (s.onboardingImportedOnline) setImportedOnline(s.onboardingImportedOnline)
       }
@@ -85,9 +100,31 @@ export function AppWindow(): JSX.Element {
     // Re-fetch leagues each time the app window mounts. The cooldown gate in
     // refreshLeagues short-circuits the network call when the launch-time
     // refresh was recent, so this is essentially free on most reopens.
-    window.api.refreshLeagues().catch(() => {
-      /* fail silently -- cached/fallback leagues already render */
-    })
+    //
+    // The result has to be pulled back by hand: main broadcasts setting updates
+    // to every window *except* the sender, and the launch-time refresh runs
+    // before any window exists. Without this the settings League row kept
+    // rendering the pre-rotation league out of a stale snapshot while the
+    // profile on disk had already been migrated. Merge only the keys the
+    // refresh can touch so an edit made while it was in flight survives.
+    window.api
+      .refreshLeagues()
+      .then(async () => {
+        const fresh = await window.api.getSettings()
+        setSettings((prev) =>
+          prev
+            ? {
+                ...prev,
+                leaguesPoe1: fresh.leaguesPoe1,
+                leaguesPoe2: fresh.leaguesPoe2,
+                activeProfile: fresh.activeProfile,
+              }
+            : fresh,
+        )
+      })
+      .catch(() => {
+        /* fail silently -- cached/fallback leagues already render */
+      })
     const unsub = window.api.onSettingUpdated((key, value) => {
       setSettings((prev) => (prev ? { ...prev, [key]: value } : prev))
     })
@@ -118,8 +155,14 @@ export function AppWindow(): JSX.Element {
 
   if (!settings) return <div />
 
+  const updateActiveProfileTradeOption = async <K extends 'tradePriceOption'>(
+    key: K,
+    value: ProfileSettingValue<K>,
+  ): Promise<void> => {
+    setSettings(await window.api.setProfileSettingForGame(settings.poeVersion ?? 1, key, value))
+  }
+
   const total = totalOnboardingSteps(selectedGames)
-  const sharedBase = sharedStepBase(selectedGames)
   const orderedGames = selectedGameOrder(selectedGames)
   const showGameLabel = orderedGames.length === 2
 
@@ -183,13 +226,11 @@ export function AppWindow(): JSX.Element {
       <AppUpdateBanner />
       <LinuxDisclaimerBanner platform={settings?.platform} />
       <div
+        ref={scrollRef}
         className="flex-1 overflow-y-auto overflow-x-hidden flex justify-center"
-        style={{
-          alignItems: step !== 'settings' ? 'center' : undefined,
-          marginTop: step !== 'settings' ? -10 : undefined,
-        }}
+        style={{ marginTop: step !== 'settings' ? -10 : undefined }}
       >
-        <div className={`w-full max-w-[480px] px-6 py-8 ${step !== 'settings' ? 'select-none' : ''}`}>
+        <div className={`w-full max-w-[480px] px-6 py-8 ${step !== 'settings' ? 'flex flex-col select-none' : ''}`}>
           {step === 'welcome' && (
             <SlideIn stepKey="welcome" direction={direction}>
               <WelcomeStep
@@ -269,8 +310,6 @@ export function AppWindow(): JSX.Element {
                         setImportedOnline((prev) => ({ ...prev, [importedKey]: null }))
                         goTo(filterStep)
                       }}
-                      stepNum={filterStepNum(selectedGames, game, 'filter') + 1}
-                      totalSteps={total + 1}
                     />
                   </SlideIn>
                 )}
@@ -283,34 +322,25 @@ export function AppWindow(): JSX.Element {
               <HotkeyStep
                 settings={settings}
                 onUpdate={updateSetting}
-                onNext={() => goTo('pricecheck-hotkey')}
+                onNext={() => goTo('trade')}
                 onBack={() => goTo(backStepFromHotkey(selectedGames, importedOnline))}
-                stepNum={sharedBase + 1}
+                stepNum={sharedStepNum(selectedGames, 'hotkey')}
                 totalSteps={total}
                 showWasdTip={selectedGames.poe2}
               />
             </SlideIn>
           )}
-          {step === 'pricecheck-hotkey' && (
-            <SlideIn stepKey="pricecheck-hotkey" direction={direction}>
-              <PriceCheckHotkeyStep
+          {step === 'trade' && (
+            <SlideIn stepKey="trade" direction={direction}>
+              <TradeStep
                 settings={settings}
                 onUpdate={updateSetting}
-                onNext={() => goTo('trade-login')}
+                onProfileUpdate={updateActiveProfileTradeOption}
+                onNext={() => goTo('preferences')}
                 onBack={() => goTo('hotkey')}
-                stepNum={sharedBase + 2}
+                stepNum={sharedStepNum(selectedGames, 'trade')}
                 totalSteps={total}
                 showWasdTip={selectedGames.poe2}
-              />
-            </SlideIn>
-          )}
-          {step === 'trade-login' && (
-            <SlideIn stepKey="trade-login" direction={direction}>
-              <TradeLoginStep
-                onNext={() => goTo('preferences')}
-                onBack={() => goTo('pricecheck-hotkey')}
-                stepNum={sharedBase + 3}
-                totalSteps={total}
               />
             </SlideIn>
           )}
@@ -321,9 +351,31 @@ export function AppWindow(): JSX.Element {
                 selectedGames={selectedGames}
                 onUpdate={updateSetting}
                 onProfileUpdateForGame={updateProfileSettingForGame}
+                onNext={() => goTo('plugins')}
+                onBack={() => goTo('trade')}
+                stepNum={sharedStepNum(selectedGames, 'preferences')}
+                totalSteps={total}
+              />
+            </SlideIn>
+          )}
+          {step === 'plugins' && (
+            <SlideIn stepKey="plugins" direction={direction}>
+              <PluginsStep
+                onNext={() => goTo('macros')}
+                onBack={() => goTo('preferences')}
+                stepNum={sharedStepNum(selectedGames, 'plugins')}
+                totalSteps={total}
+              />
+            </SlideIn>
+          )}
+          {step === 'macros' && (
+            <SlideIn stepKey="macros" direction={direction}>
+              <MacrosStep
+                settings={settings}
+                onUpdate={updateSetting}
                 onNext={() => goTo('done')}
-                onBack={() => goTo('trade-login')}
-                stepNum={sharedBase + 4}
+                onBack={() => goTo('plugins')}
+                stepNum={sharedStepNum(selectedGames, 'macros')}
                 totalSteps={total}
               />
             </SlideIn>

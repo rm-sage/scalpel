@@ -3,11 +3,6 @@ import { OverlayController } from 'electron-overlay-window'
 import { UiohookKey, uIOhook } from 'uiohook-napi'
 import { appMacroEffectiveScope, chatCommandEffectiveScope, type MacroScope, scopeAppliesTo } from '@shared/macro-scope'
 import { POE_SIDEBAR_RATIO } from '@shared/poe-geometry'
-import {
-  CHAT_CLIPBOARD_RESTORE_DELAY_MS,
-  clipboardHoldsInjectedText,
-  INJECT_SUPPRESS_RELEASE_MS,
-} from './chat-inject-guard'
 import { snapshotClipboard } from './clipboard-preserve'
 import { type KeyCombo, isElectronRegisterable, parseAccelerator } from './hotkey-accelerator'
 import {
@@ -17,8 +12,9 @@ import {
   registerDiagnosticProvider,
 } from './diagnostics'
 import { getPoeVersion } from './game-state'
-import { focusGameWindow, getOverlayWindow, isTypingInOverlay, mayInjectChatNow } from './overlay'
-import { hideFocusedOrAnyVisibleSecondaryOverlay } from './windowing'
+import { focusGameWindow, isTypingInOverlay, setOverlayVisibilityListener } from './overlay'
+import { advancedCopyTracker } from './trade/advanced-copy'
+import { hideFocusedOrAnyVisibleSecondaryOverlay, isAnyScalpelBrowserWindowFocused } from './windowing'
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -26,9 +22,17 @@ let currentAccelerator: string | null = null
 let priceCheckAccelerator: string | null = null
 let triggerCombo: KeyCombo | null = null
 let priceCheckCombo: KeyCombo | null = null
-let chatCommandHotkeys: Array<{ accelerator: string; command: string; autoSubmit: boolean; scope?: MacroScope }> = []
+type ChatCommandConfig = { hotkey: string; command: string; autoSubmit?: boolean; scope?: MacroScope }
+type AppMacroConfig = { action: string; hotkey: string; tag?: string; presetId?: string; scope?: MacroScope }
+type ScopedHotkeyCategory = 'chat-command' | 'app-macro'
+
+let configuredChatCommands: ChatCommandConfig[] = []
+let configuredAppMacros: AppMacroConfig[] = []
+let registeredChatAccelerators: string[] = []
 let appMacroAccelerators: string[] = []
-let lastAppMacros: Array<{ action: string; hotkey: string; tag?: string; presetId?: string; scope?: MacroScope }> = []
+let applicableChatCommandCount = 0
+let applicableAppMacroCount = 0
+let failedScopedRegistrations: Array<{ category: ScopedHotkeyCategory; accelerator: string }> = []
 let onAppMacro: ((action: string, tag?: string, presetId?: string) => void) | null = null
 // Secondary-overlay hotkeys (cheat-sheets today, more later). Stored as a
 // flat list of (accelerator, handler) pairs so each consumer composes its own
@@ -59,6 +63,13 @@ let hookResumeTimer: ReturnType<typeof setTimeout> | null = null
 const DEDUPE_MS = 100
 let lastTriggerFireAt = 0
 let lastPriceCheckFireAt = 0
+let lastEscapeFireAt = 0
+
+// Escape is also registered as a real globalShortcut (not just the uiohook
+// fallback below) while the main overlay is visible, so the OS consumes the
+// key before PoE sees it - see fireEscape/syncEscapeShortcut.
+let escapeShortcutRegistered = false
+let overlayVisibleForEscape = false
 
 function matchesCombo(
   e: { keycode: number; ctrlKey: boolean; shiftKey: boolean; altKey: boolean },
@@ -73,39 +84,66 @@ function matchesCombo(
  *  game, and the game keeps moving until it sees a keyup. Inject a keyup for the
  *  non-modifier key the instant the hotkey fires so movement stops immediately.
  *  Modifiers are left held - they don't move the character, they're tracked by
- *  heldModifiers, and the follow-up Ctrl+Alt+C copy relies on them. Mirrors
- *  Exiled-Exchange-2's keepModKeys release. */
+ *  heldModifiers, and the follow-up copy relies on them. Mirrors Exiled-
+ *  Exchange-2's keepModKeys release. */
 function releaseHotkeyKey(combo: KeyCombo | null): void {
   if (!combo) return
   uIOhook.keyToggle(combo.keycode, 'up')
 }
 
 function fireTrigger(): void {
+  if (injecting || isTypingInOverlay() || !hotkeyContextIsActive()) return
   const now = Date.now()
   if (now - lastTriggerFireAt < DEDUPE_MS) return
   lastTriggerFireAt = now
-  if (injecting) return
   releaseHotkeyKey(triggerCombo)
   if (onTrigger) onTrigger()
 }
 
-/** True when PoE has foreground focus or one of Scalpel's overlay windows is
- *  focused. Used to gate hotkeys that only make sense in a PoE-adjacent context
- *  (chat commands, Escape-closes-overlay) so they don't fire in a browser or
- *  random app when Scalpel is running in the background. See issues #18, #21. */
-function hasPoeOrOverlayFocus(): boolean {
-  if (OverlayController.targetHasFocus) return true
-  const overlayWin = getOverlayWindow()
-  return !!overlayWin && !overlayWin.isDestroyed() && overlayWin.isFocused()
-}
-
 function firePriceCheck(): void {
+  if (injecting || isTypingInOverlay() || !hotkeyContextIsActive()) return
   const now = Date.now()
   if (now - lastPriceCheckFireAt < DEDUPE_MS) return
   lastPriceCheckFireAt = now
-  if (injecting) return
   releaseHotkeyKey(priceCheckCombo)
   if (onPriceCheck) onPriceCheck()
+}
+
+/** Shared entry point for both Escape delivery paths (the globalShortcut
+ *  registered by syncEscapeShortcut, and the uiohook fallback keydown branch
+ *  below). Both can deliver for the same physical press - see DEDUPE_MS. */
+function fireEscape(): void {
+  if (injecting || isTypingInOverlay() || !hotkeyContextIsActive()) return
+  const now = Date.now()
+  if (now - lastEscapeFireAt < DEDUPE_MS) return
+  lastEscapeFireAt = now
+  // Secondary overlays (cheat sheets etc.) own Esc when visible - same
+  // precedence as the existing uiohook branch.
+  if (hideFocusedOrAnyVisibleSecondaryOverlay()) return
+  if (onEscape) onEscape()
+}
+
+/** Register/unregister the Escape globalShortcut so the OS consumes the key
+ *  before PoE sees it, exactly while the main overlay is visible, the
+ *  attached game has focus, hotkeys aren't suspended, and a handler is set.
+ *  Safe to call from anywhere - it's a no-op when the desired state already
+ *  matches the registered state. */
+function syncEscapeShortcut(): void {
+  const desired = !!onEscape && overlayVisibleForEscape && OverlayController.targetHasFocus && suspendDepth === 0
+  if (desired === escapeShortcutRegistered) return
+  if (desired) {
+    try {
+      const ok = globalShortcut.register('Escape', () => fireEscape())
+      escapeShortcutRegistered = ok
+    } catch (e) {
+      console.error('[hotkeys] Failed to register Escape shortcut:', e)
+    }
+  } else {
+    try {
+      globalShortcut.unregister('Escape')
+    } catch {}
+    escapeShortcutRegistered = false
+  }
 }
 
 // ─── uiohook action bindings (international / OEM keys) ─────────────────────────
@@ -149,39 +187,61 @@ function fireMatchingActionBindings(e: HookKeyEvent): void {
 // The action bodies below are shared by the globalShortcut callback (Electron-
 // bindable keys) and the uiohook binding (international/OEM keys) so the guards
 // stay identical across both delivery paths.
-function runChatCommand(command: string, autoSubmit: boolean, combo: KeyCombo | null): void {
-  if (injecting || isTypingInOverlay()) return
-  // Defense-in-depth focus gate: even with the registration-time suspend check,
-  // races between focus events and key delivery could otherwise route a press to
-  // the wrong app's keystroke injection. Gate on PoE/overlay focus so unrelated
-  // apps see the raw key. Issues #18, #21.
-  if (!hasPoeOrOverlayFocus()) return
+function runChatCommand(entry: ChatCommandConfig, autoSubmit: boolean, combo: KeyCombo | null): void {
+  if (
+    injecting ||
+    isTypingInOverlay() ||
+    !hotkeyContextIsActive() ||
+    !scopeAppliesTo(chatCommandEffectiveScope(entry), getPoeVersion())
+  )
+    return
   releaseHotkeyKey(combo)
-  sendChatCommand(command, autoSubmit)
+  // Fire-and-forget: a paste that never got focus (or the clipboard) rejects
+  // rather than injecting, and that is a diagnostic, not a crash.
+  sendChatCommand(entry.command, autoSubmit).catch((e) => recordMainDiagnostic('chat-command', e))
 }
 
-function runAppMacro(
-  action: string,
-  tag: string | undefined,
-  presetId: string | undefined,
-  combo: KeyCombo | null,
-): void {
-  if (injecting || isTypingInOverlay() || !onAppMacro) return
+function runAppMacro(entry: AppMacroConfig, combo: KeyCombo | null): void {
+  if (
+    injecting ||
+    isTypingInOverlay() ||
+    !onAppMacro ||
+    !hotkeyContextIsActive() ||
+    !scopeAppliesTo(appMacroEffectiveScope(entry), getPoeVersion())
+  )
+    return
   releaseHotkeyKey(combo)
-  onAppMacro(action, tag, presetId)
+  onAppMacro(entry.action, entry.tag, entry.presetId)
 }
 
 function runSecondaryOverlay(handler: () => void, combo: KeyCombo | null): void {
-  if (isTypingInOverlay()) return
+  if (isTypingInOverlay() || !hotkeyContextIsActive()) return
   releaseHotkeyKey(combo)
   handler()
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/** Start the low-level keyboard hook (for Escape only) and register the trigger callback. */
+/** Start the low-level keyboard hook and register the trigger callback. */
 export function startHotkeyListener(handler: () => void): void {
   onTrigger = handler
+
+  // Escape's globalShortcut is only valid while the game has focus (see
+  // syncEscapeShortcut). Re-sync on every focus/blur so it registers/unregisters
+  // in step with the attached game gaining/losing OS focus.
+  OverlayController.events.on(
+    'focus',
+    guardNativeListener('escape-sync-focus', () => syncEscapeShortcut()),
+  )
+  OverlayController.events.on(
+    'blur',
+    guardNativeListener('escape-sync-blur', () => syncEscapeShortcut()),
+  )
+  // Track main-overlay visibility so syncEscapeShortcut can gate on it too.
+  setOverlayVisibilityListener((visible) => {
+    overlayVisibleForEscape = visible
+    syncEscapeShortcut()
+  })
 
   // uiohook is only used for Escape (overlay close), stash scroll, and modifier tracking
   initModifierTracking()
@@ -189,23 +249,18 @@ export function startHotkeyListener(handler: () => void): void {
     'keydown',
     guardNativeListener('keydown-main', (e) => {
       if (injecting) return
-      // Only respond to Escape when PoE or the overlay itself has focus -- otherwise
-      // pressing Esc in another app (browser, Discord, etc.) would silently hide the
-      // overlay here in the background.
+      // uiohook fallback for Escape: the globalShortcut registered by
+      // syncEscapeShortcut consumes the key when it's active, but uiohook still
+      // sees every press regardless (kernel-level hook), and this is the only
+      // path at all when the shortcut isn't registered (overlay hidden, game
+      // unfocused, etc.). fireEscape() dedupes double-delivery and holds the
+      // secondary-overlay precedence + PoE/overlay focus gate.
       if (e.keycode === UiohookKey.Escape) {
-        // Secondary overlays (cheat sheets etc.) own Esc when visible. The
-        // renderer keydown listener doesn't fire reliably because Windows
-        // often denies focus stealing from PoE, so handle it kernel-side here.
-        if (hideFocusedOrAnyVisibleSecondaryOverlay()) return
-        // Only respond to Escape when PoE or the overlay itself has focus -- otherwise
-        // pressing Esc in another app (browser, Discord, etc.) would silently hide the
-        // overlay here in the background.
-        if (onEscape && hasPoeOrOverlayFocus()) onEscape()
+        fireEscape()
       }
-      // Trigger + price-check via uIOhook so the combo fires in BOTH PoE1 and PoE2,
-      // not just whichever game electron-overlay-window is attached to. The handlers
-      // themselves (ensureCorrectGameForHotkey) gate on the focused window's title,
-      // so presses in non-PoE apps are ignored downstream.
+      // Trigger + price-check also use uIOhook so bindings still work when
+      // globalShortcut cannot deliver. Their shared fire functions enforce the
+      // same foreground-context rule as the Electron callbacks.
       if (triggerCombo && matchesCombo(e, triggerCombo)) fireTrigger()
       if (priceCheckCombo && matchesCombo(e, priceCheckCombo)) firePriceCheck()
       // Chat commands / app macros / secondary overlays bound to international or
@@ -297,16 +352,29 @@ export function startHotkeyListener(handler: () => void): void {
 // browsers) even though we're nominally suspended. See issues #18, #21.
 let suspendDepth = 0
 
+/** Authorize gameplay hotkeys only while focus remains within the attached game
+ *  or one of Scalpel's gameplay overlays. Registration follows the same focus
+ *  lifecycle, and this dispatch-time check closes uIOhook and transition races. */
+function hotkeyContextIsActive(): boolean {
+  return suspendDepth === 0 && (OverlayController.targetHasFocus || isAnyScalpelBrowserWindowFocused())
+}
+
 /** Temporarily unregister all global shortcuts (recorder, input typing, etc.). */
 export function suspendHotkeys(): void {
   suspendDepth++
   if (suspendDepth === 1) {
     globalShortcut.unregisterAll()
+    // globalShortcut.unregisterAll() above already wiped Escape's OS-side
+    // registration - just reflect that in our own flag. No sync needed: the
+    // desired state is false while suspended either way.
+    escapeShortcutRegistered = false
     // The uiohook action bindings fire kernel-side regardless of globalShortcut,
     // so clear them too or an international-key hotkey would still fire while the
     // recorder is open / the user is typing in an overlay input. resumeHotkeys
     // rebuilds them via the set*() calls.
     clearActionBindings()
+    registeredChatAccelerators = []
+    appMacroAccelerators = []
   }
 }
 
@@ -317,15 +385,9 @@ export function resumeHotkeys(): void {
   if (suspendDepth > 0) return
   if (currentAccelerator) setHotkey(currentAccelerator)
   if (priceCheckAccelerator) setPriceCheckHotkey(priceCheckAccelerator)
-  const cmds = chatCommandHotkeys.map((c) => ({
-    hotkey: c.accelerator,
-    command: c.command,
-    autoSubmit: c.autoSubmit,
-    scope: c.scope,
-  }))
-  setChatCommands(cmds)
-  setAppMacros(lastAppMacros)
+  refreshScopedHotkeys('resume')
   setSecondaryOverlayHotkeys(secondaryOverlayHotkeys)
+  syncEscapeShortcut()
 }
 
 /** Update the active hotkey. Registered with both globalShortcut (swallows the key
@@ -376,43 +438,104 @@ export function setPriceCheckHandler(handler: (() => void) | null): void {
 
 export function setEscapeHandler(handler: (() => void) | null): void {
   onEscape = handler
+  // Order-independent: setEscapeHandler and the overlay-visibility/focus
+  // wire-ups can happen in either order at boot, so re-sync here too.
+  syncEscapeShortcut()
 }
 
-export function setChatCommands(
-  commands: Array<{ hotkey: string; command: string; autoSubmit?: boolean; scope?: MacroScope }>,
-): void {
-  // Unregister previous chat command shortcuts (no-op when suspended -- nothing
-  // is registered with the OS in that state).
+function recordScopedRegistrationFailure(category: ScopedHotkeyCategory, accelerator: string): void {
+  failedScopedRegistrations.push({ category, accelerator })
+  const safeAccelerator = accelerator.replace(/\s+/g, ' ').slice(0, 100)
+  recordMainBreadcrumb(`hotkey registration failed category=${category} accelerator=${safeAccelerator}`)
+}
+
+function clearScopedHotkeyRegistrations(): void {
   if (suspendDepth === 0) {
-    for (const ch of chatCommandHotkeys) {
+    for (const accelerator of [...registeredChatAccelerators, ...appMacroAccelerators]) {
       try {
-        globalShortcut.unregister(ch.accelerator)
+        globalShortcut.unregister(accelerator)
       } catch {}
     }
   }
-  chatCommandHotkeys = []
+  registeredChatAccelerators = []
+  appMacroAccelerators = []
   chatActionBindings = []
+  macroActionBindings = []
+  failedScopedRegistrations = []
+}
+
+/** Rebuild game-scoped chat and app hotkeys as one unit. Complete configured
+ *  sources are retained while suspended; OS and uIOhook registration is deferred
+ *  until the final resume. */
+export function refreshScopedHotkeys(reason?: string): void {
+  clearScopedHotkeyRegistrations()
 
   const version = getPoeVersion()
-  for (const c of commands) {
+  applicableChatCommandCount = 0
+  applicableAppMacroCount = 0
+
+  for (const c of configuredChatCommands) {
     if (!c.hotkey || !c.command) continue
     if (!scopeAppliesTo(chatCommandEffectiveScope(c), version)) continue
-    const autoSubmit = c.autoSubmit !== false
-    chatCommandHotkeys.push({ accelerator: c.hotkey, command: c.command, autoSubmit, scope: c.scope })
+    applicableChatCommandCount++
     if (suspendDepth > 0) continue
+    const autoSubmit = c.autoSubmit !== false
     const combo = parseAccelerator(c.hotkey)
     // International/OEM keys can't go through globalShortcut; match them via uiohook.
     if (!isElectronRegisterable(c.hotkey)) {
-      if (combo)
-        chatActionBindings.push({ combo, lastFireAt: 0, fire: () => runChatCommand(c.command, autoSubmit, combo) })
+      if (combo) chatActionBindings.push({ combo, lastFireAt: 0, fire: () => runChatCommand(c, autoSubmit, combo) })
       continue
     }
     try {
-      globalShortcut.register(c.hotkey, () => runChatCommand(c.command, autoSubmit, combo))
+      if (globalShortcut.register(c.hotkey, () => runChatCommand(c, autoSubmit, combo))) {
+        registeredChatAccelerators.push(c.hotkey)
+      } else {
+        recordScopedRegistrationFailure('chat-command', c.hotkey)
+      }
     } catch (e) {
       console.error(`[hotkeys] Failed to register chat command "${c.hotkey}":`, e)
+      recordScopedRegistrationFailure('chat-command', c.hotkey)
+      recordMainDiagnostic('hotkey-register:chat-command', e)
     }
   }
+
+  for (const m of configuredAppMacros) {
+    if (!m.hotkey || !m.action) continue
+    if (!scopeAppliesTo(appMacroEffectiveScope(m), version)) continue
+    applicableAppMacroCount++
+    if (suspendDepth > 0) continue
+    const combo = parseAccelerator(m.hotkey)
+    // International/OEM keys can't go through globalShortcut; match them via uiohook.
+    if (!isElectronRegisterable(m.hotkey)) {
+      if (combo) macroActionBindings.push({ combo, lastFireAt: 0, fire: () => runAppMacro(m, combo) })
+      continue
+    }
+    try {
+      if (globalShortcut.register(m.hotkey, () => runAppMacro(m, combo))) {
+        appMacroAccelerators.push(m.hotkey)
+      } else {
+        recordScopedRegistrationFailure('app-macro', m.hotkey)
+      }
+    } catch (e) {
+      console.error(`[hotkeys] Failed to register app macro "${m.action}" (${m.hotkey}):`, e)
+      recordScopedRegistrationFailure('app-macro', m.hotkey)
+      recordMainDiagnostic('hotkey-register:app-macro', e)
+    }
+  }
+
+  if (reason) {
+    recordMainBreadcrumb(
+      `scoped hotkeys refreshed reason=${reason} game=poe${version} suspended=${suspendDepth > 0} ` +
+        `chat=${configuredChatCommands.length}/${applicableChatCommandCount}/${registeredChatAccelerators.length}/${chatActionBindings.length} ` +
+        `app=${configuredAppMacros.length}/${applicableAppMacroCount}/${appMacroAccelerators.length}/${macroActionBindings.length} ` +
+        `failed=${failedScopedRegistrations.length}`,
+    )
+  }
+}
+
+export function setChatCommands(commands: ChatCommandConfig[]): void {
+  configuredChatCommands = [...commands]
+  refreshScopedHotkeys()
 }
 
 export function setAppMacroHandler(handler: (action: string, tag?: string, presetId?: string) => void): void {
@@ -453,39 +576,9 @@ export function setSecondaryOverlayHotkeys(hotkeys: OverlayHotkey[]): void {
   }
 }
 
-export function setAppMacros(
-  macros: Array<{ action: string; hotkey: string; tag?: string; presetId?: string; scope?: MacroScope }>,
-): void {
-  lastAppMacros = macros
-  if (suspendDepth === 0) {
-    for (const acc of appMacroAccelerators) {
-      try {
-        globalShortcut.unregister(acc)
-      } catch {}
-    }
-  }
-  appMacroAccelerators = []
-  macroActionBindings = []
-  if (suspendDepth > 0) return
-
-  const version = getPoeVersion()
-  for (const m of macros) {
-    if (!m.hotkey || !m.action) continue
-    if (!scopeAppliesTo(appMacroEffectiveScope(m), version)) continue
-    const combo = parseAccelerator(m.hotkey)
-    // International/OEM keys can't go through globalShortcut; match them via uiohook.
-    if (!isElectronRegisterable(m.hotkey)) {
-      if (combo)
-        macroActionBindings.push({ combo, lastFireAt: 0, fire: () => runAppMacro(m.action, m.tag, m.presetId, combo) })
-      continue
-    }
-    try {
-      globalShortcut.register(m.hotkey, () => runAppMacro(m.action, m.tag, m.presetId, combo))
-      appMacroAccelerators.push(m.hotkey)
-    } catch (e) {
-      console.error(`[hotkeys] Failed to register app macro "${m.action}" (${m.hotkey}):`, e)
-    }
-  }
+export function setAppMacros(macros: AppMacroConfig[]): void {
+  configuredAppMacros = [...macros]
+  refreshScopedHotkeys()
 }
 
 const PLACEHOLDER_LAST = '@last'
@@ -498,87 +591,147 @@ const AUTO_CLEAR = [
   '/', // Command
 ]
 
+/** How long to wait for PoE to actually reach the foreground. A normal handoff
+ *  lands in well under 100ms; past this, assume the game is gone or the OS
+ *  refused the request rather than injecting into someone else's window. */
+const FOCUS_WAIT_MS = 300
+const FOCUS_POLL_MS = 10
+/** How long the command stays on the clipboard after the keys are injected.
+ *  The client reads the clipboard when it *processes* Ctrl+V, which can be well
+ *  after SendInput returns - parsing a reloaded filter alone hitches it past
+ *  several frames. Hand the clipboard back too early and the game pastes the
+ *  user's own content instead, which the trailing Enter then broadcasts to
+ *  chat. 250ms covers a reload hitch; the borrow watchdog covers the rest. */
+const CLIPBOARD_HOLD_MS = 250
+/** Keys are out and the chat window has closed - let the next flow start. */
+const PASTE_SETTLE_MS = 50
+const CLIPBOARD_WRITE_TRIES = 3
+const CLIPBOARD_WRITE_RETRY_MS = 15
+
+const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Resolve once the attached game owns OS focus; throw if it never does.
+ *  Injected keys go to whatever window is foreground when the OS routes them,
+ *  so firing during the handoff sprays Enter/Ctrl+V/Enter at the window the
+ *  user was just in - and burns the clipboard hold before the game can read
+ *  the paste. targetHasFocus is the same signal that authorizes every gameplay
+ *  hotkey (see hotkeyContextIsActive). */
+async function awaitGameFocus(): Promise<void> {
+  if (OverlayController.targetHasFocus) return
+  focusGameWindow()
+  for (let waited = 0; waited < FOCUS_WAIT_MS; waited += FOCUS_POLL_MS) {
+    await wait(FOCUS_POLL_MS)
+    if (OverlayController.targetHasFocus) return
+  }
+  throw new Error('PoE did not take focus - chat command not sent')
+}
+
+/** Put `text` on the clipboard and prove it landed before anything is injected.
+ *  A clipboard manager (Win+V history, Ditto) holding the clipboard open makes
+ *  Electron's write a silent no-op; pasting anyway submits whatever the user
+ *  had copied. */
+async function writeChatText(text: string): Promise<void> {
+  // Compared line-ending-insensitively: Windows stores CRLF, and a multi-line
+  // macro must not read back as a failed write.
+  const normalize = (s: string): string => s.replace(/\r\n/g, '\n')
+  for (let attempt = 0; attempt < CLIPBOARD_WRITE_TRIES; attempt++) {
+    clipboard.writeText(text)
+    if (normalize(clipboard.readText()) === normalize(text)) return
+    await wait(CLIPBOARD_WRITE_RETRY_MS)
+  }
+  throw new Error('clipboard write did not land - chat command not sent')
+}
+
 /**
  * Paste text into PoE chat via clipboard + uiohook keyTaps.
  * Layout-independent, near-instant.
+ *
+ * Both preconditions - game focused, command provably on the clipboard - are
+ * confirmed before a single key is injected. The paste ends with Enter, so
+ * anything we get wrong is broadcast to chat rather than quietly dropped.
  */
 let chatLocked = false
-function pasteToPoEChat(text: string, submit: boolean): Promise<void> {
-  if (chatLocked) return Promise.resolve()
-  // Focus gate: refuse to inject unless PoE is the foreground window (when enabled).
-  // Otherwise the Enter/Ctrl+V/Enter burst -- and the clipboard restore below -- could
-  // land in a browser, Discord, or a password manager. Programmatic callers (filter
-  // reload/switch) defer in overlay.ts and only reach here once PoE has focus.
-  if (!mayInjectChatNow()) return Promise.resolve()
+async function pasteToPoEChat(text: string, submit: boolean): Promise<void> {
+  if (chatLocked) return
   chatLocked = true
 
   const restoreClip = snapshotClipboard()
-  injecting = true
 
-  // Focus PoE so keystrokes reach the game (only if it doesn't already have focus).
-  // With the focus gate on we are already foreground here; this covers the gate-off
-  // legacy path.
-  if (!OverlayController.targetHasFocus) focusGameWindow()
+  // Injection is native (uiohook SendInput) and focusing the game reaches into
+  // a window that may already be gone, so both can throw. Without this, a throw
+  // would strand `chatLocked` true and silently kill every later chat command,
+  // filter reload and filter switch for the rest of the session (#562).
+  try {
+    await awaitGameFocus()
 
-  // All keystrokes fire synchronously so the chat window
-  // opens and closes in a single frame, preventing visible flash
-  if (text.startsWith(PLACEHOLDER_LAST)) {
-    // Ctrl+Enter pre-fills @<lastwhisperer> in the chat input; paste body after
-    text = text.slice(`${PLACEHOLDER_LAST} `.length)
-    clipboard.writeText(text)
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
-    uIOhook.keyTap(UiohookKey.Enter)
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
-  } else if (text.endsWith(PLACEHOLDER_LAST)) {
-    // Ctrl+Enter pre-fills @CharName at position 0; Home x2 then Delete strips the @
-    text = text.slice(0, -PLACEHOLDER_LAST.length)
-    clipboard.writeText(text)
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
-    uIOhook.keyTap(UiohookKey.Enter)
-    uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
-    uIOhook.keyTap(UiohookKey.Home)
-    // press twice to focus input when using controller
-    uIOhook.keyTap(UiohookKey.Home)
-    uIOhook.keyTap(UiohookKey.Delete)
-  } else {
-    clipboard.writeText(text)
-    uIOhook.keyTap(UiohookKey.Enter)
-    // PoE auto-clears the input when the text starts with a chat-prefix char
-    if (!AUTO_CLEAR.includes(text[0])) {
-      uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
-      uIOhook.keyTap(UiohookKey.A)
-      uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+    // Resolve the body and the chat-opening keys first so the clipboard write
+    // (and its verification) happens before any key goes out.
+    let body = text
+    let openChat: () => void
+    if (text.startsWith(PLACEHOLDER_LAST)) {
+      // Ctrl+Enter pre-fills @<lastwhisperer> in the chat input; paste body after
+      body = text.slice(`${PLACEHOLDER_LAST} `.length)
+      openChat = () => {
+        uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
+        uIOhook.keyTap(UiohookKey.Enter)
+        uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+      }
+    } else if (text.endsWith(PLACEHOLDER_LAST)) {
+      // Ctrl+Enter pre-fills @CharName at position 0; Home x2 then Delete strips the @
+      body = text.slice(0, -PLACEHOLDER_LAST.length)
+      openChat = () => {
+        uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
+        uIOhook.keyTap(UiohookKey.Enter)
+        uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+        uIOhook.keyTap(UiohookKey.Home)
+        // press twice to focus input when using controller
+        uIOhook.keyTap(UiohookKey.Home)
+        uIOhook.keyTap(UiohookKey.Delete)
+      }
+    } else {
+      openChat = () => {
+        uIOhook.keyTap(UiohookKey.Enter)
+        // PoE auto-clears the input when the text starts with a chat-prefix char
+        if (!AUTO_CLEAR.includes(text[0])) {
+          uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
+          uIOhook.keyTap(UiohookKey.A)
+          uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+        }
+      }
     }
+
+    await writeChatText(body)
+
+    injecting = true
+    // All keystrokes fire synchronously so the chat window
+    // opens and closes in a single frame, preventing visible flash
+    openChat()
+
+    uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
+    uIOhook.keyTap(UiohookKey.V)
+    uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+
+    if (submit) {
+      uIOhook.keyTap(UiohookKey.Enter)
+    }
+  } catch (e) {
+    restoreClip()
+    chatLocked = false
+    injecting = false
+    recordMainDiagnostic('chat-paste', e)
+    throw e
   }
 
-  uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
-  uIOhook.keyTap(UiohookKey.V)
-  uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+  // Hand the clipboard back on its own timer, decoupled from the promise, so
+  // the command outlives a client hitch without holding up the caller (a filter
+  // switch pastes twice). Overlapping borrows nest, so a flow that starts
+  // inside the hold still restores correctly.
+  setTimeout(restoreClip, CLIPBOARD_HOLD_MS).unref?.()
 
-  if (submit) {
-    uIOhook.keyTap(UiohookKey.Enter)
-  }
-
-  // Two separate timers:
-  //  - Clear the re-entrancy / hotkey-suppression flags quickly (the synthetic
-  //    keystroke burst is already done) and resolve so sendChatCommand restores the
-  //    user's held modifiers without a long stall.
-  //  - Restore the user's REAL clipboard only after a longer margin, and only if the
-  //    clipboard still holds the command text we wrote (i.e. nothing changed it). This
-  //    closes the race where a laggy game consumes the Ctrl+V after the restore, which
-  //    previously pasted the user's original clipboard (e.g. a password) into chat.
-  //    chatLocked is held across this window so back-to-back chat pastes can't interleave
-  //    their clipboard writes.
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      injecting = false
-      resolve()
-    }, INJECT_SUPPRESS_RELEASE_MS)
-    setTimeout(() => {
-      if (clipboardHoldsInjectedText(clipboard.readText(), text)) restoreClip()
-      chatLocked = false
-    }, CHAT_CLIPBOARD_RESTORE_DELAY_MS)
-  })
+  // Re-register hotkeys once the keys are out
+  await wait(PASTE_SETTLE_MS)
+  chatLocked = false
+  injecting = false
 }
 
 export function sendChatCommand(command: string, autoSubmit = true): Promise<void> {
@@ -590,7 +743,59 @@ export function sendChatCommand(command: string, autoSubmit = true): Promise<voi
   if (held.shift) uIOhook.keyToggle(held.shift, 'up')
   if (held.alt) uIOhook.keyToggle(held.alt, 'up')
   injecting = prevInjecting
-  return pasteToPoEChat(command, autoSubmit).then(() => restoreModifiers(held))
+  // finally, not then: an aborted paste must still re-press the modifiers the
+  // user is physically holding, or the game keeps thinking they let go.
+  return pasteToPoEChat(command, autoSubmit).finally(() => restoreModifiers(held))
+}
+
+/**
+ * Paste a regex into PoE's stash/inventory search (Ctrl+F, Ctrl+V).
+ * Same hardening as chat paste: release held modifiers, await game focus,
+ * verify the clipboard write, mark injecting so the hook ignores synthetic
+ * keys, and settle briefly so a bare F-key hotkey (flask conflict) finishes
+ * releasing before Ctrl+F is synthesized.
+ */
+let regexPasteLocked = false
+export async function pasteRegexToPoESearch(regex: string): Promise<void> {
+  if (!regex || regexPasteLocked || injecting) return
+  regexPasteLocked = true
+
+  const held: ModSnapshot = { ...heldModifiers }
+  const prevInjecting = injecting
+  injecting = true
+  if (held.ctrl) uIOhook.keyToggle(held.ctrl, 'up')
+  if (held.shift) uIOhook.keyToggle(held.shift, 'up')
+  if (held.alt) uIOhook.keyToggle(held.alt, 'up')
+  injecting = prevInjecting
+
+  const restoreClip = snapshotClipboard()
+  try {
+    // Let the triggering hotkey keyup (and any flask F1–F5 collision) settle.
+    await wait(50)
+    await awaitGameFocus()
+    await writeChatText(regex)
+
+    injecting = true
+    uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
+    uIOhook.keyTap(UiohookKey.F)
+    uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+    uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
+    uIOhook.keyTap(UiohookKey.V)
+    uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+  } catch (e) {
+    restoreClip()
+    regexPasteLocked = false
+    injecting = false
+    restoreModifiers(held)
+    recordMainDiagnostic('regex-paste', e)
+    throw e
+  }
+
+  setTimeout(restoreClip, CLIPBOARD_HOLD_MS).unref?.()
+  await wait(PASTE_SETTLE_MS)
+  regexPasteLocked = false
+  injecting = false
+  restoreModifiers(held)
 }
 
 /** Track physically held modifier keys via uiohook (ignores synthetic key events during injection) */
@@ -647,6 +852,7 @@ export function stopHotkeyListener(): void {
     hookStarted = false
   }
   globalShortcut.unregisterAll()
+  escapeShortcutRegistered = false
 }
 
 export function setStashScrollEnabled(enabled: boolean): void {
@@ -689,17 +895,24 @@ export async function sendItemFilterCommand(filterName: string, currentFilter?: 
 // ─── Ctrl+C sender ───────────────────────────────────────────────────────────
 
 /**
- * Send Ctrl+Alt+C to PoE via uiohook (OS-level SendInput).
- * Releases any modifier keys the user is holding from their hotkey combo
- * so PoE receives a clean Ctrl+Alt+C.
+ * Send Ctrl+C to PoE via uiohook (OS-level SendInput).
+ *
+ * Both games now emit the advanced item description for a plain Ctrl+C, so Alt
+ * (PoE's "show advanced item descriptions" modifier) is no longer held (#560).
+ * `withAlt` restores the legacy Ctrl+Alt+C for a client that still needs it --
+ * see the advanced-copy tracker, which decides when that is.
+ *
+ * A user who *holds* Alt as part of their own hotkey is left alone either way:
+ * the game seeing Ctrl+Alt+C copies the same advanced text, so there is nothing
+ * to fight.
  */
-export async function sendCtrlCToPoE(): Promise<void> {
+export async function sendCtrlCToPoE(opts?: { withAlt?: boolean }): Promise<void> {
   injecting = true
 
   // Instead of releasing all user modifiers (racy to restore), piggyback on
-  // whatever the user already holds and only add what's missing for Ctrl+Alt+C.
+  // whatever the user already holds and only add what's missing.
   const needCtrl = !heldModifiers.ctrl
-  const needAlt = !heldModifiers.alt
+  const needAlt = opts?.withAlt === true && !heldModifiers.alt
 
   // Temporarily release Shift if held. PoE2 ignores the copy when Shift is still
   // down at the moment C is tapped -- most visibly on equipped items, which
@@ -720,11 +933,12 @@ export async function sendCtrlCToPoE(): Promise<void> {
   uIOhook.keyTap(UiohookKey.C)
 
   // PoE2 drops modifier keyup events when they fire too soon after the C tap,
-  // leaving the in-game advanced tooltip stuck "Alt-pinned" on the item (the
-  // symptom shows up most when the overlay closes via click-outside, where no
-  // focus round-trip resyncs PoE's view of held modifiers). Hold the modifiers
-  // ~10ms before releasing so PoE registers them in order. Same root cause and
-  // fix as Exiled-Exchange-2 issue #124.
+  // leaving PoE's view of held modifiers out of sync -- on the Alt path that
+  // showed up as the in-game advanced tooltip stuck "Alt-pinned" on the item
+  // (most visible when the overlay closes via click-outside, where no focus
+  // round-trip resyncs it). Hold the modifiers ~10ms before releasing so PoE
+  // registers them in order. Same root cause and fix as Exiled-Exchange-2
+  // issue #124.
   await new Promise<void>((resolve) => {
     setTimeout(() => {
       if (needAlt) uIOhook.keyToggle(UiohookKey.Alt, 'up')
@@ -741,20 +955,28 @@ export async function sendCtrlCToPoE(): Promise<void> {
 
 function getHotkeyDiagnostics(): Record<string, unknown> {
   return {
+    game: getPoeVersion(),
     hookStarted,
     hookSuspended,
     suspendDepth,
     triggerHotkeyConfigured: currentAccelerator !== null,
     priceCheckHotkeyConfigured: priceCheckAccelerator !== null,
-    chatCommandHotkeyCount: chatCommandHotkeys.length,
+    chatCommandConfiguredCount: configuredChatCommands.length,
+    chatCommandApplicableCount: applicableChatCommandCount,
+    chatCommandHotkeyCount: registeredChatAccelerators.length,
+    appMacroConfiguredCount: configuredAppMacros.length,
+    appMacroApplicableCount: applicableAppMacroCount,
     appMacroHotkeyCount: appMacroAccelerators.length,
     secondaryOverlayHotkeyCount: secondaryOverlayHotkeys.length,
     // uiohook-matched bindings for international/OEM keys globalShortcut can't bind.
     chatActionBindingCount: chatActionBindings.length,
     macroActionBindingCount: macroActionBindings.length,
     overlayActionBindingCount: overlayActionBindings.length,
+    failedScopedRegistrations,
     stashScrollEnabled,
     stashScrollModifier,
+    // 'alt' means this client only yields advanced item text with Alt held (#560).
+    advancedCopyState: advancedCopyTracker.state(),
     lastHookStartError,
     lastHookStopError,
   }
