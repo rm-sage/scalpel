@@ -25,6 +25,15 @@ describe('fork invariant: the auto-update feed points at this fork', () => {
   it('sends the manual-download fallback to the fork', () => {
     expect(GITHUB_RELEASES_PAGE).toContain('rm-sage/scalpel')
   })
+
+  // Both URLs are written out as plain literals so `scripts/update-smoke.mjs` can
+  // find them in the built bundle (rollup won't fold a template literal that reads
+  // an imported binding -- see the comment on GITHUB_RELEASES_API). That hand-copied
+  // repo string is exactly the kind of thing that drifts, so pin it here.
+  it('keeps the hand-written release URLs in step with FORK_RELEASES_REPO', () => {
+    expect(GITHUB_RELEASES_API).toBe(`https://api.github.com/repos/${FORK_RELEASES_REPO}/releases/latest`)
+    expect(GITHUB_RELEASES_PAGE).toBe(`https://github.com/${FORK_RELEASES_REPO}/releases/latest`)
+  })
 })
 
 describe('fork invariant: the Craft of Exile macro is present', () => {

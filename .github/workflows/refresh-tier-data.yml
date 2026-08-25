@@ -11,6 +11,24 @@ permissions:
 
 jobs:
   refresh:
+    # Fork: DISABLED here on purpose. This bot regenerates files that upstream's
+    # identical bot also regenerates, from the same RePoE-fork source. Running both
+    # means every fork release carries its own copy of generated JSON, which then
+    # conflicts with upstream's copy on the daily merge in auto-sync.yml -- a conflict
+    # outside that workflow's package.json/package-lock.json whitelist, so it aborts
+    # and ships nothing. That is what stalled the fork at 0.9.17-rmsage.1 from
+    # 2026-07-01 to 2026-08-25 (~51 consecutive failed syncs).
+    #
+    # Fresh tier data still arrives automatically and with no approval step: upstream
+    # runs this same workflow daily, and auto-sync.yml merges upstream/main daily, so
+    # the data lands in the fork about a day later with zero conflicts and zero PRs.
+    # PR #10 was the proof -- it re-ran against RePoE-fork and produced byte-identical
+    # tiers-poe1/poe2/desecrated-poe2.json plus an unchanged content hash, i.e. nothing
+    # but an ETag and timestamp bump.
+    #
+    # Re-enable only if upstream stops refreshing. If you do, make it commit straight
+    # to main rather than open a PR, and expect to hand-resolve tiers/ on every sync.
+    if: github.repository == 'scalpelpoe/scalpel'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
