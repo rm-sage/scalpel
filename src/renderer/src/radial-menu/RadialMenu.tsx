@@ -913,11 +913,12 @@ export function RadialMenuView({
                     and any real icon name beats the enrichment. A sentinel with
                     no art (plugin uninstalled, or it registered no tab icon)
                     falls through to the Components glyph, same as before.
-                    Colour is pinned rather than inherited: the badge carries its
-                    own background, so letting the arrived flip repaint the art
-                    would put a dark glyph on a dark token the moment the accent
-                    puck landed. The IconPark branch keeps inheriting, which is
-                    what that flip is for. */}
+                    The art's colour is pinned rather than inherited: the badge
+                    carries its own background, so letting the arrived flip
+                    repaint the art would put a dark glyph on a dark token the
+                    moment the accent puck landed. The badge's stroke and the
+                    IconPark branch keep inheriting, which is what that flip is
+                    for. */}
                 {pluginArt ? (
                   <PluginIconBadge icon={pluginArt} size={24} testId="radial-plugin-badge" />
                 ) : (

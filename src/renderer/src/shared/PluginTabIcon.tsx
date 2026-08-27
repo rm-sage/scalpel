@@ -45,13 +45,17 @@ export function PluginTabIcon({ icon, size, color, className = '' }: PluginTabIc
 
 /** A plugin's icon as a round token: the art edge to edge, clipped to a circle,
  *  over a theme-token backing that only shows through where the art is
- *  transparent. Used on the radial ring and in its icon picker, so it lives here
+ *  transparent, ringed by a currentColor stroke that ties it to the glyphs
+ *  around it. Used on the radial ring and in its icon picker, so it lives here
  *  beside the fork it wraps rather than being written out twice.
  *
- *  Colour is pinned rather than inherited. The badge carries its own background,
- *  so a caller that repaints its glyphs on some state - the ring flips them to
- *  an on-accent colour when the goo puck arrives - would otherwise put a dark
- *  glyph on a dark token at exactly the wrong moment.
+ *  The stroke inherits while the art is pinned, and the split is the point.
+ *  The badge carries its own background, so a caller that repaints its glyphs
+ *  on some state - the ring flips them to an on-accent colour when the goo puck
+ *  arrives - would put a dark glyph on a dark token at exactly the wrong moment
+ *  if the art inherited too. The stroke sits on the background, not the token,
+ *  so it is exactly the thing that SHOULD follow those repaints. Its 1.5px
+ *  weight matches the IconPark glyphs (strokeWidth 4 on a 48 viewBox at ~20px).
  *
  *  Square art is the norm and fills exactly. Non-square INLINE SVG still
  *  letterboxes inside the square box, because honouring its aspect ratio is the
@@ -72,10 +76,10 @@ export function PluginIconBadge({
   return (
     <span
       data-testid={testId}
-      className={`flex items-center justify-center shrink-0 rounded-full overflow-hidden bg-bg-card ${className}`}
-      style={{ width: size, height: size, color: 'var(--text)' }}
+      className={`flex items-center justify-center shrink-0 rounded-full overflow-hidden bg-bg-card border-[1.5px] border-current ${className}`}
+      style={{ width: size, height: size }}
     >
-      <PluginTabIcon icon={icon} size="fill" />
+      <PluginTabIcon icon={icon} size="fill" color="var(--text)" />
     </span>
   )
 }
