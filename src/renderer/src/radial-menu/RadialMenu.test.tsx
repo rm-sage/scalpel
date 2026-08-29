@@ -266,6 +266,27 @@ describe('RadialMenuView', () => {
     expect(img?.className).toContain('object-cover')
   })
 
+  it('shows the OS cursor once the pointer drifts past the disc, and hides it again inside', () => {
+    render(<RadialMenuView payload={payload} onFire={() => {}} onCancel={() => {}} />)
+    const root = screen.getByTestId('radial-root')
+
+    // At rest, and still inside the disc: the blob is standing in for the
+    // pointer, so a second cursor drawn over it would read as two cursors.
+    expect(root.style.cursor).toBe('none')
+    fireEvent.pointerMove(root, { clientX: 400, clientY: 290 })
+    expect(root.style.cursor).toBe('none')
+
+    // Far enough out that no disc at any scale reaches it: the blob is
+    // pinned back on the ring here, and it stops being an honest answer to
+    // "where is my hand" - so the OS cursor has to come back.
+    fireEvent.pointerMove(root, { clientX: 400, clientY: 300 - 400 })
+    expect(root.style.cursor).not.toBe('none')
+
+    // ...and it hides again on the way back in.
+    fireEvent.pointerMove(root, { clientX: 400, clientY: 300 })
+    expect(root.style.cursor).toBe('none')
+  })
+
   it('Escape cancels', () => {
     const onCancel = vi.fn()
     render(<RadialMenuView payload={payload} onFire={() => {}} onCancel={onCancel} />)

@@ -295,6 +295,12 @@ export function RadialMenuView({
   // of liquid stretching. (It also has to halo the ~20px glyph it sits behind,
   // which the shipped 25 does comfortably.)
   const blobRadius = centerRadius
+  // The disc's own edge: the icon ring plus its halo plus a little breathing
+  // room, so no glyph or label chip sits on the rim. Computed once here, ahead
+  // of both the drawn disc and the pointer hit test, so the two cannot drift
+  // apart - a disc resized without moving this line would leave the cursor
+  // showing (or hiding) at the wrong radius.
+  const discRadius = ringRadius + ICON_HALO + DISC_PAD
   // The goo blur ACTUALLY on screen. Computed once here rather than inline in
   // the filter, because the loop needs the same number to decide whether the
   // bridge is still standing - and an answer derived from a different sigma than
@@ -324,6 +330,10 @@ export function RadialMenuView({
 
   const [hovered, setHovered] = useState<number | null>(null)
   const [firing, setFiring] = useState<number | null>(null)
+  // Whether the cursor has drifted past the drawn disc. False at open - the
+  // menu opens with the pointer at the centre, well inside it. See discRadius
+  // below and the root's cursor style, which this gates.
+  const [cursorOutside, setCursorOutside] = useState(false)
 
   const rootRef = useRef<HTMLDivElement>(null)
   // Hold-open: while the panel is up, clicks on the ring do nothing, so the menu
@@ -387,13 +397,19 @@ export function RadialMenuView({
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>): void => {
       mouseRef.current = { x: e.clientX, y: e.clientY }
+      // Off the disc's own edge, not the deadzone: past here the blob is
+      // pinned back on the ring rather than tracking the hand, so it stops
+      // being an honest stand-in for the pointer and the OS cursor has to
+      // take over. Set on every move - React bails out on an identical value,
+      // so this costs nothing while the pointer stays on one side of the rim.
+      setCursorOutside(Math.hypot(e.clientX - center.x, e.clientY - center.y) > discRadius)
       // Selection is synchronous with the pointer - the rAF loop only animates.
       if (firingRef.current != null) return
       // Deadzone IS the drawn bubble's edge (see DEADZONE_PX), so it scales with
       // the bubble or the ring would pick before the cursor had left the goo.
       setHovered(pickSlice(center, mouseRef.current, count, centerRadius))
     },
-    [center, count, centerRadius],
+    [center, count, centerRadius, discRadius],
   )
 
   const fireTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -665,7 +681,7 @@ export function RadialMenuView({
   // Encloses the whole menu: the icon ring plus its halo plus a little breathing
   // room, so no glyph or label chip sits on the disc's edge. Same split as the
   // clamp margin - scaled ring, unscaled halo, because the glyphs keep their px.
-  const discSize = 2 * (ringRadius + ICON_HALO + DISC_PAD)
+  const discSize = 2 * discRadius
   // Where the capture sits inside the disc's box. Shared by both passes of the
   // frosted glass below, which have to land on exactly the same pixels or the
   // cross-fade between them would read as a double image.
@@ -683,10 +699,13 @@ export function RadialMenuView({
       ref={rootRef}
       data-testid="radial-root"
       className="fixed inset-0 select-none"
-      // While the menu is up the blob IS the pointer; the OS cursor on top of
-      // it reads as two cursors. The window only exists while the menu is
-      // open, so this never hides the cursor over the game itself.
-      style={{ cursor: 'none' }}
+      // Inside the disc the blob IS the pointer, and the OS cursor on top of
+      // it reads as two cursors - hidden there. Past the rim (a flick usually
+      // lands out there) the blob stays pinned back on the ring and stops
+      // being an honest answer to "where is my hand", so the OS cursor
+      // returns. The window only exists while the menu is open, so this never
+      // hides the cursor over the game itself.
+      style={{ cursor: cursorOutside ? undefined : 'none' }}
       onPointerMove={handlePointerMove}
       onClick={handleClick}
     >
