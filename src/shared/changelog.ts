@@ -3,6 +3,8 @@ export const CHANGELOG: { version: string; notes: string[] }[] = [
     version: '1.0.4',
     notes: [
       'Added a radial menu, turn it on in the settings macro page.',
+      'The mouse cursor now shows when it leaves the radial menu disc.',
+      "Plugin icons in the radial menu now match the theme's icon color.",
       'Updated plugin sdk with some new features.',
       'Plugins that need a newer Scalpel version no longer show in the plugin browser.',
       'Plugin overlay windows now start pinned, so Esc no longer closes them.',
@@ -13,6 +15,7 @@ export const CHANGELOG: { version: string; notes: string[] }[] = [
       'Fixed the Corrupted chip missing on PoE1 utility and hybrid flasks.',
       'Fixed the Now Playing overlay not coming back after alt-tabbing the game.',
       'Fixed Trarthan Scarabs and other new 3.27 items not showing Faustus pricing.',
+      'Fixed hotkeys sometimes staying dead after tabbing out of a tool window.',
     ],
   },
   {
