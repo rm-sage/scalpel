@@ -87,3 +87,16 @@ export const SearchOpenWithItem: Story = {
 export const NoItem: Story = {
   args: { overlayData: null, view: 'no-item' },
 }
+
+/** Row one fills at 11 icons; plugin tabs beyond the free slots wrap to a right-justified second row. */
+export const ManyPluginTabs: Story = {
+  args: {
+    overlayData,
+    view: 'plugin:plugin-6',
+    pluginTabs: Array.from({ length: 12 }, (_, index) => ({
+      pluginId: `plugin-${index + 1}`,
+      label: `Plugin ${index + 1}`,
+      icon: '<svg viewBox="0 0 16 16"><path d="M2 2h12v12H2zM5 5v6l6-3z" fill="currentColor"/></svg>',
+    })),
+  },
+}
