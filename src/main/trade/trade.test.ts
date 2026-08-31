@@ -2608,6 +2608,28 @@ describe('isBulkExchangeItem (PoE2 slug-gated routing)', () => {
     expect(getBulkExchangeId('Ambition', 'Vaal Aspect')).toBe('ambition')
   })
 
+  it('routes only Voidborn among PoE1 reliquary keys to bulk -- the rest have dead exchange markets', () => {
+    setPoeVersion(1)
+    // Faustus only trades the commodity key. The foil boss keys and legacy keys
+    // carry slugs but had 0 exchange offers in the 3.29 league AND Standard,
+    // against live regular-search markets (Visceral: 17+ divine web listings).
+    expect(isBulkExchangeItem('Vault Keys', 'Voidborn Reliquary Key', 'Voidborn Reliquary Key', 'Normal')).toBe(true)
+    for (const key of [
+      'Visceral Reliquary Key',
+      'Ancient Reliquary Key',
+      'Timeworn Reliquary Key',
+      'Shiny Reliquary Key',
+    ]) {
+      expect(isBulkExchangeItem('Vault Keys', key, key, 'Normal')).toBe(false)
+      // Slugs stay in the map; the routing must not use them.
+      expect(getBulkExchangeId(key, key)).not.toBeNull()
+    }
+    // PoE2 reliquary keys share the "Vault Keys" class but DO trade on Ange --
+    // the exclusion is PoE1-only.
+    setPoeVersion(2)
+    expect(isBulkExchangeItem('Vault Keys', 'Azmeri Reliquary Key', 'Azmeri Reliquary Key', 'Normal')).toBe(true)
+  })
+
   it('routes the 3.27 Trarthan scarabs to bulk with live exchange ids', () => {
     setPoeVersion(1)
     const scarabs: Array<[string, string]> = [

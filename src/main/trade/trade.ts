@@ -1910,6 +1910,15 @@ export function isBulkExchangeItem(
   // a single 20c offer against a 7-divine one. Price them on regular search,
   // where name + base type is an exact match (#551).
   if (baseType === 'Vaal Aspect') return false
+  // Every PoE1 reliquary key (class "Vault Keys") carries a GGG exchange slug,
+  // but Faustus only has a real market for Voidborn -- the commodity key.
+  // Measured in the 3.29 league and Standard: all 13 other keys had 0 exchange
+  // offers against live regular-search markets (Visceral: 10 listings at 17+
+  // divine, 0 offers; Ancient in Standard: 932 listings, 0 offers). PoE2's
+  // reliquary keys share the class name and DO trade on Ange, so this is
+  // PoE1-only. Same shape as the Vaal Aspects above: slugs stay in the map,
+  // the routing must not use them.
+  if (getPoeVersion() === 1 && itemClass === 'Vault Keys' && baseType !== 'Voidborn Reliquary Key') return false
   // Beasts are "Stackable Currency" but have rarity Rare/Unique and need regular trade
   if (itemClass === 'Stackable Currency' && (_rarity === 'Rare' || _rarity === 'Unique')) return false
   // Modified map-class items (Magic/Rare/Unique) aren't stackable, so they can't be on
