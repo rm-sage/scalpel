@@ -10,6 +10,7 @@ function installApi(): void {
     onRegexPresetsChanged: vi.fn(() => () => {}),
     pluginListRegisteredHotkeys: vi.fn(async () => []),
     onPluginHotkeysChanged: vi.fn(() => () => {}),
+    pluginListRegisteredTabs: vi.fn(async () => []),
     listInstalledPlugins: vi.fn(async () => []),
   }
 }
@@ -31,6 +32,7 @@ function renderStep(settingsValue: RuntimeSettings, onUpdate = vi.fn()): ReturnT
     <MacrosStep
       settings={settingsValue}
       onUpdate={onUpdate}
+      onUpdateMany={vi.fn()}
       onNext={vi.fn()}
       onBack={vi.fn()}
       stepNum={1}

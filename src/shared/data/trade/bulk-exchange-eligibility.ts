@@ -30,12 +30,11 @@ const POE1_RULES: BulkExchangeRules = {
     'Scarabs',
     'Divination Cards',
     'Map Fragments',
-    // Reliquary Keys (Voidborn, Ancient, Timeworn, ...). Their clipboard class is
-    // "Vault Keys", not Map Fragments -- PoE2's rules below already listed it and
-    // PoE1's did not, so every key failed this gate and fell back to the web
-    // listings despite being a liquid exchange market (Voidborn alone trades
-    // ~390k chaos/hr). They route to bulk fine; only this gate was missing.
-    'Vault Keys',
+    // NOT "Vault Keys": of the 14 PoE1 reliquary keys carrying exchange slugs,
+    // Faustus only has a real market for Voidborn (whitelisted in baseTypes
+    // below). Measured in 3.29 league + Standard: every other key had 0
+    // exchange offers against live regular-search markets (Visceral: 10
+    // listings at 17+ divine; Ancient in Standard: 932 listings, 0 offers).
   ]),
   exceptions: new Set([
     // Bound to a map area, so it has no fungible stack to exchange -- Faustus
@@ -144,6 +143,10 @@ const POE1_RULES: BulkExchangeRules = {
     // Allflames / Djinn
     'Allflame Ember',
     'Djinn Barya',
+    // The one reliquary key (class "Vault Keys") Faustus actually trades --
+    // it's the commodity key; the foil boss keys and legacy keys have slugs
+    // but dead exchange markets, so they stay on regular search.
+    'Voidborn Reliquary Key',
   ]),
 }
 

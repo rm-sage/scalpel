@@ -6,6 +6,7 @@ import type { RegexPreset } from './regex'
 import type { PoeProfile } from './profiles'
 import type { HideableTabKey } from './items'
 import type { GameVariant } from './game-variant'
+import type { RadialMenuSettings } from './radial'
 
 export interface LegacyAppSettings {
   filterPathPoe1?: string
@@ -86,6 +87,9 @@ export interface AppSettings {
    *  anchor". Top-level rather than profile-backed: window geometry is a
    *  per-machine preference, not part of a filter profile. */
   pluginOverlayAnchors?: Record<string, OverlayAnchor>
+  /** Radial menu ring config. Top-level (not profile-backed): the ring is a
+   *  per-machine input preference, like plugin overlay geometry. */
+  radialMenu?: RadialMenuSettings
   onboardingCompleted: boolean
   onboardingStep?: string
   onboardingSelectedGames?: { poe1: boolean; poe2: boolean }

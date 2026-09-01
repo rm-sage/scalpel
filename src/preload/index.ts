@@ -12,6 +12,9 @@ import type {
   GameVariant,
   HistoryEntry,
   Manifest,
+  RadialBackdropEvent,
+  RadialOpenPayload,
+  RadialPendingState,
   RemovalPreview,
   OverlayData,
   PoeProfileSummary,
@@ -308,11 +311,13 @@ export const api = {
     return () => ipcRenderer.removeListener('cheat-sheet:focus-category', handler)
   },
   onSecondaryOverlaySnapGhost: (
-    cb: (rect: { x: number; y: number; width: number; height: number } | null) => void,
+    cb: (
+      rect: { x: number; y: number; width: number; height: number; edges?: { left: boolean; right: boolean } } | null,
+    ) => void,
   ): (() => void) => {
     const handler = (
       _: Electron.IpcRendererEvent,
-      rect: { x: number; y: number; width: number; height: number } | null,
+      rect: { x: number; y: number; width: number; height: number; edges?: { left: boolean; right: boolean } } | null,
     ): void => cb(rect)
     ipcRenderer.on('secondary-overlay-canvas:snap-ghost', handler)
     return () => ipcRenderer.removeListener('secondary-overlay-canvas:snap-ghost', handler)
@@ -407,6 +412,7 @@ export const api = {
     }
   },
   getRecentLogLines: (count?: number): Promise<string[]> => ipcRenderer.invoke('client-log:recent-lines', count),
+  getCurrentZone: (): Promise<Zone | null> => ipcRenderer.invoke('client-log:current-zone'),
   gameConfigRead: (): Promise<{ content: string; path: string }> => ipcRenderer.invoke('plugins:game-config-read'),
   gameConfigWrite: (content: string): Promise<{ backupPath: string | null }> =>
     ipcRenderer.invoke('plugins:game-config-write', content),
@@ -892,6 +898,25 @@ export const api = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SCREEN.SOURCE_MAYBE_STALE_EVENT, handler)
     },
   },
+  // Radial menu
+  onRadialOpen: (cb: (payload: RadialOpenPayload) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: RadialOpenPayload): void => cb(payload)
+    ipcRenderer.on(IPC_CHANNELS.RADIAL.OPEN_EVENT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.RADIAL.OPEN_EVENT, handler)
+  },
+  onRadialClose: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on(IPC_CHANNELS.RADIAL.CLOSE_EVENT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.RADIAL.CLOSE_EVENT, handler)
+  },
+  onRadialBackdrop: (cb: (backdrop: RadialBackdropEvent) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, backdrop: RadialBackdropEvent): void => cb(backdrop)
+    ipcRenderer.on(IPC_CHANNELS.RADIAL.BACKDROP_EVENT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.RADIAL.BACKDROP_EVENT, handler)
+  },
+  radialPending: (): Promise<RadialPendingState> => ipcRenderer.invoke(IPC_CHANNELS.RADIAL.PENDING),
+  radialFire: (sliceId: string): void => ipcRenderer.send(IPC_CHANNELS.RADIAL.FIRE, sliceId),
+  radialCancel: (): void => ipcRenderer.send(IPC_CHANNELS.RADIAL.CANCEL),
   // Plugins
   listInstalledPlugins: (): Promise<
     Array<{
@@ -1004,6 +1029,11 @@ export const api = {
     ipcRenderer.on('plugin-overlay:visibility', handler)
     return () => ipcRenderer.removeListener('plugin-overlay:visibility', handler)
   },
+  onPluginOverlayEdgeFlush: (cb: (edges: { left: boolean; right: boolean }) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, edges: { left: boolean; right: boolean }): void => cb(edges)
+    ipcRenderer.on('plugin-overlay:edge-flush', handler)
+    return () => ipcRenderer.removeListener('plugin-overlay:edge-flush', handler)
+  },
   pluginTriggerMainHotkey: (opts?: {
     showOverlay?: boolean
     dispatch?: boolean
@@ -1016,6 +1046,7 @@ export const api = {
       hotkeyLabel?: string
       defaultSize?: { width: number; height: number }
       defaultPosition?: { fracX: number; fracY: number }
+      snapPositions?: { fracX: number; fracY: number }[]
       mode?: 'window' | 'annotation'
     },
   ): Promise<void> => ipcRenderer.invoke('plugins:register-overlay', pluginId, opts),
@@ -1028,6 +1059,23 @@ export const api = {
     ipcRenderer.invoke('plugins:capture-game-window', region),
   pluginGetCursorPosition: (): Promise<{ x: number; y: number } | null> =>
     ipcRenderer.invoke('plugins:get-cursor-position'),
+  pluginMediaGetSession: (): Promise<import('../plugin-sdk/src/types').MediaSession | null> =>
+    ipcRenderer.invoke('plugins:media-get'),
+  pluginMediaCommand: (command: 'play-pause' | 'next' | 'previous'): void => {
+    ipcRenderer.send('plugins:media-command', command)
+  },
+  onMediaChange: (cb: (session: import('../plugin-sdk/src/types').MediaSession | null) => void): (() => void) => {
+    const handler = (
+      _: Electron.IpcRendererEvent,
+      session: import('../plugin-sdk/src/types').MediaSession | null,
+    ): void => cb(session)
+    ipcRenderer.send('plugins:media-watch')
+    ipcRenderer.on('plugins:media-changed', handler)
+    return () => {
+      ipcRenderer.removeListener('plugins:media-changed', handler)
+      ipcRenderer.send('plugins:media-unwatch')
+    }
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

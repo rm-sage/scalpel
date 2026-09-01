@@ -10,6 +10,8 @@ import { SettingSelectBox } from '@renderer/components/primitives/SettingSelectB
 import { chatCommandEffectiveScope, appMacroEffectiveScope, appMacroScope, scopeAppliesTo } from '@shared/macro-scope'
 import { narrowScopeForCrossGameConflict, type HotkeySlot } from '@renderer/components/primitives/hotkey-collisions'
 import { usePoeVersion } from '@renderer/shared/poe-version-context'
+import { RADIAL_MACRO_ACTION } from '@shared/contracts/radial'
+import { RadialMenuSection } from './radial/RadialMenuSection'
 import { m } from '@shared/paraglide/messages.js'
 
 const STASH_SCROLL_MODIFIER_OPTIONS = [
@@ -57,10 +59,15 @@ function FixedHotkeyRow({
 interface Props {
   settings: RuntimeSettings
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  /** Multi-key write in one state update. Required here because the radial
+   *  menu's seeding path writes appMacros and radialMenu in the same tick, and
+   *  two sequential update() calls would clobber each other (both spread the
+   *  same stale settings object). */
+  updateMany: (patch: Partial<AppSettings>) => void
   tryHotkey: (hotkey: string, slot: HotkeySlot) => boolean
 }
 
-export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
+export function MacrosTab({ settings, update, updateMany, tryHotkey }: Props): JSX.Element {
   const [presets, setPresets] = useState<RegexPreset[]>([])
   useEffect(() => {
     window.api.getRegexPresets().then(setPresets)
@@ -81,13 +88,20 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
   }, [])
   // Installed plugin manifests, used to render the plugin's display name in the
   // hotkey dropdown rather than the hotkey-action label.
-  const [installedPlugins, setInstalledPlugins] = useState<Array<{ id: string; name: string }>>([])
+  const [installedPlugins, setInstalledPlugins] = useState<Array<{ id: string; name: string; iconUrl?: string }>>([])
   useEffect(() => {
     void window.api
       .listInstalledPlugins()
-      .then((list) => setInstalledPlugins(list.map((p) => ({ id: p.manifest.id, name: p.manifest.name }))))
+      .then((list) =>
+        setInstalledPlugins(
+          list.map((p) => ({ id: p.manifest.id, name: p.manifest.name, iconUrl: p.manifest.iconUrl })),
+        ),
+      )
   }, [])
   const getPluginName = (id: string): string => installedPlugins.find((p) => p.id === id)?.name ?? id
+  // The manifest half of pluginSliceIcon. Already in hand from the fetch above,
+  // which previously threw everything but the name away.
+  const getPluginManifestIcon = (id: string): string | undefined => installedPlugins.find((p) => p.id === id)?.iconUrl
   const isPluginAction = (a: string): boolean => a.startsWith('plugin:') || a.startsWith('plugin-overlay:')
   const actionPluginId = (a: string): string =>
     a.startsWith('plugin-overlay:') ? a.slice('plugin-overlay:'.length) : a.slice('plugin:'.length)
@@ -104,10 +118,13 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
 
   // Build filtered app macro entries, retaining original indices for callbacks.
   // Plugin-prefixed actions are surfaced in their own Plugin Hotkeys section
-  // below; the Scalpel Macros section only renders built-in app macros.
+  // below; the Scalpel Macros section only renders built-in app macros. The
+  // radial menu's own binding lives in appMacros too but is owned by the Radial
+  // Menu section, so it never gets a generic action-dropdown row here.
   const visibleAppMacros = (settings.appMacros ?? [])
     .map((macro, i) => ({ macro, i }))
     .filter(({ macro }) => !isPluginAction(macro.action))
+    .filter(({ macro }) => macro.action !== RADIAL_MACRO_ACTION)
     .filter(({ macro }) => scopeAppliesTo(appMacroEffectiveScope(macro), currentGame))
 
   // Plugin-hotkey rows: entries in appMacros whose action begins with 'plugin:' or 'plugin-overlay:'.
@@ -119,6 +136,21 @@ export function MacrosTab({ settings, update, tryHotkey }: Props): JSX.Element {
 
   return (
     <>
+      {/* Radial Menu */}
+      <div className="settings-section-title mt-3">{m.settings_radial_title()}</div>
+      <section>
+        <RadialMenuSection
+          settings={settings}
+          update={update}
+          updateMany={updateMany}
+          tryHotkey={tryHotkey}
+          presetOptions={presetOptions}
+          pluginHotkeys={pluginHotkeys}
+          getPluginName={getPluginName}
+          getPluginManifestIcon={getPluginManifestIcon}
+        />
+      </section>
+
       {/* Chat Macros */}
       <div className="settings-section-title mt-3">{m.settings_mac_chat_macros()}</div>
       <section>

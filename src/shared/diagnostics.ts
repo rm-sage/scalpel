@@ -12,6 +12,7 @@ export type DiagnosticSource =
   | 'plugin-overlay'
   | 'plugin-annotation-overlay'
   | 'regex-remote'
+  | 'radial-menu'
 
 export interface SerializedDiagnosticError {
   name?: string

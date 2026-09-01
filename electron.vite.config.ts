@@ -13,6 +13,16 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     resolve: { alias: resolveAlias },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // utilityProcess child hosting the SMTC natives; forked by
+          // handlers/plugin-media.ts (WinRT must stay off the main thread).
+          'media-host': resolve(__dirname, 'src/main/handlers/media-host.ts'),
+        },
+      },
+    },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
@@ -37,6 +47,7 @@ export default defineConfig({
           pinnedZone: resolve(__dirname, 'src/renderer/pinned-zone.html'),
           pluginOverlay: resolve(__dirname, 'src/renderer/plugin-overlay.html'),
           pluginAnnotationOverlay: resolve(__dirname, 'src/renderer/plugin-annotation-overlay.html'),
+          radialMenu: resolve(__dirname, 'src/renderer/radial-menu.html'),
         },
       },
     },

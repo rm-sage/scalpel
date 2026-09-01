@@ -46,9 +46,11 @@ import {
   setAppMacroHandler,
   suspendHotkeys,
   resumeHotkeys,
+  suspendHotkeysForFocusAway,
   setStashScrollEnabled,
   setStashScrollModifier,
   pasteRegexToPoESearch,
+  sendChatCommand,
 } from './hotkeys'
 import { refreshLeagues } from './trade/leagues'
 import { resolvePresetRegex } from './trade/beast-preset'
@@ -71,17 +73,21 @@ import { flushAll as flushPluginStorage } from './plugins/storage'
 import { registerCheatSheetProtocol } from './cheat-sheet-protocol'
 import { registerScalpelInternalProtocol, registerScalpelInternalSchemePrivileges } from './plugins/protocol'
 import { registerScalpelPluginProtocol, registerScalpelPluginSchemePrivileges } from './plugins/plugin-protocol'
+import { getRegisteredPluginTabs } from './plugins/tab-registry'
+import { getInstalledPlugins } from './plugins/manager'
 import {
   registerCheatSheetsOverlay,
   applyCheatSheetHotkeys,
   setCheatSheetsBeforeShow,
   getCheatSheetsOverlay,
+  toggleCheatSheets,
 } from './cheat-sheets'
 import { registerWhiteboardOverlay, toggleWhiteboard } from './whiteboard'
 import { togglePluginOverlay } from './plugin-overlay'
 import { registerPinnedZoneOverlay, applyPinnedZoneEnabled } from './pinned-zone'
 import { getOverlayAnchor, setMainOverlayGetter, setOnLeaveScalpel, subscribeToPoeMoves } from './windowing'
 import { initAppMacrosRefresh, withPluginHotkeys } from './app-macros'
+import { runRadialPluginIconMigration, runRadialScaleMigration } from './radial-scale-migration'
 import { runRegexMacroMigration } from './regex-macro-migration'
 import {
   applyRegexPreset,
@@ -91,6 +97,18 @@ import {
   toggleRegexRemote,
 } from './regex-remote'
 import { detectPanelStateOnce, getCurrentPanelState } from './panel-detection'
+import {
+  registerRadialMenuOverlay,
+  toggleRadialMenu,
+  fireRadialSlice,
+  cancelRadialMenu,
+  getPendingRadialState,
+} from './radial-menu'
+import { captureRadialBackdrop } from './radial-backdrop'
+import { warpCursorTo } from './cursor-warp'
+import { getGameCursorPosition } from './screen-capture/cursor'
+import { pluginSliceIcon, RADIAL_MACRO_ACTION, type RadialMenuSettings } from '@shared/contracts/radial'
+import { IPC_CHANNELS } from '@shared/contracts/ipc'
 import type { AppSettings, CheatSheetsSettings, GameVariant, LegacyAppSettings, RegexPreset } from '@shared/types'
 import { initProfileStore } from './profiles/store'
 import {
@@ -171,6 +189,7 @@ const store = new Store<AppSettings>({
     startInTray: true,
     pluginAutoUpdate: false,
     appWindowPosition: undefined,
+    radialMenu: { slices: [] },
     [ACTIVE_PROFILE_ID_KEY]: '',
     [LAST_PROFILE_ID_POE1_KEY]: '',
     [LAST_PROFILE_ID_POE2_KEY]: '',
@@ -191,6 +210,7 @@ if (store.get('adaptiveDefaultsMode') === undefined) store.set('adaptiveDefaults
 if (store.get('startInTray') === undefined) store.set('startInTray', true)
 if (store.get('pluginAutoUpdate') === undefined) store.set('pluginAutoUpdate', false)
 if (store.get('locale') === undefined) store.set('locale', 'en')
+if (store.get('radialMenu') === undefined) store.set('radialMenu', { slices: [] })
 
 // tradeDefaultToBase (boolean) became tradeAffixesPrechecked (three-way). Gate on the OLD
 // key's presence, not on the new one being undefined: the new key is in `defaults`, so
@@ -271,6 +291,12 @@ if (!IS_E2E)
   })
 
 runRegexMacroMigration(store)
+// Before any renderer reads settings: the ring's base geometry absorbed a legacy
+// 0.7 scale, so a stored scale has to be un-multiplied or the menu halves.
+runRadialScaleMigration(store)
+// Same window, same reason: the ring's plugin-art precedence flipped, so stored
+// plugin slices have to be re-pointed before anything renders them.
+runRadialPluginIconMigration(store)
 setEvaluationStore(store)
 initLearning(store, store.get('poeVersion'))
 initAppMacrosRefresh(() => store.get('appMacros') ?? [])
@@ -300,7 +326,7 @@ app.whenReady().then(() => {
   if (!IS_E2E)
     getOverlayAttachStrategy(store).createInitialOverlay((store.get(PROFILE_VERSION_KEY) as GameVariant) ?? 1)
   setMainOverlayGetter(getOverlayWindow)
-  if (!IS_E2E) setOnLeaveScalpel(() => suspendHotkeys())
+  if (!IS_E2E) setOnLeaveScalpel(() => suspendHotkeysForFocusAway())
   createAppWindow(store)
   if (!IS_E2E) createTray({ store, showAppWindow })
 
@@ -386,7 +412,11 @@ app.whenReady().then(() => {
     } catch {}
   })
 
-  setAppMacroHandler((action, tag, presetId) => {
+  const dispatchAppMacro = (action: string, tag?: string, presetId?: string): void => {
+    if (action === RADIAL_MACRO_ACTION) {
+      toggleRadialMenu()
+      return
+    }
     if (action === 'pasteRegex') {
       if (currentRegex) void pasteRegexToPoESearch(currentRegex)
       return
@@ -463,7 +493,8 @@ app.whenReady().then(() => {
       overlayWin.webContents.send('open-view', view)
       showOverlay()
     }
-  })
+  }
+  setAppMacroHandler(dispatchAppMacro)
   setAppMacros(withPluginHotkeys((store.get('appMacros') as AppSettings['appMacros']) ?? []))
 
   const patchCheatSheets = (patch: Partial<CheatSheetsSettings>): void => {
@@ -488,6 +519,43 @@ app.whenReady().then(() => {
     getTargetBounds: () => OverlayController.targetBounds,
     getPanelState: () => getCurrentPanelState(),
   })
+  registerRadialMenuOverlay({
+    getSlices: () => (store.get('radialMenu') as RadialMenuSettings | undefined)?.slices ?? [],
+    getScale: () => (store.get('radialMenu') as RadialMenuSettings | undefined)?.scale,
+    isDev: () => store.get('developerMode') === true,
+    getGameCursor: getGameCursorPosition,
+    getScreenCursor: () => screen.getCursorScreenPoint(),
+    // Tab icon, else the manifest's - see pluginSliceIcon. Resolved at open
+    // rather than stored, so an install or an in-place update is picked up
+    // without anything having to invalidate a cache.
+    getPluginIcon: (pluginId) =>
+      pluginSliceIcon(
+        getRegisteredPluginTabs().get(pluginId)?.icon,
+        getInstalledPlugins().find((p) => p.manifest.id === pluginId)?.manifest.iconUrl,
+      ),
+    captureBackdrop: captureRadialBackdrop,
+    warpTo: warpCursorTo,
+    focusGame: () => {
+      try {
+        OverlayController.focusTarget()
+      } catch {}
+    },
+    defer: (fn) => setTimeout(fn, 50),
+    fire: {
+      filter: () => void onHotkeyFired(),
+      pricecheck: () => void onPriceCheckFired(),
+      appmacro: (action, presetId) => dispatchAppMacro(action, undefined, presetId),
+      // Same fire-and-forget contract as the chat hotkey path: a paste that
+      // never got focus (or the clipboard) rejects, and that is a diagnostic.
+      chat: (command, autoSubmit) => {
+        sendChatCommand(command, autoSubmit).catch((e) => recordMainDiagnostic('chat-command', e))
+      },
+      cheatsheet: (categoryId) => toggleCheatSheets(categoryId),
+    },
+  })
+  ipcMain.on(IPC_CHANNELS.RADIAL.FIRE, (_event, sliceId: string) => fireRadialSlice(String(sliceId)))
+  ipcMain.on(IPC_CHANNELS.RADIAL.CANCEL, () => cancelRadialMenu())
+  ipcMain.handle(IPC_CHANNELS.RADIAL.PENDING, () => getPendingRadialState())
   registerPinnedZoneOverlay({
     storedAnchor: () => getProfileBackedSetting(store, 'cheatSheets')?.pinnedAnchor,
     onAnchorChanged: (anchor) => patchCheatSheets({ pinnedAnchor: anchor }),

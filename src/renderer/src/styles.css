@@ -388,6 +388,75 @@ input[type='number']::-webkit-outer-spin-button {
   animation: wb-toolbar-enter 380ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+/* Radial menu entrance: the ring blooms out of the point the menu opened at.
+ * Same overshooting spring as wb-pop-in but quicker - the menu is modal, the
+ * hand is already moving, and anything slower feels like lag rather than
+ * polish. The host sets `transform-origin` inline to the clamped centre so the
+ * bloom starts under the cursor, not at the middle of the window. */
+@keyframes radial-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.radial-pop {
+  animation: radial-pop 180ms cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+/* The blurred game capture behind the ring arrives a beat after the menu is
+ * already up, so it must not pop in. Short enough that it still feels like part
+ * of the open rather than a second event. */
+@keyframes radial-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.radial-backdrop {
+  animation: radial-backdrop-in 120ms ease-out;
+}
+
+/* Radial slice glyph colour. Deliberately a stylesheet rule rather than an
+ * inline style: the ring's rAF loop toggles `data-arrived` on the hovered
+ * icon the frame the goo puck actually reaches it, so the glyph goes
+ * light-on-accent when there IS accent under it and not the moment the sector
+ * is hovered. `--radial-on-accent` is handed in inline by the component (the
+ * palette has no on-accent token, so it is computed from the resolved accent);
+ * white is the right fallback for the dark accents the presets ship. The
+ * cross-fade comes from the wrapper's own `transition-all`. */
+.radial-icon {
+  color: var(--text);
+}
+.radial-icon[data-arrived='true'] {
+  color: var(--radial-on-accent, #ffffff);
+}
+
+/* The bubble's close affordance. Present only while a click on the centre would
+ * actually cancel, so it appears at rest and inside the deadzone and goes the
+ * instant a slice is selected.
+ *
+ * Faster out than in, and the asymmetry is why there are two durations rather
+ * than one: the duration that applies is whichever rule matches the state being
+ * transitioned TO. Fading in it is this rule's 120ms, which lets the mark arrive
+ * gently; fading out it is the hidden rule's 80ms, because once the user has
+ * committed to a slice the X is stale information and should not linger over the
+ * gesture. Held under full opacity at rest so it reads as a hint on the bubble
+ * rather than as a control competing with the glyphs. */
+.radial-close {
+  opacity: 0.8;
+  transition: opacity 120ms ease-out;
+}
+.radial-close[data-visible='false'] {
+  opacity: 0;
+  transition-duration: 80ms;
+}
+
 /* Ink-picker cropped 3D icon: sits low in the slot, rises on hover/active.
  * Variables let the host element configure both bottom positions. */
 .wb-ink-slot .wb-ink-icon {

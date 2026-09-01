@@ -79,6 +79,12 @@ vi.mock('./pinned-zone', () => ({
   getPinnedZoneOverlay: vi.fn(() => null),
 }))
 
+// Not just isolation: radial-menu reaches ./windowing, which touches app.on at
+// module scope, and this suite runs without an Electron app object.
+vi.mock('./radial-menu', () => ({
+  getRadialMenuOverlay: vi.fn(() => null),
+}))
+
 vi.mock('./trade/prices', () => ({
   refreshPrices: vi.fn(),
 }))
@@ -381,6 +387,17 @@ describe('settings-write side effects', () => {
       filterPath: 'a.filter',
     })
     expect(send).not.toHaveBeenCalledWith('league-updated', expect.any(String))
+  })
+
+  it('reaches the radial window, which never closes and so never re-reads the theme', async () => {
+    const { getRadialMenuOverlay } = await import('./radial-menu')
+    const { broadcastSettingUpdate } = await import('./settings-write')
+    const send = vi.fn()
+    vi.mocked(getRadialMenuOverlay).mockReturnValue({ getWindow: () => ({ webContents: { send } }) } as never)
+
+    broadcastSettingUpdate(null, 'themeId', 'ember')
+
+    expect(send).toHaveBeenCalledWith('setting-updated', 'themeId', 'ember')
   })
 })
 

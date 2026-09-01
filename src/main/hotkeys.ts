@@ -129,7 +129,7 @@ function fireEscape(): void {
  *  Safe to call from anywhere - it's a no-op when the desired state already
  *  matches the registered state. */
 function syncEscapeShortcut(): void {
-  const desired = !!onEscape && overlayVisibleForEscape && OverlayController.targetHasFocus && suspendDepth === 0
+  const desired = !!onEscape && overlayVisibleForEscape && OverlayController.targetHasFocus && !hotkeysAreSuspended()
   if (desired === escapeShortcutRegistered) return
   if (desired) {
     try {
@@ -340,54 +340,98 @@ export function startHotkeyListener(handler: () => void): void {
   }
 }
 
-// Refcounted so multiple independent reasons to suspend (hotkey recorder open
-// AND user typing in an overlay input, etc.) compose without one popping the
-// other's suspension. Each suspend pairs with one resume.
+// Two independent suspend reasons, composed so one can't strand the other:
 //
-// All set*() mutators below MUST treat `suspendDepth > 0` as "store-only, skip
-// OS-side globalShortcut.register/unregister". Boot starts with all shortcuts
-// suspended until PoE actually gains focus (see index.ts), and the user can
-// edit a hotkey via settings while PoE is unfocused. Without the gate, those
-// set*() calls hijack the accelerator system-wide (e.g. F5 stops refreshing
-// browsers) even though we're nominally suspended. See issues #18, #21.
+// 1. `focusAway` — idempotent. PoE blur AND secondary-overlay "left Scalpel"
+//    both mean the same thing ("gameplay context lost"). Screenshot tools and
+//    alt-tab from a focused tool overlay used to call suspendHotkeys() twice
+//    against a single PoE-focus resume, leaving suspendDepth stuck > 0 and
+//    tool/plugin hotkeys dead until something forced an unpaired resume.
+//
+// 2. `suspendDepth` — refcounted. Hotkey recorder open AND user typing in an
+//    overlay input compose without one popping the other's suspension.
+//
+// All set*() mutators below MUST treat `hotkeysAreSuspended()` as "store-only,
+// skip OS-side globalShortcut.register/unregister". Boot starts focusAway until
+// PoE gains focus (see lifecycle.ts), and the user can edit a hotkey via
+// settings while PoE is unfocused. Without the gate, those set*() calls hijack
+// the accelerator system-wide (e.g. F5 stops refreshing browsers) even though
+// we're nominally suspended. See issues #18, #21.
+let focusAway = false
 let suspendDepth = 0
+
+function hotkeysAreSuspended(): boolean {
+  return focusAway || suspendDepth > 0
+}
+
+function disarmHotkeys(): void {
+  globalShortcut.unregisterAll()
+  // globalShortcut.unregisterAll() above already wiped Escape's OS-side
+  // registration - just reflect that in our own flag. No sync needed: the
+  // desired state is false while suspended either way.
+  escapeShortcutRegistered = false
+  // The uiohook action bindings fire kernel-side regardless of globalShortcut,
+  // so clear them too or an international-key hotkey would still fire while the
+  // recorder is open / the user is typing in an overlay input. rearmHotkeys
+  // rebuilds them via the set*() calls.
+  clearActionBindings()
+  registeredChatAccelerators = []
+  appMacroAccelerators = []
+}
+
+function rearmHotkeys(reason: string): void {
+  if (currentAccelerator) setHotkey(currentAccelerator)
+  if (priceCheckAccelerator) setPriceCheckHotkey(priceCheckAccelerator)
+  refreshScopedHotkeys(reason)
+  setSecondaryOverlayHotkeys(secondaryOverlayHotkeys)
+  syncEscapeShortcut()
+}
+
+/** Apply a suspend-state transition: disarm on the edge into suspended, rearm
+ *  on the edge out. No-op when the effective state did not change. */
+function applySuspendTransition(wasSuspended: boolean, rearmReason: string): void {
+  const nowSuspended = hotkeysAreSuspended()
+  if (nowSuspended === wasSuspended) return
+  if (nowSuspended) disarmHotkeys()
+  else rearmHotkeys(rearmReason)
+}
 
 /** Authorize gameplay hotkeys only while focus remains within the attached game
  *  or one of Scalpel's gameplay overlays. Registration follows the same focus
  *  lifecycle, and this dispatch-time check closes uIOhook and transition races. */
 function hotkeyContextIsActive(): boolean {
-  return suspendDepth === 0 && (OverlayController.targetHasFocus || isAnyScalpelBrowserWindowFocused())
+  return !hotkeysAreSuspended() && (OverlayController.targetHasFocus || isAnyScalpelBrowserWindowFocused())
+}
+
+/** Idempotent: gameplay focus left PoE/Scalpel (PoE blur, overlay leave, boot).
+ *  Safe to call from every leave path in the same alt-tab/screenshot moment. */
+export function suspendHotkeysForFocusAway(): void {
+  const was = hotkeysAreSuspended()
+  focusAway = true
+  applySuspendTransition(was, 'focus-return')
+}
+
+/** Idempotent: gameplay focus returned to PoE. Clears focusAway even if several
+ *  leave paths had marked it; does not touch the recorder/typing refcount. */
+export function resumeHotkeysForFocusReturn(): void {
+  const was = hotkeysAreSuspended()
+  focusAway = false
+  applySuspendTransition(was, 'focus-return')
 }
 
 /** Temporarily unregister all global shortcuts (recorder, input typing, etc.). */
 export function suspendHotkeys(): void {
+  const was = hotkeysAreSuspended()
   suspendDepth++
-  if (suspendDepth === 1) {
-    globalShortcut.unregisterAll()
-    // globalShortcut.unregisterAll() above already wiped Escape's OS-side
-    // registration - just reflect that in our own flag. No sync needed: the
-    // desired state is false while suspended either way.
-    escapeShortcutRegistered = false
-    // The uiohook action bindings fire kernel-side regardless of globalShortcut,
-    // so clear them too or an international-key hotkey would still fire while the
-    // recorder is open / the user is typing in an overlay input. resumeHotkeys
-    // rebuilds them via the set*() calls.
-    clearActionBindings()
-    registeredChatAccelerators = []
-    appMacroAccelerators = []
-  }
+  applySuspendTransition(was, 'resume')
 }
 
 /** Re-register all global shortcuts when the last suspender resumes. */
 export function resumeHotkeys(): void {
   if (suspendDepth === 0) return
+  const was = hotkeysAreSuspended()
   suspendDepth--
-  if (suspendDepth > 0) return
-  if (currentAccelerator) setHotkey(currentAccelerator)
-  if (priceCheckAccelerator) setPriceCheckHotkey(priceCheckAccelerator)
-  refreshScopedHotkeys('resume')
-  setSecondaryOverlayHotkeys(secondaryOverlayHotkeys)
-  syncEscapeShortcut()
+  applySuspendTransition(was, 'resume')
 }
 
 /** Update the active hotkey. Registered with both globalShortcut (swallows the key
@@ -395,7 +439,7 @@ export function resumeHotkeys(): void {
  *  that still fires when PoE blocks globalShortcut from the non-attached game).
  *  fireTrigger dedupes the two paths. */
 export function setHotkey(accelerator: string): void {
-  if (currentAccelerator && suspendDepth === 0 && isElectronRegisterable(currentAccelerator)) {
+  if (currentAccelerator && !hotkeysAreSuspended() && isElectronRegisterable(currentAccelerator)) {
     try {
       globalShortcut.unregister(currentAccelerator)
     } catch {}
@@ -404,7 +448,7 @@ export function setHotkey(accelerator: string): void {
   // Combo is consumed by the uIOhook fallback regardless of globalShortcut
   // state, so update it even when suspended.
   triggerCombo = parseAccelerator(accelerator)
-  if (suspendDepth > 0) return
+  if (hotkeysAreSuspended()) return
   // International/OEM keys can't be bound with globalShortcut; the uIOhook combo
   // above fires them. Skip the register so it doesn't log a spurious failure.
   if (!isElectronRegisterable(accelerator)) return
@@ -416,14 +460,14 @@ export function setHotkey(accelerator: string): void {
 }
 
 export function setPriceCheckHotkey(accelerator: string): void {
-  if (priceCheckAccelerator && suspendDepth === 0 && isElectronRegisterable(priceCheckAccelerator)) {
+  if (priceCheckAccelerator && !hotkeysAreSuspended() && isElectronRegisterable(priceCheckAccelerator)) {
     try {
       globalShortcut.unregister(priceCheckAccelerator)
     } catch {}
   }
   priceCheckAccelerator = accelerator
   priceCheckCombo = parseAccelerator(accelerator)
-  if (suspendDepth > 0) return
+  if (hotkeysAreSuspended()) return
   if (!isElectronRegisterable(accelerator)) return
   try {
     globalShortcut.register(accelerator, () => firePriceCheck())
@@ -450,7 +494,7 @@ function recordScopedRegistrationFailure(category: ScopedHotkeyCategory, acceler
 }
 
 function clearScopedHotkeyRegistrations(): void {
-  if (suspendDepth === 0) {
+  if (!hotkeysAreSuspended()) {
     for (const accelerator of [...registeredChatAccelerators, ...appMacroAccelerators]) {
       try {
         globalShortcut.unregister(accelerator)
@@ -473,12 +517,13 @@ export function refreshScopedHotkeys(reason?: string): void {
   const version = getPoeVersion()
   applicableChatCommandCount = 0
   applicableAppMacroCount = 0
+  const suspended = hotkeysAreSuspended()
 
   for (const c of configuredChatCommands) {
     if (!c.hotkey || !c.command) continue
     if (!scopeAppliesTo(chatCommandEffectiveScope(c), version)) continue
     applicableChatCommandCount++
-    if (suspendDepth > 0) continue
+    if (suspended) continue
     const autoSubmit = c.autoSubmit !== false
     const combo = parseAccelerator(c.hotkey)
     // International/OEM keys can't go through globalShortcut; match them via uiohook.
@@ -503,7 +548,7 @@ export function refreshScopedHotkeys(reason?: string): void {
     if (!m.hotkey || !m.action) continue
     if (!scopeAppliesTo(appMacroEffectiveScope(m), version)) continue
     applicableAppMacroCount++
-    if (suspendDepth > 0) continue
+    if (suspended) continue
     const combo = parseAccelerator(m.hotkey)
     // International/OEM keys can't go through globalShortcut; match them via uiohook.
     if (!isElectronRegisterable(m.hotkey)) {
@@ -525,7 +570,7 @@ export function refreshScopedHotkeys(reason?: string): void {
 
   if (reason) {
     recordMainBreadcrumb(
-      `scoped hotkeys refreshed reason=${reason} game=poe${version} suspended=${suspendDepth > 0} ` +
+      `scoped hotkeys refreshed reason=${reason} game=poe${version} suspended=${suspended} ` +
         `chat=${configuredChatCommands.length}/${applicableChatCommandCount}/${registeredChatAccelerators.length}/${chatActionBindings.length} ` +
         `app=${configuredAppMacros.length}/${applicableAppMacroCount}/${appMacroAccelerators.length}/${macroActionBindings.length} ` +
         `failed=${failedScopedRegistrations.length}`,
@@ -548,7 +593,7 @@ export function setAppMacroHandler(handler: (action: string, tag?: string, prese
  *  belongs to. Re-applied automatically by resumeHotkeys. */
 export function setSecondaryOverlayHotkeys(hotkeys: OverlayHotkey[]): void {
   secondaryOverlayHotkeys = hotkeys
-  if (suspendDepth === 0) {
+  if (!hotkeysAreSuspended()) {
     for (const acc of registeredOverlayAccelerators) {
       try {
         globalShortcut.unregister(acc)
@@ -557,7 +602,7 @@ export function setSecondaryOverlayHotkeys(hotkeys: OverlayHotkey[]): void {
   }
   registeredOverlayAccelerators = []
   overlayActionBindings = []
-  if (suspendDepth > 0) return
+  if (hotkeysAreSuspended()) return
   for (const { accelerator, handler } of hotkeys) {
     if (!accelerator) continue
     const combo = parseAccelerator(accelerator)
@@ -894,6 +939,73 @@ export async function sendItemFilterCommand(filterName: string, currentFilter?: 
 
 // ─── Ctrl+C sender ───────────────────────────────────────────────────────────
 
+/** True when this accelerator's non-modifier key is C -- the key the copy
+ *  injection taps -- and it goes through globalShortcut (uiohook matchers only
+ *  observe; they can't consume). */
+function acceleratorTapsC(accelerator: string): boolean {
+  return isElectronRegisterable(accelerator) && parseAccelerator(accelerator)?.keycode === UiohookKey.C
+}
+
+/**
+ * Unregister every OS-registered hotkey whose key is C for the duration of a
+ * copy injection. Returns a restore callback, or null when nothing was held.
+ *
+ * The user may bind Ctrl+C -- PoE's own copy key -- as a hotkey; the collision
+ * guard warns but allows it (POE_PROTECTED_HOTKEYS). globalShortcut backs onto
+ * RegisterHotKey, which consumes matching keystrokes system-wide *including
+ * injected ones*, so with such a binding the injected copy fired the user's
+ * hotkey (then dropped by the `injecting` guard) and never reached the game:
+ * every capture failed (#601). 1.0.1 escaped by accident -- it always injected
+ * Ctrl+Alt+C, which a Ctrl+C registration doesn't match. Released combos are
+ * restored through each slot's canonical (re)registration path.
+ */
+function releaseCKeyedRegistrationsForInjection(): (() => void) | null {
+  if (hotkeysAreSuspended()) return null // nothing is OS-registered while suspended
+  const restores: Array<() => void> = []
+
+  // Restores re-read the live slot state rather than the released accelerator,
+  // so a hotkey changed mid-injection isn't clobbered by its old value.
+  if (currentAccelerator && acceleratorTapsC(currentAccelerator)) {
+    try {
+      globalShortcut.unregister(currentAccelerator)
+    } catch {}
+    restores.push(() => {
+      if (currentAccelerator) setHotkey(currentAccelerator)
+    })
+  }
+  if (priceCheckAccelerator && acceleratorTapsC(priceCheckAccelerator)) {
+    try {
+      globalShortcut.unregister(priceCheckAccelerator)
+    } catch {}
+    restores.push(() => {
+      if (priceCheckAccelerator) setPriceCheckHotkey(priceCheckAccelerator)
+    })
+  }
+  const scoped = [...registeredChatAccelerators, ...appMacroAccelerators].filter(acceleratorTapsC)
+  if (scoped.length > 0) {
+    for (const accelerator of scoped) {
+      try {
+        globalShortcut.unregister(accelerator)
+      } catch {}
+    }
+    restores.push(() => refreshScopedHotkeys('copy-injection'))
+  }
+  const overlayScoped = registeredOverlayAccelerators.filter(acceleratorTapsC)
+  if (overlayScoped.length > 0) {
+    for (const accelerator of overlayScoped) {
+      try {
+        globalShortcut.unregister(accelerator)
+      } catch {}
+    }
+    restores.push(() => setSecondaryOverlayHotkeys(secondaryOverlayHotkeys))
+  }
+
+  if (restores.length === 0) return null
+  return () => {
+    for (const restore of restores) restore()
+  }
+}
+
 /**
  * Send Ctrl+C to PoE via uiohook (OS-level SendInput).
  *
@@ -904,53 +1016,62 @@ export async function sendItemFilterCommand(filterName: string, currentFilter?: 
  *
  * A user who *holds* Alt as part of their own hotkey is left alone either way:
  * the game seeing Ctrl+Alt+C copies the same advanced text, so there is nothing
- * to fight.
+ * to fight. A user whose hotkey *is* a C combo is handled by releasing that
+ * registration for the injection window -- see
+ * releaseCKeyedRegistrationsForInjection (#601).
  */
 export async function sendCtrlCToPoE(opts?: { withAlt?: boolean }): Promise<void> {
   injecting = true
+  const restoreCKeyedRegistrations = releaseCKeyedRegistrationsForInjection()
 
   // Instead of releasing all user modifiers (racy to restore), piggyback on
   // whatever the user already holds and only add what's missing.
   const needCtrl = !heldModifiers.ctrl
   const needAlt = opts?.withAlt === true && !heldModifiers.alt
 
-  // Temporarily release Shift if held. PoE2 ignores the copy when Shift is still
-  // down at the moment C is tapped -- most visibly on equipped items, which
-  // silently fail and drop through to the slow focus-retry fallback (issue #338).
-  // The release must land *before* the tap, and PoE2 drops modifier events that
-  // fire too close together (same fragility as the post-tap hold below, ee2 issue
-  // #124), so a synchronous Shift-up immediately followed by the tap doesn't take.
-  // Give the Shift-up ~30ms to register first. Only paid when Shift is held.
-  const heldShift = heldModifiers.shift
-  if (heldShift) {
-    uIOhook.keyToggle(UiohookKey.Shift, 'up')
-    uIOhook.keyToggle(UiohookKey.ShiftRight, 'up')
-    await new Promise((r) => setTimeout(r, 30))
+  try {
+    // Temporarily release Shift if held. PoE2 ignores the copy when Shift is still
+    // down at the moment C is tapped -- most visibly on equipped items, which
+    // silently fail and drop through to the slow focus-retry fallback (issue #338).
+    // The release must land *before* the tap, and PoE2 drops modifier events that
+    // fire too close together (same fragility as the post-tap hold below, ee2 issue
+    // #124), so a synchronous Shift-up immediately followed by the tap doesn't take.
+    // Give the Shift-up ~30ms to register first. Only paid when Shift is held.
+    const heldShift = heldModifiers.shift
+    if (heldShift) {
+      uIOhook.keyToggle(UiohookKey.Shift, 'up')
+      uIOhook.keyToggle(UiohookKey.ShiftRight, 'up')
+      await new Promise((r) => setTimeout(r, 30))
+    }
+
+    if (needCtrl) uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
+    if (needAlt) uIOhook.keyToggle(UiohookKey.Alt, 'down')
+    uIOhook.keyTap(UiohookKey.C)
+
+    // PoE2 drops modifier keyup events when they fire too soon after the C tap,
+    // leaving PoE's view of held modifiers out of sync -- on the Alt path that
+    // showed up as the in-game advanced tooltip stuck "Alt-pinned" on the item
+    // (most visible when the overlay closes via click-outside, where no focus
+    // round-trip resyncs it). Hold the modifiers ~10ms before releasing so PoE
+    // registers them in order. Same root cause and fix as Exiled-Exchange-2
+    // issue #124.
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        if (needAlt) uIOhook.keyToggle(UiohookKey.Alt, 'up')
+        if (needCtrl) uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
+        // Re-press Shift immediately if it was held
+        if (heldShift) uIOhook.keyToggle(heldShift, 'down')
+      }, 10)
+      setTimeout(() => {
+        injecting = false
+        resolve()
+      }, 100)
+    })
+  } finally {
+    // Re-register only after the injected tap has cleared the OS input queue --
+    // restoring earlier would let our own registration swallow it (#601).
+    restoreCKeyedRegistrations?.()
   }
-
-  if (needCtrl) uIOhook.keyToggle(UiohookKey.Ctrl, 'down')
-  if (needAlt) uIOhook.keyToggle(UiohookKey.Alt, 'down')
-  uIOhook.keyTap(UiohookKey.C)
-
-  // PoE2 drops modifier keyup events when they fire too soon after the C tap,
-  // leaving PoE's view of held modifiers out of sync -- on the Alt path that
-  // showed up as the in-game advanced tooltip stuck "Alt-pinned" on the item
-  // (most visible when the overlay closes via click-outside, where no focus
-  // round-trip resyncs it). Hold the modifiers ~10ms before releasing so PoE
-  // registers them in order. Same root cause and fix as Exiled-Exchange-2
-  // issue #124.
-  await new Promise<void>((resolve) => {
-    setTimeout(() => {
-      if (needAlt) uIOhook.keyToggle(UiohookKey.Alt, 'up')
-      if (needCtrl) uIOhook.keyToggle(UiohookKey.Ctrl, 'up')
-      // Re-press Shift immediately if it was held
-      if (heldShift) uIOhook.keyToggle(heldShift, 'down')
-    }, 10)
-    setTimeout(() => {
-      injecting = false
-      resolve()
-    }, 100)
-  })
 }
 
 function getHotkeyDiagnostics(): Record<string, unknown> {
@@ -958,7 +1079,9 @@ function getHotkeyDiagnostics(): Record<string, unknown> {
     game: getPoeVersion(),
     hookStarted,
     hookSuspended,
+    focusAway,
     suspendDepth,
+    hotkeysSuspended: hotkeysAreSuspended(),
     triggerHotkeyConfigured: currentAccelerator !== null,
     priceCheckHotkeyConfigured: priceCheckAccelerator !== null,
     chatCommandConfiguredCount: configuredChatCommands.length,
