@@ -55,5 +55,20 @@ export type { InstallManifest, Manifest, AuthResult } from './contracts/updates'
 
 export type { HistoryEntry, FilterChange, FilterVersion } from './contracts/history'
 
+export type {
+  RadialAction,
+  RadialBackdrop,
+  RadialBackdropEvent,
+  RadialBackdropFailure,
+  RadialBackdropImage,
+  RadialBackdropMiss,
+  RadialSlice,
+  RadialMenuSettings,
+  RadialOpenPayload,
+  RadialPendingState,
+} from './contracts/radial'
+
+export { RADIAL_MAX_SLICES, RADIAL_MACRO_ACTION } from './contracts/radial'
+
 export type { MacroScope }
 export type { ThemePalette }

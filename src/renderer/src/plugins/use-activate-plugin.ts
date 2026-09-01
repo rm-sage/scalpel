@@ -31,6 +31,8 @@ export function useActivatePlugin(pluginId: string): ActivatedPlugin {
       const poeVersion: 1 | 2 = (state?.poeVersion as 1 | 2) ?? 1
       const settings = await window.api.getSettings().catch(() => null)
       let league = settings?.activeProfile?.league ?? ''
+      const seededZone = await window.api.getCurrentZone().catch(() => null)
+      if (seededZone) latestZone = seededZone
       const mod = (await importPluginModule(entry.entryUrl)) as { default?: PluginActivate }
       if (cancelled || typeof mod.default !== 'function') return
       const capHolder: { value: ActivatedPlugin['captured'] } = { value: null }
@@ -100,6 +102,13 @@ export function useActivatePlugin(pluginId: string): ActivatedPlugin {
           getPrices: (opts) => window.api.pricesGet(opts),
           refresh: () => window.api.pricesRefresh(),
           onChange: (handler) => window.api.onPricesChange(handler),
+        },
+        media: {
+          getSession: () => window.api.pluginMediaGetSession(),
+          onChange: (handler) => window.api.onMediaChange(handler),
+          playPause: () => window.api.pluginMediaCommand('play-pause'),
+          next: () => window.api.pluginMediaCommand('next'),
+          previous: () => window.api.pluginMediaCommand('previous'),
         },
         openExternal: (url) => window.api.openExternal(url),
         log: (...args: unknown[]) => {

@@ -7,11 +7,10 @@ import { getItemClasses } from '@shared/data/items/item-classes'
 
 export { RARITY_COLORS } from '@shared/rarity-colors'
 
-export const IP = {
-  theme: 'two-tone' as const,
-  fill: ['currentColor', 'rgba(255,255,255,0.2)'] as [string, string],
-  style: { display: 'flex' },
-}
+// Lives in its own leaf so windows that want the icon config alone are not
+// forced to pull this module's megabytes of JSON with it. Re-exported because
+// most callers already import it from here.
+export { IP } from './icon-config'
 
 /** GGG CDN art for the div-card inventory icon. Used by the title-bar Div Card
  *  Explorer button and the Show/Hide Tabs preview in View settings. Hosted on

@@ -1235,7 +1235,37 @@ describe('searchTrade filter-group dispatch', () => {
       expect(harbingerBody.query.name).toBe('The Beachhead')
     })
 
-    it('unid unique map with unknown base falls back to sending the base as name', async () => {
+    it('unid unique map on the generic "Map (Tier N)" base searches Map type at unique rarity', async () => {
+      // Post-atlas-rework clients print every map base as "Map (Tier N)" -- the
+      // base no longer says WHICH unique map dropped, so there is no name to
+      // resolve and the by-name path cannot work. The search must go out as the
+      // generic Map type at unique rarity with the tier pinned; the unid chip
+      // narrows the comps to unidentified listings (the gamble market).
+      setPoeVersion(1)
+      _setUniquesByBaseForTests({ 'Machinarium Map': ["Doryani's Machinarium"] })
+      const unidUniqueMap = {
+        name: 'Map (Tier 16)',
+        baseType: 'Map (Tier 16)',
+        itemClass: 'Maps',
+        rarity: 'Unique',
+      }
+      const filters: StatFilter[] = [
+        { id: 'misc.identified', text: 'Unidentified', type: 'misc', enabled: true, value: null, min: null, max: null },
+      ]
+      await searchTrade('Mirage', unidUniqueMap, filters, { tradeStatus: 'any' })
+      const req = capturedRequests.find((r) => r.url.includes('/search/'))
+      const body = parseCapturedBody(req)
+      expect(body.query.name).toBeUndefined()
+      expect(body.query.type).toEqual({ option: 'Map', discriminator: 'map' })
+      expect(body.query.filters.type_filters.filters.rarity).toEqual({ option: 'unique' })
+      expect(body.query.filters.map_filters?.filters.map_tier).toEqual({ min: 16, max: 16 })
+      expect(body.query.filters.misc_filters?.filters.identified).toEqual({ option: 'false' })
+    })
+
+    it('unid unique map with an unknown tierless base still avoids the name GGG rejects', async () => {
+      // Sending a map base as query.name is a guaranteed "Unknown item name"
+      // rejection, so even a base we cannot parse a tier from must go out as
+      // the generic unique-map search, just without the tier pin.
       setPoeVersion(1)
       _setUniquesByBaseForTests({})
       const unidUniqueMap = {
@@ -1250,7 +1280,10 @@ describe('searchTrade filter-group dispatch', () => {
       await searchTrade('Mirage', unidUniqueMap, filters, { tradeStatus: 'any' })
       const req = capturedRequests.find((r) => r.url.includes('/search/'))
       const body = parseCapturedBody(req)
-      expect(body.query.name).toBe('Some Future Map')
+      expect(body.query.name).toBeUndefined()
+      expect(body.query.type).toEqual({ option: 'Map', discriminator: 'map' })
+      expect(body.query.filters.type_filters.filters.rarity).toEqual({ option: 'unique' })
+      expect(body.query.filters.map_filters?.filters?.map_tier).toBeUndefined()
     })
 
     it('identified unique map still searches by its real name', async () => {
@@ -1569,6 +1602,34 @@ describe('searchTrade filter-group dispatch', () => {
     const req = capturedRequests.find((r) => r.url.includes('/search/'))
     const body = parseCapturedBody(req)
     expect(body.query.filters.type_filters.filters.category).toEqual({ option: 'flask' })
+  })
+
+  it('Utility Flasks route to flask category with the base pinned', async () => {
+    // PoE1 splits the flask family on the "Item Class:" line; Utility/Hybrid were
+    // missing from the category map. The basetype chip defaults on for flasks, so
+    // the category search stays pinned to the base -- flask bases are separate
+    // markets and an unpinned mod search would mix them.
+    setPoeVersion(1)
+    const flask = {
+      name: '',
+      baseType: 'Granite Flask',
+      itemClass: 'Utility Flasks',
+      rarity: 'Magic',
+    }
+    const baseChip: StatFilter = {
+      id: 'misc.basetype',
+      text: 'Granite Flask',
+      type: 'misc',
+      enabled: true,
+      value: null,
+      min: null,
+      max: null,
+    }
+    await searchTrade('Mirage', flask, [baseChip], { tradeStatus: 'any', tradePriceOption: 'chaos_divine' })
+    const req = capturedRequests.find((r) => r.url.includes('/search/'))
+    const body = parseCapturedBody(req)
+    expect(body.query.filters.type_filters.filters.category).toEqual({ option: 'flask' })
+    expect(body.query.type).toBe('Granite Flask')
   })
 
   it('Tinctures route to tincture category', async () => {
@@ -2523,6 +2584,20 @@ describe('isBulkExchangeItem (PoE2 slug-gated routing)', () => {
     expect(isBulkExchangeItem('Map Fragments', 'Divine Vessel', 'Divine Vessel', 'Normal')).toBe(true)
   })
 
+  it('does NOT route a unique Sanctum relic to bulk -- regular search carries the real listings (#600)', () => {
+    setPoeVersion(1)
+    // GGG lists an exchange slug per unique relic NAME, and Unique rarity has no
+    // generated-name skip, so the name lookup finds it -- same shape as Vaal
+    // Aspects (#551). The regular search indexes the exchange offers too, so
+    // routing to it loses nothing, while several relic markets are near-empty
+    // (The Gilded Chalice: 1 offer measured mid-league).
+    expect(isBulkExchangeItem('Relics', 'The Night Lamp', 'Urn Relic', 'Unique')).toBe(false)
+    expect(isBulkExchangeItem('Relics', 'The Gilded Chalice', 'Processional Relic', 'Unique')).toBe(false)
+    // The slugs stay in the map -- they are real GGG exchange ids, it is the
+    // routing that must not use them.
+    expect(getBulkExchangeId('The Night Lamp', 'Urn Relic')).toBe('the-night-lamp')
+  })
+
   it('does NOT route a Vaal Aspect piece to bulk -- the exchange market is dead (#551)', () => {
     setPoeVersion(1)
     for (const name of ['Ambition', 'Beauty', 'Cooperation', 'Curiosity']) {
@@ -2531,6 +2606,55 @@ describe('isBulkExchangeItem (PoE2 slug-gated routing)', () => {
     // The slugs themselves stay in the map -- they are real GGG exchange ids,
     // it is the routing that must not use them.
     expect(getBulkExchangeId('Ambition', 'Vaal Aspect')).toBe('ambition')
+  })
+
+  it('routes only Voidborn among PoE1 reliquary keys to bulk -- the rest have dead exchange markets', () => {
+    setPoeVersion(1)
+    // Faustus only trades the commodity key. The foil boss keys and legacy keys
+    // carry slugs but had 0 exchange offers in the 3.29 league AND Standard,
+    // against live regular-search markets (Visceral: 17+ divine web listings).
+    expect(isBulkExchangeItem('Vault Keys', 'Voidborn Reliquary Key', 'Voidborn Reliquary Key', 'Normal')).toBe(true)
+    for (const key of [
+      'Visceral Reliquary Key',
+      'Ancient Reliquary Key',
+      'Timeworn Reliquary Key',
+      'Shiny Reliquary Key',
+    ]) {
+      expect(isBulkExchangeItem('Vault Keys', key, key, 'Normal')).toBe(false)
+      // Slugs stay in the map; the routing must not use them.
+      expect(getBulkExchangeId(key, key)).not.toBeNull()
+    }
+    // PoE2 reliquary keys share the "Vault Keys" class but DO trade on Ange --
+    // the exclusion is PoE1-only.
+    setPoeVersion(2)
+    expect(isBulkExchangeItem('Vault Keys', 'Azmeri Reliquary Key', 'Azmeri Reliquary Key', 'Normal')).toBe(true)
+  })
+
+  it('routes the 3.27 Trarthan scarabs to bulk with live exchange ids', () => {
+    setPoeVersion(1)
+    const scarabs: Array<[string, string]> = [
+      ['Trarthan Scarab', 'trarthan-scarab'],
+      ['Trarthan Scarab of Infamy', 'trarthan-scarab-of-infamy'],
+      ['Trarthan Scarab of Renown', 'trarthan-scarab-of-renown'],
+      ['Trarthan Scarab of Surprising Alliances', 'trarthan-scarab-of-surprising-alliances'],
+    ]
+    for (const [name, id] of scarabs) {
+      expect(getBulkExchangeId(name, name)).toBe(id)
+      expect(isBulkExchangeItem('Scarabs', name, name, 'Currency')).toBe(true)
+    }
+  })
+
+  it('tracks the 3.27 scarab rework renames and removals', () => {
+    setPoeVersion(1)
+    // Emptiness was renamed Descending and got a fresh id -- the old id is
+    // delisted, and a delisted id silently blanks the exchange query (#471).
+    expect(getBulkExchangeId('Abyss Scarab of Descending', 'Abyss Scarab of Descending')).toBe(
+      'abyss-scarab-of-descending',
+    )
+    // Harbinger scarabs left the game (and the exchange list) in 3.27, so they
+    // must fall back to regular search where legacy listings still exist.
+    expect(getBulkExchangeId('Harbinger Scarab', 'Harbinger Scarab')).toBeNull()
+    expect(isBulkExchangeItem('Scarabs', 'Harbinger Scarab', 'Harbinger Scarab', 'Currency')).toBe(false)
   })
 
   it('does NOT route a Rare item whose generated title collides with a currency name (#501)', () => {

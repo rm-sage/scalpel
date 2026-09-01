@@ -149,6 +149,16 @@ export function AppWindow(): JSX.Element {
     setSettings({ ...settings, [key]: value })
   }
 
+  /** Multi-key write in one state update. Two sequential updateSetting calls in
+   *  the same tick both spread the same stale `settings`, so the second silently
+   *  drops the first key's write. Mirrors SettingsPanel's updateMany. */
+  const updateSettings = (patch: Partial<AppSettings>): void => {
+    for (const key of Object.keys(patch) as Array<keyof AppSettings>) {
+      window.api.setSetting(key, patch[key] as AppSettings[keyof AppSettings])
+    }
+    setSettings((prev) => (prev ? { ...prev, ...patch } : prev))
+  }
+
   const updateProfileSettingForGame = async (game: 1 | 2, key: 'league', value: string): Promise<void> => {
     setSettings(await window.api.setProfileSettingForGame(game, key, value))
   }
@@ -373,6 +383,7 @@ export function AppWindow(): JSX.Element {
               <MacrosStep
                 settings={settings}
                 onUpdate={updateSetting}
+                onUpdateMany={updateSettings}
                 onNext={() => goTo('done')}
                 onBack={() => goTo('plugins')}
                 stepNum={sharedStepNum(selectedGames, 'macros')}

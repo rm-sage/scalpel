@@ -22,6 +22,7 @@ function starterLabel(starter: Starter): string {
 export function MacrosStep({
   settings,
   onUpdate,
+  onUpdateMany,
   onNext,
   onBack,
   stepNum,
@@ -30,6 +31,7 @@ export function MacrosStep({
 }: {
   settings: RuntimeSettings
   onUpdate: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  onUpdateMany: (patch: Partial<AppSettings>) => void
   onNext: () => void
   onBack: () => void
   stepNum: number
@@ -105,7 +107,7 @@ export function MacrosStep({
       </section>
       <PoeVersionProvider version={game}>
         <div className="flex flex-col gap-6">
-          <MacrosTab settings={settings} update={onUpdate} tryHotkey={tryHotkey} />
+          <MacrosTab settings={settings} update={onUpdate} updateMany={onUpdateMany} tryHotkey={tryHotkey} />
         </div>
       </PoeVersionProvider>
       <NavButtons

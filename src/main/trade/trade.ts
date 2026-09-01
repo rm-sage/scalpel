@@ -762,18 +762,41 @@ export async function searchTrade(
   // Strip "Foulborn " prefix from the trade search name
   if (item.rarity === 'Unique' && item.itemClass === 'Maps') {
     // Unique maps: search by name only (type "Map" doesn't work with name).
-    // An unid unique map has name == baseType (e.g. "Machinarium Map"), which
-    // the trade API rejects as an unknown name, and map bases are not valid
-    // query.type values either (#470). Resolve the real unique name from the
-    // uniques-by-base data. Replica/Infused variants never drop unidentified
-    // (Heist curios and vendor recipes produce identified items), so prefer
-    // the droppable candidate on shared bases. (lookupBestUniquePrice in
-    // prices.ts picks by highest chaos value instead - different goal: price
-    // estimate there, a name the trade API accepts here.)
+    // An unid unique map has name == baseType, which the trade API rejects as
+    // an unknown name, and map bases are not valid query.type values either
+    // (#470). Legacy clipboards named the base (e.g. "Machinarium Map"), which
+    // the uniques-by-base data resolves to the real unique name --
+    // Replica/Infused variants never drop unidentified (Heist curios and
+    // vendor recipes produce identified items), so prefer the droppable
+    // candidate on shared bases. (lookupBestUniquePrice in prices.ts picks by
+    // highest chaos value instead - different goal: price estimate there, a
+    // name the trade API accepts here.)
     if (unidEnabled && item.name === item.baseType) {
       const candidates = getUniquesByBase()[item.baseType] ?? []
       const droppable = candidates.filter((n) => !/^(?:Replica|Infused)\s/.test(n))
-      query.name = droppable[0] ?? candidates[0] ?? item.name
+      const resolved = droppable[0] ?? candidates[0]
+      if (resolved) {
+        query.name = resolved
+      } else {
+        // Post-atlas-rework clients print every map base as the generic
+        // "Map (Tier N)" -- the base no longer says WHICH unique map dropped,
+        // so there is no name to resolve. Search the generic Map type at
+        // unique rarity with the tier pinned; the unid chip's identified:false
+        // (added with the other misc filters below) narrows the comps to
+        // unidentified listings, the market these actually sell on.
+        const unidTierMatch = item.baseType.match(/\(Tier (\d+)\)/)
+        query.type = { option: 'Map', discriminator: 'map' }
+        query.filters = {
+          type_filters: { filters: { rarity: { option: 'unique' } } },
+          ...(unidTierMatch
+            ? {
+                map_filters: {
+                  filters: { map_tier: { min: parseInt(unidTierMatch[1], 10), max: parseInt(unidTierMatch[1], 10) } },
+                },
+              }
+            : {}),
+        }
+      }
     } else {
       query.name = item.name
     }
@@ -1862,6 +1885,13 @@ export function isBulkExchangeItem(
     'Expedition Logbook', // Area level, faction, mods
     'Incubators', // ilvl requirements
     'Wombgifts', // ilvl + Hiveblood requirement vary per drop
+    // GGG lists a per-name exchange slug for each PoE1 unique Sanctum relic, so
+    // without this the name lookup routes them to bulk (#600, same shape as Vaal
+    // Aspects #551). The regular search indexes the exchange offers too, so it
+    // loses nothing, while several relic exchange markets are near-empty (The
+    // Gilded Chalice: 1 offer measured mid-league) and price by ratio only.
+    // Relic BASES carry no slug in either game, so this only changes uniques.
+    'Relics',
   ])
   if (regularTradeClasses.has(itemClass)) return false
   // Specific items with variable properties that need regular trade
@@ -1880,6 +1910,15 @@ export function isBulkExchangeItem(
   // a single 20c offer against a 7-divine one. Price them on regular search,
   // where name + base type is an exact match (#551).
   if (baseType === 'Vaal Aspect') return false
+  // Every PoE1 reliquary key (class "Vault Keys") carries a GGG exchange slug,
+  // but Faustus only has a real market for Voidborn -- the commodity key.
+  // Measured in the 3.29 league and Standard: all 13 other keys had 0 exchange
+  // offers against live regular-search markets (Visceral: 10 listings at 17+
+  // divine, 0 offers; Ancient in Standard: 932 listings, 0 offers). PoE2's
+  // reliquary keys share the class name and DO trade on Ange, so this is
+  // PoE1-only. Same shape as the Vaal Aspects above: slugs stay in the map,
+  // the routing must not use them.
+  if (getPoeVersion() === 1 && itemClass === 'Vault Keys' && baseType !== 'Voidborn Reliquary Key') return false
   // Beasts are "Stackable Currency" but have rarity Rare/Unique and need regular trade
   if (itemClass === 'Stackable Currency' && (_rarity === 'Rare' || _rarity === 'Unique')) return false
   // Modified map-class items (Magic/Rare/Unique) aren't stackable, so they can't be on
