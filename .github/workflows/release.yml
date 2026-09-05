@@ -19,8 +19,8 @@ jobs:
     # Visual Studio to rebuild native dependencies. windows-2022 has the working toolchain.
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       # Everything downstream derives the version from package.json, never from the
@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: echo "version=$(node -p 'require("./package.json").version')" >>$GITHUB_OUTPUT
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, '-exp') }}
@@ -77,8 +77,8 @@ jobs:
     needs: release-win
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Install Linux native build deps
@@ -108,7 +108,7 @@ jobs:
       - name: Append AppImage to GitHub Release
         # The Windows job creates the release with notes; this appends the
         # AppImage artifact. softprops/action-gh-release upserts on tag.
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, '-exp') }}
@@ -137,7 +137,7 @@ jobs:
           useradd --create-home builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers.d/builder
           chmod 0440 /etc/sudoers.d/builder
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Update AUR package metadata
         run: |
           chown -R builder:builder "$GITHUB_WORKSPACE"
@@ -193,7 +193,7 @@ jobs:
     if: ${{ github.repository == 'scalpelpoe/scalpel' && github.event_name == 'workflow_dispatch' && inputs.publish_git_aur }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Publish scalpel-poe-git to AUR
         uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
         with:

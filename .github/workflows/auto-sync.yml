@@ -38,7 +38,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout fork main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
@@ -49,7 +49,7 @@ jobs:
           # (it'll still merge/verify; only the auto-ship tag-trigger needs the PAT).
           token: ${{ secrets.RELEASE_PAT || github.token }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
