@@ -59,8 +59,12 @@ jobs:
       - name: Configure git identity
         shell: bash
         run: |
+          # MUST be the owner's @users.noreply address, not their real one: GitHub's
+          # "block pushes that expose my email" setting rejects a push whose commits
+          # carry the private address (GH007), which silently killed every scheduled
+          # sync at the final `git push` -- after a clean merge and a green verify.
           git config user.name "scalpel-fork-bot"
-          git config user.email "rmsage95@gmail.com"
+          git config user.email "10146713+rm-sage@users.noreply.github.com"
 
       - name: Fetch upstream
         shell: bash
