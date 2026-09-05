@@ -38,7 +38,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout fork main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: main
           fetch-depth: 0
@@ -49,7 +49,7 @@ jobs:
           # (it'll still merge/verify; only the auto-ship tag-trigger needs the PAT).
           token: ${{ secrets.RELEASE_PAT || github.token }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
 
@@ -134,10 +134,15 @@ jobs:
           echo "fork_ver=$FORK_VER" >> "$GITHUB_OUTPUT"
 
       - name: Verify (same gate as CI + fork invariants)
+        id: verify
         if: steps.check.outputs.skip == 'false' && steps.merge.outputs.conflict == 'false'
         shell: bash
         run: |
           npm ci
+          # Keep this list in step with ci.yml's `check` job -- the step name promises
+          # parity, and anything missing here can auto-ship a build that ci.yml then
+          # reds AFTER the release is already public.
+          npm run validate:premium-mods -- --require-verified
           npm run build:i18n --if-present
           npm run typecheck
           npm run lint
@@ -149,10 +154,21 @@ jobs:
         if: steps.check.outputs.skip == 'false' && steps.merge.outputs.conflict == 'false'
         shell: bash
         run: |
+          V="v${{ steps.version.outputs.fork_ver }}"
+          # Order matters. If main is pushed first and the TAG push then fails, the
+          # next run finds upstream/main already an ancestor -> skip=true -> the job
+          # reports SUCCESS and ships nothing, forever: main sits on a version that no
+          # future run will ever tag. Pushing the tag first inverts the failure into a
+          # harmless retry (a tag with no main advance just re-releases the same tree).
+          git tag "$V"
+          git push origin "$V"
           git push origin main
-          git tag "v${{ steps.version.outputs.fork_ver }}"
-          git push origin "v${{ steps.version.outputs.fork_ver }}"
-          echo "Pushed v${{ steps.version.outputs.fork_ver }} -> release.yml will build and publish."
+          # Belt and braces: prove both refs actually landed rather than trusting exit codes.
+          git ls-remote --tags origin "$V" | grep -q . || {
+            echo "::error::tag $V is not on origin after a successful push"
+            exit 1
+          }
+          echo "Pushed $V -> release.yml will build and publish."
 
       # Notifications use the run summary + a failed run (GitHub emails the repo
       # owner on workflow failure) instead of gh issue create -- Issues are
@@ -177,14 +193,54 @@ jobs:
           echo "::error::Upstream sync needs a manual merge (${{ steps.merge.outputs.upstream_ver }}) — see the run summary."
           exit 1
 
+      # Two distinct failures, two distinct reports. These used to be one step whose
+      # only condition was `failure() && conflict != 'true'`, so a PUBLISH failure
+      # rendered the VERIFY summary -- which is how a `git push` rejection (GH007,
+      # private-email block) spent five days reported as "typecheck / lint / test /
+      # build failed", pointing at the wrong subsystem entirely. Gate each on
+      # steps.verify.outcome so the summary can never describe the wrong step again.
       - name: Report verification failure (no auto-ship)
-        if: failure() && steps.merge.outputs.conflict != 'true'
+        if: failure() && steps.merge.outputs.conflict != 'true' && steps.verify.outcome == 'failure'
         shell: bash
         run: |
           {
             echo "## ❌ Upstream sync failed verification"
             echo ""
-            echo "Merged upstream cleanly but a check (typecheck / lint / test / build) failed, so nothing was published. \`origin/main\` is untouched."
+            echo "Merged upstream cleanly but a check (premium-mods / typecheck / lint / format / test / build) failed, so nothing was published. \`origin/main\` is untouched."
             echo ""
             echo "Usually means upstream changed something the macro, the repoint, or the fork-invariant test depends on. Fix on a branch and re-run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Catch-all. Gating the two reports above on steps.verify.outcome means a
+      # failure BEFORE verification ever ran (checkout, setup-node, the upstream
+      # fetch, the merge step itself) leaves outcome == 'skipped' and would otherwise
+      # produce a red run with an empty summary -- silence that reads exactly like
+      # the silence of a healthy run. Never let a failure go undescribed.
+      - name: Report pre-verification failure (no auto-ship)
+        if: failure() && steps.merge.outputs.conflict != 'true' && steps.verify.outcome == 'skipped'
+        shell: bash
+        run: |
+          {
+            echo "## ❌ Upstream sync failed before verification"
+            echo ""
+            echo "The job died before the verify gate ran, so this is infrastructure, not code: checkout, setup-node, the \`pip install setuptools\` step, the upstream fetch, or the merge step itself."
+            echo ""
+            echo "Nothing was built and nothing was published. \`origin/main\` is untouched. Open the failing step's log directly."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report publish failure (verified but not shipped)
+        if: failure() && steps.merge.outputs.conflict != 'true' && steps.verify.outcome == 'success'
+        shell: bash
+        run: |
+          {
+            echo "## ❌ Upstream sync verified but could NOT publish"
+            echo ""
+            echo "The merge was clean and the full gate passed — the failure is in the **Publish** step, not the code. Read that step's log; do not go looking for a broken test."
+            echo ""
+            echo "Known causes:"
+            echo "- \`GH007: Your push would publish a private email address\` — the committer email must be the owner's \`@users.noreply.github.com\` address."
+            echo "- \`refusing to allow a Personal Access Token to create or update workflow\` — \`RELEASE_PAT\` needs **Workflows: Read and write**, not just \`contents: write\`."
+            echo "- A non-fast-forward push, if something else landed on \`main\` after checkout."
+            echo ""
+            echo "The tag is pushed BEFORE \`main\`, so \`origin/main\` may or may not have advanced — check \`git log origin/main\` and the tag list before re-running."
           } >> "$GITHUB_STEP_SUMMARY"
