@@ -23,6 +23,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # Everything downstream derives the version from package.json, never from the
+      # tag: `Extract version` feeds the dist/v<version>/ globs, and pack-asar writes
+      # that same value into manifest.json -- which is what the updater compares
+      # (updater.ts: `if (runningVersion === remote.version) return`). So a tag that
+      # disagrees with package.json publishes a fully GREEN release whose assets and
+      # manifest carry the OTHER version, and every client silently no-ops. Fail loud.
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME implies version $TAG_VERSION but package.json has $PKG_VERSION"
+            exit 1
+          fi
+          echo "Releasing v$PKG_VERSION"
       - name: Install Python setuptools (needed by node-gyp)
         run: pip install setuptools
       - name: Install dependencies
@@ -46,6 +62,11 @@ jobs:
         with:
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, '-exp') }}
+          # Without this a glob that matches nothing is silently skipped, so a missing
+          # manifest.json still publishes a green "latest" release -- and the updater
+          # bails at `release.assets.find(a => a.name === 'manifest.json')`, leaving
+          # every client with no upgrade path and no error anywhere.
+          fail_on_unmatched_files: true
           files: |
             dist/v${{ steps.version.outputs.version }}/app.asar
             dist/v${{ steps.version.outputs.version }}/app.asar.unpacked.zip
@@ -91,6 +112,7 @@ jobs:
         with:
           generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') || contains(github.ref_name, '-exp') }}
+          fail_on_unmatched_files: true
           files: |
             dist/Scalpel.AppImage
   publish-aur:
